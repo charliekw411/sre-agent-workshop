@@ -1,0 +1,89 @@
+/* Azure SRE Agent Workshop - supplemental styling */
+
+:root {
+  --sre-accent: #0078d4;
+  --sre-warn: #d83b01;
+  --sre-ok: #107c10;
+}
+
+/* Wider content area so Mermaid diagrams and KQL blocks breathe. */
+.md-grid {
+  max-width: 68rem;
+}
+
+/* Hero block used on the workshop homepage. */
+.sre-hero {
+  border-radius: 0.6rem;
+  padding: 2.2rem 2rem;
+  margin-bottom: 2rem;
+  color: #ffffff;
+  background: linear-gradient(115deg, #1b2a4a 0%, #0f4c9c 55%, #0078d4 100%);
+}
+
+.sre-hero h1,
+.sre-hero p {
+  color: #ffffff;
+}
+
+.sre-hero h1 {
+  margin: 0 0 0.6rem;
+  font-weight: 700;
+}
+
+.sre-hero p {
+  margin: 0;
+  font-size: 0.9rem;
+  opacity: 0.92;
+}
+
+/* Metadata strip that appears under each module title. */
+.sre-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 1.4rem;
+  padding: 0;
+  list-style: none;
+}
+
+.sre-meta li {
+  margin: 0;
+  padding: 0.15rem 0.65rem;
+  border-radius: 1rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background-color: var(--md-code-bg-color);
+  color: var(--md-default-fg-color--light);
+}
+
+.sre-meta li.duration {
+  background-color: rgba(0, 120, 212, 0.14);
+  color: var(--sre-accent);
+}
+
+.sre-meta li.incident {
+  background-color: rgba(216, 59, 1, 0.14);
+  color: var(--sre-warn);
+}
+
+/* Module footer navigation. */
+.sre-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  font-size: 0.78rem;
+}
+
+/* Knowledge-check answers rendered through pymdownx.details. */
+.md-typeset details.question > summary {
+  font-weight: 600;
+}
+
+/* Keep long Azure CLI one-liners readable instead of clipped. */
+.md-typeset pre > code {
+  white-space: pre;
+}

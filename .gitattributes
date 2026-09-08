@@ -1,0 +1,27 @@
+# Normalize everything to LF in the repository so Linux CI is not fed carriage returns.
+* text=auto eol=lf
+
+# Build-critical files that fail outright with CRLF on Linux.
+*.sh        text eol=lf
+Makefile    text eol=lf
+Dockerfile  text eol=lf
+*.bicep     text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+
+# Windows-only helpers keep native endings.
+*.ps1       text eol=crlf
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
+
+# Binary assets must never be normalized.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.pdf       binary
+*.zip       binary
+
+# Keep generated site output out of diffs and language statistics.
+dist/**     linguist-generated=true

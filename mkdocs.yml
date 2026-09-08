@@ -1,0 +1,145 @@
+site_name: Azure SRE Agent - Workshop
+site_description: A hands-on workshop for detecting, investigating, and resolving production incidents with Azure SRE Agent
+site_url: https://charliekw411.github.io/sre-agent-workshop/
+
+repo_url: https://github.com/charliekw411/sre-agent-workshop
+repo_name: charliekw411/sre-agent-workshop
+edit_uri: edit/main/docs
+
+nav:
+  - Homepage: index.md
+  - Workshop Introduction:
+      - sre/00-workshop-intro/index.md
+      - What Is Azure SRE Agent: sre/00-workshop-intro/1-what-is-sre-agent.md
+      - Incident Response Concepts: sre/00-workshop-intro/2-incident-response-concepts.md
+      - How This Workshop Works: sre/00-workshop-intro/3-how-this-workshop-works.md
+  - Module 01 - Prerequisites: sre/01-prerequisites/index.md
+  - Module 02 - Solution Architecture: sre/02-solution-architecture/index.md
+  - Module 03 - Deploy Azure Infrastructure: sre/03-deploy-infrastructure/index.md
+  - Module 04 - Enable Native Azure Monitoring: sre/04-enable-monitoring/index.md
+  - Module 05 - Configure Azure SRE Agent: sre/05-configure-sre-agent/index.md
+  - Module 06 - Generate High CPU Incident: sre/06-incident-high-cpu/index.md
+  - Module 07 - Investigate the High CPU Incident: sre/07-investigate-high-cpu/index.md
+  - Module 08 - Generate HTTP 500 Incident: sre/08-incident-http-500/index.md
+  - Module 09 - Investigate the HTTP 500 Incident: sre/09-investigate-http-500/index.md
+  - Module 10 - Generate Disk Full Incident: sre/10-incident-disk-full/index.md
+  - Module 11 - Perform Root Cause Analysis: sre/11-root-cause-analysis/index.md
+  - Module 12 - Improve Agent Instructions: sre/12-agent-instructions/index.md
+  - Module 13 - Multi-Agent Investigation Patterns: sre/13-multi-agent-patterns/index.md
+  - Module 14 - Cleanup: sre/14-cleanup/index.md
+  - About The Authors: sre/29-about-the-authors/index.md
+  - Appendix:
+      - Workshop Variables: sre/30-appendix/01-variables.md
+      - Troubleshooting: sre/30-appendix/02-troubleshooting.md
+      - Cost Management: sre/30-appendix/03-cost-management.md
+      - Running Locally or in Codespaces: sre/30-appendix/04-local-and-codespaces.md
+
+theme:
+  name: material
+  font:
+    text: Ubuntu
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to light mode
+  features:
+    - header.autohide
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - navigation.footer
+    - toc.follow
+    - search.highlight
+    - search.suggest
+    - content.action.edit
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/shield-search
+    admonition:
+      note: material/pencil-circle
+      tip: material/lightbulb-on
+      warning: material/alert
+      danger: material/skull-outline
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - meta
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 4
+  - pymdownx.caret
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.tilde
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.snippets:
+      base_path: "."
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      slugify:
+        !!python/object/apply:pymdownx.slugs.slugify { kwds: { case: lower } }
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+  - glightbox
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/charliekw411/sre-agent-workshop
+      name: Workshop repository
+    - icon: fontawesome/brands/microsoft
+      link: https://learn.microsoft.com/azure/sre-agent/
+      name: Azure SRE Agent documentation
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+validation:
+  omitted_files: info
+  absolute_links: warn
+  unrecognized_links: warn
+
+# Contributor guidance, not workshop content.
+exclude_docs: |
+  assets/images/README.md

@@ -1,0 +1,57 @@
+name: Validate Workshop Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - "src/**"
+      - ".github/workflows/validate-infra.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - "src/**"
+      - ".github/workflows/validate-infra.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  bicep-build:
+    name: Bicep Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        template:
+          - infra/main.bicep
+          - infra/apps.bicep
+          - infra/alerts.bicep
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install Bicep CLI
+        run: az bicep install
+      - name: Build ${{ matrix.template }}
+        run: az bicep build --file ${{ matrix.template }} --stdout > /dev/null
+      - name: Lint ${{ matrix.template }}
+        run: az bicep lint --file ${{ matrix.template }}
+
+  dotnet-build:
+    name: Build Sample Application
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project:
+          - src/OrdersApi/OrdersApi.csproj
+          - src/CatalogApi/CatalogApi.csproj
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Build ${{ matrix.project }}
+        run: dotnet build ${{ matrix.project }} --configuration Release
