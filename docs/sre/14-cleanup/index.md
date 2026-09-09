@@ -1,7 +1,7 @@
 ---
 title: Module 14 - Cleanup
 description: Remove every Azure resource created by the workshop, verify nothing is left behind, and keep the artifacts worth keeping.
-ms.date: 2026-09-08
+ms.date: 2026-09-09
 ms.topic: how-to
 keywords:
   - cleanup
@@ -122,7 +122,7 @@ az role assignment delete \
   --scope "<the-scope-you-identified>"
 ```
 
-### Task 5: Delete the resource group
+### Task 5: Delete the azd environment
 
 ```bash
 source .workshop/workshop.env
@@ -134,22 +134,22 @@ az resource list --resource-group "${RESOURCE_GROUP}" --query "[].{Name:name, Ty
 Read that list. Confirm it contains only workshop resources and that the resource group name matches your suffix.
 
 ```bash
-az group delete --name "${RESOURCE_GROUP}" --yes --no-wait
-echo "Deletion started for ${RESOURCE_GROUP}."
+azd down --purge --force
 ```
 
 !!! danger "Verify the resource group name before you press enter"
-    `az group delete` is not reversible and does not ask twice. If `RESOURCE_GROUP` is empty or points somewhere unexpected, you will find out afterwards. Confirm the resource listing above matches what you deployed.
+  `azd down --purge --force` is not reversible. Confirm the selected environment with `azd env get-value AZURE_ENV_NAME` and verify the resource listing before running it.
 
 Deletion runs for five to fifteen minutes in the background.
 
 ### Task 6: Handle the local credentials
 
-`.workshop/workshop.env` contains a SQL administrator password and the fault-injection token. Both are now useless, but treat them as credentials anyway.
+`.azure/<environment-name>/.env` and `.workshop/workshop.env` contain a SQL administrator password and the fault-injection token. Both are now useless, but treat them as credentials anyway.
 
 === "Delete it"
 
     ```bash
+    azd env delete "$(azd env get-value AZURE_ENV_NAME)" --force
     rm -f .workshop/workshop.env
     ```
 

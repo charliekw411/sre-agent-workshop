@@ -5,6 +5,9 @@ targetScope = 'resourceGroup'
 @description('Azure region for every resource. Defaults to the resource group location.')
 param location string = resourceGroup().location
 
+@description('Azure Developer CLI environment name used for resource discovery.')
+param environmentName string = 'workshop'
+
 @description('Short lowercase alphanumeric suffix used by the foundation deployment.')
 @minLength(3)
 @maxLength(12)
@@ -61,7 +64,11 @@ var sqlConnectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomai
 resource catalogApi 'Microsoft.App/containerApps@2024-03-01' = {
   name: 'catalog-api'
   location: location
-  tags: union(tags, { service: 'catalog-api' })
+  tags: union(tags, {
+    service: 'catalog-api'
+    'azd-env-name': environmentName
+    'azd-service-name': 'catalog-api'
+  })
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
@@ -149,7 +156,11 @@ resource catalogApi 'Microsoft.App/containerApps@2024-03-01' = {
 resource ordersApi 'Microsoft.App/containerApps@2024-03-01' = {
   name: 'orders-api'
   location: location
-  tags: union(tags, { service: 'orders-api' })
+  tags: union(tags, {
+    service: 'orders-api'
+    'azd-env-name': environmentName
+    'azd-service-name': 'orders-api'
+  })
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {

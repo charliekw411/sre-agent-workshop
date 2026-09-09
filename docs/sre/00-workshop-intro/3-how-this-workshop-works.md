@@ -1,7 +1,7 @@
 ---
 title: How This Workshop Works
 description: Module structure, naming conventions, shell variable handling, cost controls, and pacing guidance for the Azure SRE Agent workshop.
-ms.date: 2026-09-08
+ms.date: 2026-09-09
 ms.topic: how-to
 keywords:
   - workshop structure
@@ -18,77 +18,69 @@ estimated_reading_time: 7
 
 ## Overview
 
-The remaining modules assume a specific working setup: a single terminal session, a consistent set of environment variables, and a naming convention that keeps every resource findable. Establishing those conventions now prevents the most common workshop failure, which is a command that fails because a variable silently went missing three modules ago.
+The remaining modules use a named Azure Developer CLI (`azd`) environment as deployment state. Each participant gets an isolated Azure resource group, while `azd` keeps the selected subscription, region, resource names, and deployment outputs together across terminal sessions.
 
 ## Learning objectives
 
-* Set up a durable shell environment for the whole workshop.
+* Create a durable `azd` environment for the whole workshop.
 * Apply the resource naming convention used by the Bicep templates.
 * Choose a pacing plan that fits the time you have.
 * Know where to look when a command does not behave as documented.
 
 ## Architecture context
 
-Every module reads and writes the same variables file. Treat it as workshop state.
+`azd` owns the environment. After deployment, it also creates the shell variables file used by the incident exercises.
 
 ```mermaid
 flowchart LR
-    ENV[workshop.env] --> M03[Module 03 deploy]
-    M03 -- writes outputs --> ENV
-    ENV --> M04[Module 04]
-    ENV --> M05[Module 05]
-    ENV --> M06[Modules 06-10]
-    ENV --> M14[Module 14 cleanup]
+    AZD[Named azd environment] --> M03[Module 03 azd up]
+    M03 -- exports outputs --> ENV[workshop.env]
+    ENV --> LABS[Modules 04-13]
+    AZD --> M14[Module 14 azd down]
 ```
 
 ## Tasks
 
-### Task 1: Create your workshop variables file
+### Task 1: Create your workshop environment
 
-Pick a unique suffix. Several Azure resources in this workshop require globally unique names, and a shared classroom subscription will collide otherwise.
+Choose a short, unique environment name, such as your alias followed by `workshop`. Environment names must be unique when participants share a subscription because each name maps to one resource group.
 
 ```bash
-# Choose a short, lowercase, alphanumeric suffix, for example your initials plus a number
-export WORKSHOP_SUFFIX="sre$RANDOM"
-export LOCATION="eastus"
-export RESOURCE_GROUP="rg-sre-agent-workshop-${WORKSHOP_SUFFIX}"
-
-mkdir -p .workshop
-cat > .workshop/workshop.env <<EOF
-export WORKSHOP_SUFFIX="${WORKSHOP_SUFFIX}"
-export LOCATION="${LOCATION}"
-export RESOURCE_GROUP="${RESOURCE_GROUP}"
-EOF
-
-echo "Workshop suffix: ${WORKSHOP_SUFFIX}"
+azd env new "<your-alias>-workshop"
+azd env set AZURE_LOCATION eastus
 ```
 
-### Task 2: Re-source the variables in any new terminal
+`azd` stores this state under `.azure/<environment-name>/`, which is excluded from source control. The deployment derives a collision-resistant resource suffix from the subscription ID and environment name.
 
-Whenever you open a new shell, restore state before running module commands.
+### Task 2: Restore the environment in a new terminal
+
+Select your environment before running deployment or cleanup commands. After Module 03, source the generated compatibility file before running an incident exercise.
 
 ```bash
+azd env select "<your-alias>-workshop"
+azd env get-values
+
+# Available after azd up in Module 03
 source .workshop/workshop.env
-env | grep -E '^(WORKSHOP_SUFFIX|LOCATION|RESOURCE_GROUP)=' | sort
 ```
 
-!!! tip "Append, do not overwrite"
-    Later modules append deployment outputs such as `ORDERS_API_FQDN` to the same file. Use `>>` when a module tells you to add a value, and reserve `>` for the initial creation above.
+!!! important "One environment per participant"
+    An `azd` environment is a deployment target, not a shell or virtual machine. Participants can run `azd` from a local terminal, a dev container, GitHub Codespaces, or Azure Cloud Shell. Each participant's Azure runtime is an isolated resource group containing one Container Apps managed environment and the rest of the workshop resources.
 
 ### Task 3: Review the naming convention
 
-The Bicep templates derive every resource name from `WORKSHOP_SUFFIX`, so you never need to invent names.
+The Bicep templates derive every resource name from `AZURE_ENV_NAME`, so you never need to invent names.
 
-| Resource                | Pattern                         | Example                     |
-|-------------------------|----------------------------------|-----------------------------|
-| Resource group          | `rg-sre-agent-workshop-<suffix>` | `rg-sre-agent-workshop-sre42` |
-| Container Apps environment | `cae-<suffix>`                | `cae-sre42`                 |
-| Container registry      | `acr<suffix>`                    | `acrsre42`                  |
-| Log Analytics workspace | `law-<suffix>`                   | `law-sre42`                 |
-| Application Insights    | `appi-<suffix>`                  | `appi-sre42`                |
-| SQL logical server      | `sql-<suffix>`                   | `sql-sre42`                 |
-| SQL database            | `sqldb-orders`                   | `sqldb-orders`              |
-| Action group            | `ag-sre-workshop`                | `ag-sre-workshop`           |
+| Resource                   | Pattern                                  | Example                               |
+|----------------------------|------------------------------------------|---------------------------------------|
+| Resource group             | `rg-sre-agent-workshop-<environment>`    | `rg-sre-agent-workshop-ck-workshop`   |
+| Container Apps environment | `cae-<generated-suffix>`                 | `cae-ckworabc1234`                    |
+| Container registry         | `acr<generated-suffix>`                  | `acrckworabc1234`                     |
+| Log Analytics workspace    | `law-<generated-suffix>`                 | `law-ckworabc1234`                    |
+| Application Insights       | `appi-<generated-suffix>`                | `appi-ckworabc1234`                   |
+| SQL logical server         | `sql-<generated-suffix>`                 | `sql-ckworabc1234`                    |
+| SQL database               | `sqldb-orders`                           | `sqldb-orders`                        |
+| Action group               | `ag-sre-workshop`                        | `ag-sre-workshop`                     |
 
 Container registry names cannot contain hyphens, which is why that one row looks different. Azure, not the workshop, made that decision.
 
@@ -111,28 +103,27 @@ Container registry names cannot contain hyphens, which is why that one row looks
 
 ## Validation
 
-Confirm your working environment is ready.
+Confirm the environment is selected and has a deployment region.
 
 ```bash
-source .workshop/workshop.env
-test -n "${WORKSHOP_SUFFIX}" && echo "OK: suffix is set to ${WORKSHOP_SUFFIX}" || echo "FAIL: run Task 1 again"
-test -n "${RESOURCE_GROUP}" && echo "OK: resource group is ${RESOURCE_GROUP}" || echo "FAIL: run Task 1 again"
+azd env get-value AZURE_ENV_NAME
+azd env get-value AZURE_LOCATION
 ```
 
 ## Expected results
 
-Two `OK` lines. The `.workshop/workshop.env` file exists and is excluded from source control by the repository `.gitignore`, which matters because later modules append connection details to it.
+The commands return your unique environment name and chosen Azure region.
 
 ## Knowledge check
 
-??? question "Why does the workshop use a random suffix instead of fixed resource names?"
-    Container registry names and SQL logical server names are part of globally unique DNS namespaces. Fixed names would fail for the second person to run the workshop, and would let two attendees in a shared subscription overwrite each other's resources.
+??? question "Why does the workshop derive a suffix instead of using the environment name directly?"
+    Container registry names cannot contain hyphens and several resource names use globally unique DNS namespaces. A deterministic hash of the subscription and environment name keeps names valid, stable across redeployments, and unlikely to collide.
 
-??? question "You open a new terminal and `az containerapp show` reports that the resource group does not exist. What happened?"
-    The shell variables were not re-sourced, so `RESOURCE_GROUP` expanded to an empty string. Run `source .workshop/workshop.env` and confirm with the validation snippet above.
+??? question "You open a new terminal and `azd` targets the wrong deployment. What happened?"
+    A different `azd` environment is selected. Run `azd env list`, then select yours with `azd env select <name>`.
 
 ??? question "Why is `.workshop/` in `.gitignore`?"
-    The file accumulates deployment outputs including the SQL administrator password and the fault-injection shared secret. Committing it would publish credentials to your repository history.
+    `azd up` exports deployment values, including the SQL administrator password and fault-injection secret, for compatibility with the lab scripts. Committing it would publish credentials to your repository history.
 
 ## Next steps
 

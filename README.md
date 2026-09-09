@@ -1,7 +1,7 @@
 ---
 title: Azure SRE Agent Workshop
 description: A hands-on workshop that teaches incident detection, investigation, and root cause analysis on Azure using Azure SRE Agent and native Azure monitoring.
-ms.date: 2026-09-08
+ms.date: 2026-09-09
 ms.topic: overview
 keywords:
   - azure sre agent
@@ -64,8 +64,9 @@ Estimated cost is 2 to 4 US dollars for a single-day run. See [Cost Management](
 ```text
 .
 ├── agent/              Agent instructions and investigation runbooks
+├── azure.yaml          Azure Developer CLI project definition
 ├── docs/               Workshop content published to GitHub Pages
-├── infra/              Bicep templates: foundation, apps, alerts
+├── infra/              Bicep templates and the azd deployment entry point
 ├── scripts/            Load generation and fault injection helpers
 ├── src/                Sample .NET 8 services
 ├── mkdocs.yml          Site configuration
@@ -85,8 +86,9 @@ Open [http://localhost:8000](http://localhost:8000).
 ## Prerequisites
 
 * An Azure subscription where you can create resources and assign roles. Contributor alone is not sufficient.
+* Azure Developer CLI 1.18 or later.
 * Azure CLI 2.60 or later with the `containerapp`, `application-insights`, and `log-analytics` extensions.
-* Bash, available through WSL, macOS, Linux, Git Bash, or Azure Cloud Shell.
+* Bash or PowerShell.
 * `jq` for parsing command output.
 
 Full details in [Module 01](docs/sre/01-prerequisites/index.md).

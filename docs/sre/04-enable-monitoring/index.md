@@ -1,7 +1,7 @@
 ---
 title: Module 04 - Enable Native Azure Monitoring
-description: Deploy the Azure Monitor detection layer, verify telemetry flow into Log Analytics and Application Insights, and establish a healthy baseline before injecting faults.
-ms.date: 2026-09-08
+description: Inspect the Azure Monitor detection layer, verify telemetry flow into Log Analytics and Application Insights, and establish a healthy baseline before injecting faults.
+ms.date: 2026-09-09
 ms.topic: how-to
 keywords:
   - azure monitor
@@ -26,7 +26,7 @@ You also establish a healthy baseline. An investigation that cannot answer "what
 
 ## Learning objectives
 
-* Deploy Azure Monitor alert rules that map to concrete failure modes.
+* Inspect Azure Monitor alert rules that map to concrete failure modes.
 * Confirm that Container Apps logs, SQL diagnostics, and Application Insights telemetry all reach the workspace.
 * Write KQL queries that establish a healthy baseline for latency, errors, and saturation.
 * Explain why each alert threshold was chosen rather than accepting defaults.
@@ -103,19 +103,9 @@ az monitor diagnostic-settings list \
   --output table
 ```
 
-### Task 3: Deploy the alert rules
+### Task 3: Inspect the alert rules
 
 ```bash
-az deployment group create \
-  --resource-group "${RESOURCE_GROUP}" \
-  --name "alerts-$(date +%Y%m%d%H%M%S)" \
-  --template-file infra/alerts.bicep \
-  --parameters \
-      suffix="${WORKSHOP_SUFFIX}" \
-      location="${LOCATION}" \
-      alertEmail="${ALERT_EMAIL}" \
-  --output none
-
 az monitor metrics alert list \
   --resource-group "${RESOURCE_GROUP}" \
   --query "[].{Name:name, Severity:severity, Enabled:enabled, Window:windowSize}" \

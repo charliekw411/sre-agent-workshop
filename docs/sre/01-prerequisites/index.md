@@ -1,7 +1,7 @@
 ---
 title: Module 01 - Prerequisites
 description: Verify your Azure subscription, tooling, permissions, and resource provider registrations before deploying the Azure SRE Agent workshop environment.
-ms.date: 2026-09-08
+ms.date: 2026-09-09
 ms.topic: how-to
 keywords:
   - prerequisites
@@ -39,7 +39,7 @@ Everything in this module is a gate. Passing all five gates means Module 03 will
 flowchart TD
     S[Start] --> G1{Subscription with<br/>Owner or equivalent}
     G1 -- no --> F1[Request access or use a sandbox subscription]
-    G1 -- yes --> G2{Azure CLI 2.60+<br/>with extensions}
+    G1 -- yes --> G2{azd 1.18+ and<br/>Azure CLI 2.60+}
     G2 -- no --> F2[Install or upgrade tooling]
     G2 -- yes --> G3{Docker or ACR<br/>build available}
     G3 -- yes --> G4{Resource providers<br/>registered}
@@ -107,6 +107,9 @@ You should see `Owner`, or the combination of `Contributor` plus `User Access Ad
     # Azure CLI
     curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
+    # Azure Developer CLI
+    curl -fsSL https://aka.ms/install-azd.sh | bash
+
     # Docker Engine (optional; ACR build is used by default)
     curl -fsSL https://get.docker.com | sudo sh
 
@@ -118,7 +121,8 @@ You should see `Owner`, or the combination of `Contributor` plus `User Access Ad
 
     ```bash
     brew update
-    brew install azure-cli jq
+    brew tap azure/azd
+    brew install azd azure-cli jq
     brew install --cask docker
     ```
 
@@ -126,6 +130,7 @@ You should see `Owner`, or the combination of `Contributor` plus `User Access Ad
 
     ```powershell
     winget install --exact --id Microsoft.AzureCLI
+    winget install --exact --id Microsoft.Azd
     winget install --exact --id jqlang.jq
     winget install --exact --id Docker.DockerDesktop
     ```
@@ -134,17 +139,18 @@ You should see `Owner`, or the combination of `Contributor` plus `User Access Ad
 
 === "Azure Cloud Shell"
 
-    Cloud Shell already includes the Azure CLI, `jq`, and Bicep. Open [https://shell.azure.com](https://shell.azure.com) and select Bash. Container images are built with `az acr build`, so Docker is not required.
+    Cloud Shell already includes `azd`, the Azure CLI, `jq`, and Bicep. Open [https://shell.azure.com](https://shell.azure.com) and select Bash. Container images are built remotely in Azure Container Registry, so Docker is not required.
 
 Now verify the versions.
 
 ```bash
 az version --output table
+azd version
 az bicep version
 jq --version
 ```
 
-The workshop is validated against Azure CLI 2.60 or later and Bicep 0.28 or later. Upgrade if you are behind.
+The workshop is validated against Azure Developer CLI 1.18 or later, Azure CLI 2.60 or later, and Bicep 0.28 or later. Upgrade if you are behind.
 
 ```bash
 az upgrade
@@ -224,6 +230,7 @@ source .workshop/workshop.env
 check() { if eval "$2" >/dev/null 2>&1; then echo "PASS: $1"; else echo "FAIL: $1"; fi }
 
 check "Azure CLI installed"        "az version"
+check "Azure Developer CLI installed" "azd version"
 check "Bicep installed"            "az bicep version"
 check "jq installed"               "jq --version"
 check "Logged in to Azure"         "az account show"
@@ -237,7 +244,7 @@ check "Microsoft.Sql registered"   "az provider show --namespace Microsoft.Sql -
 
 ## Expected results
 
-Ten `PASS` lines and no `FAIL` lines. Your `.workshop/workshop.env` file contains `WORKSHOP_SUFFIX`, `LOCATION`, `RESOURCE_GROUP`, `SUBSCRIPTION_ID`, and `TENANT_ID`.
+Eleven `PASS` lines and no `FAIL` lines. Your named `azd` environment contains `AZURE_ENV_NAME` and `AZURE_LOCATION`; Module 03 adds deployment outputs.
 
 If any check fails, resolve it now. The deployment in Module 03 takes 12 to 15 minutes, and discovering a missing provider registration at minute 11 is a poor use of your afternoon.
 

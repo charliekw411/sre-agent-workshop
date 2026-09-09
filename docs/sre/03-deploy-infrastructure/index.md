@@ -1,7 +1,7 @@
 ---
 title: Module 03 - Deploy Azure Infrastructure
-description: Deploy the Contoso Order Services workshop environment with Bicep, build the container images, and verify the application responds end to end.
-ms.date: 2026-09-08
+description: Deploy the complete Contoso Order Services workshop environment with Azure Developer CLI and verify the application responds end to end.
+ms.date: 2026-09-09
 ms.topic: how-to
 keywords:
   - bicep
@@ -19,43 +19,92 @@ estimated_reading_time: 15
 
 ## Overview
 
-You deploy the workshop environment in three passes: foundation resources, container images, then the applications themselves. Splitting it that way is not bureaucracy. The container registry has to exist before you can push an image to it, and the container apps have to reference an image that exists.
+One `azd up` command deploys the complete workshop environment. Azure Developer CLI creates the resource group, runs the Bicep deployment, builds both images remotely in Azure Container Registry, updates the Container Apps revisions, and saves the deployment outputs.
 
 Roughly 20 of the 30 minutes are Azure working while you watch. Use the wait to skim [Module 04](../04-enable-monitoring/index.md) so you know what comes next.
 
 ## Learning objectives
 
-* Deploy the foundation resources with a parameterized Bicep template.
-* Generate and safely store the workshop secrets.
-* Build both container images directly in Azure Container Registry without a local Docker daemon.
-* Deploy the two container apps with managed identity image pulls.
+* Deploy all workshop infrastructure with Azure Developer CLI.
+* Understand how a named `azd` environment isolates each participant's resources.
+* Build both container images remotely without a local Docker daemon.
 * Verify the full request path from public ingress through to the database.
 
 ## Architecture context
 
-Each pass depends on the previous one.
+`azd up` coordinates each dependency in order.
 
 ```mermaid
 flowchart TD
-    P0[Create resource group] --> P1
-    subgraph P1["Pass 1: infra/main.bicep"]
+  AZD[azd up] --> P0[Create resource group]
+  P0 --> P1
+  subgraph P1["Provision: Bicep"]
         A[Managed identity] --> B[Container registry]
         A --> C[Log Analytics + App Insights]
         A --> D[Azure SQL Database]
         C --> E[Container Apps environment]
+    E --> H[Container apps + alert rules]
     end
     P1 --> P2
-    subgraph P2["Pass 2: az acr build"]
+  subgraph P2["Package: ACR remote build"]
         F[orders-api image] --> G[catalog-api image]
     end
     P2 --> P3
-    subgraph P3["Pass 3: infra/apps.bicep"]
-        H[catalog-api container app] --> I[orders-api container app]
+  subgraph P3["Deploy: Container App revisions"]
+    I[catalog-api image] --> J[orders-api image]
     end
     P3 --> V[Smoke test]
 ```
 
 ## Tasks
+
+### Task 1: Confirm the selected environment
+
+```bash
+azd env get-value AZURE_ENV_NAME
+azd env get-value AZURE_LOCATION
+```
+
+The environment name should be unique to you. It becomes part of the resource group name, while Bicep derives a stable, globally unique suffix for DNS-based resource names.
+
+### Task 2: Deploy the complete environment
+
+```bash
+azd auth login
+az login
+azd up
+```
+
+Select the intended subscription if prompted. The first deployment usually takes 15 to 25 minutes. The pre-provision hook generates the SQL password and fault token once, then resolves your alert email from Microsoft Entra ID. The post-deploy hook writes `.workshop/workshop.env` so the remaining lab scripts can use the deployment outputs.
+
+!!! warning "Local environment files contain secrets"
+  Both `.azure/<environment-name>/.env` and `.workshop/workshop.env` contain workshop credentials and are excluded by `.gitignore`. Do not commit or share either file.
+
+### Task 3: Load and inspect the outputs
+
+```bash
+source .workshop/workshop.env
+
+echo "Environment: ${AZURE_ENV_NAME}"
+echo "Resource group: ${RESOURCE_GROUP}"
+echo "Registry: ${ACR_LOGIN_SERVER}"
+echo "orders-api: https://${ORDERS_API_FQDN}"
+
+az resource list \
+  --resource-group "${RESOURCE_GROUP}" \
+  --query "[].{Name:name, Type:type}" \
+  --output table
+```
+
+### Task 4: Make the lab scripts executable
+
+```bash
+chmod +x scripts/*.sh
+```
+
+## Deployment internals
+
+`azd up` executes the same three-pass dependency chain shown below. You do not need to run these commands during the workshop; they remain as a troubleshooting reference for understanding which stage failed.
 
 ### Task 1: Restore your workshop variables
 
@@ -296,7 +345,7 @@ If the order creation returns HTTP 500 with a catalog message, `catalog-api` has
 
 ## Next steps
 
-The application runs, but nothing is watching it. Next you build the detection layer.
+The application and detection resources are running. Next you inspect the monitoring configuration and establish a healthy baseline.
 
 [Next: Module 04 - Enable Native Azure Monitoring :material-arrow-right:](../04-enable-monitoring/index.md){ .md-button .md-button--primary }
 
