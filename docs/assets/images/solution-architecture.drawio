@@ -1,0 +1,194 @@
+<mxfile host="65bd71144e">
+    <diagram id="solution-architecture" name="Solution Architecture">
+        <mxGraphModel dx="3524" dy="2375" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1240" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="2" value="" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="-160" y="-40" width="2040" height="1320" as="geometry"/>
+                </mxCell>
+                <mxCell id="title" value="Contoso Order Services - Complete Solution Architecture" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=24;fontStyle=1;fontColor=#172B4D;" parent="1" vertex="1">
+                    <mxGeometry x="540" y="20" width="900" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="subtitle" value="Azure SRE Agent workshop deployed environment" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontColor=#5E6C84;" parent="1" vertex="1">
+                    <mxGeometry x="740" y="60" width="600" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="resource-group" value="Resource group: rg-sre-agent-workshop-&amp;lt;suffix&amp;gt;" style="rounded=1;arcSize=3;html=1;whiteSpace=wrap;fillColor=#F7FBFF;strokeColor=#0078D4;strokeWidth=2;dashed=1;dashPattern=8 4;verticalAlign=top;align=left;spacingLeft=16;spacingTop=6;fontSize=15;fontStyle=1;fontColor=#0F5CA8;" parent="1" vertex="1">
+                    <mxGeometry x="240" y="100" width="1420" height="1080" as="geometry"/>
+                </mxCell>
+                <mxCell id="build-identity" value="Build and identity" style="rounded=1;arcSize=4;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#9FC5E8;strokeWidth=1;verticalAlign=top;align=left;spacingLeft=14;spacingTop=4;fontSize=13;fontStyle=1;fontColor=#5E6C84;" vertex="1" parent="1">
+                    <mxGeometry x="300" y="150" width="620" height="215" as="geometry"/>
+                </mxCell>
+                <mxCell id="ca-environment" value="Azure Container Apps environment" style="rounded=1;arcSize=4;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#9FC5E8;strokeWidth=1;verticalAlign=top;align=left;spacingLeft=14;spacingTop=4;fontSize=13;fontStyle=1;fontColor=#5E6C84;" parent="1" vertex="1">
+                    <mxGeometry x="300" y="420" width="620" height="340" as="geometry"/>
+                </mxCell>
+                <mxCell id="platform" value="Application data" style="rounded=1;arcSize=4;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#9FC5E8;strokeWidth=1;verticalAlign=top;align=left;spacingLeft=14;spacingTop=4;fontSize=13;fontStyle=1;fontColor=#5E6C84;" parent="1" vertex="1">
+                    <mxGeometry x="1000" y="420" width="340" height="240" as="geometry"/>
+                </mxCell>
+                <mxCell id="response" value="Automated response" style="rounded=1;arcSize=4;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#9FC5E8;strokeWidth=1;verticalAlign=top;align=left;spacingLeft=14;spacingTop=4;fontSize=13;fontStyle=1;fontColor=#5E6C84;" vertex="1" parent="1">
+                    <mxGeometry x="1390" y="420" width="200" height="240" as="geometry"/>
+                </mxCell>
+                <mxCell id="observability" value="Observability and alerting" style="rounded=1;arcSize=4;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#9FC5E8;strokeWidth=1;verticalAlign=top;align=left;spacingLeft=14;spacingTop=4;fontSize=13;fontStyle=1;fontColor=#5E6C84;" parent="1" vertex="1">
+                    <mxGeometry x="300" y="840" width="1220" height="260" as="geometry"/>
+                </mxCell>
+                <mxCell id="registry" value="&lt;b&gt;Container Registry&lt;/b&gt;&lt;br&gt;application images" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;fontColor=#172B4D;whiteSpace=nowrap;verticalLabelPosition=top;verticalAlign=bottom;image=img/lib/azure2/containers/Container_Registries.svg;" parent="1" vertex="1">
+                    <mxGeometry x="380" y="270" width="80" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="identity" value="&lt;b&gt;Managed Identity&lt;/b&gt;&lt;br&gt;user-assigned" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;fontColor=#172B4D;whiteSpace=nowrap;verticalLabelPosition=top;verticalAlign=bottom;image=img/lib/azure2/identity/Managed_Identities.svg;" parent="1" vertex="1">
+                    <mxGeometry x="740" y="270" width="80" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="orders-api" value="&lt;b&gt;orders-api&lt;/b&gt;&lt;br&gt;external ingress" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;fontColor=#172B4D;whiteSpace=nowrap;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/other/Worker_Container_App.svg;" parent="1" vertex="1">
+                    <mxGeometry x="380" y="470" width="80" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="catalog-api" value="&lt;b&gt;catalog-api&lt;/b&gt;&lt;br&gt;internal ingress" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;fontColor=#172B4D;whiteSpace=nowrap;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/other/Worker_Container_App.svg;" parent="1" vertex="1">
+                    <mxGeometry x="700" y="620" width="80" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="sql" value="&lt;b&gt;Azure SQL Database&lt;/b&gt;&lt;br&gt;sqldb-orders, Basic 2 GB" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;fontColor=#172B4D;whiteSpace=nowrap;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/databases/SQL_Database.svg;" parent="1" vertex="1">
+                    <mxGeometry x="1150" y="470" width="80" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="log-analytics" value="&lt;b&gt;Log Analytics&lt;/b&gt;&lt;br&gt;workspace" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;fontColor=#172B4D;whiteSpace=nowrap;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/analytics/Log_Analytics_Workspaces.svg;" parent="1" vertex="1">
+                    <mxGeometry x="700" y="890" width="80" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="app-insights" value="&lt;b&gt;Application Insights&lt;/b&gt;&lt;br&gt;workspace-based" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;fontColor=#172B4D;whiteSpace=nowrap;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/devops/Application_Insights.svg;" parent="1" vertex="1">
+                    <mxGeometry x="380" y="890" width="80" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="alert-rules" value="&lt;b&gt;Azure Monitor&lt;/b&gt;&lt;br&gt;metric and log rules" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;fontColor=#172B4D;whiteSpace=nowrap;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/management_governance/Alerts.svg;" parent="1" vertex="1">
+                    <mxGeometry x="1020" y="890" width="80" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="action-group" value="&lt;b&gt;Action group&lt;/b&gt;&lt;br&gt;alert routing" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;fontColor=#172B4D;whiteSpace=nowrap;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/management_governance/Monitor.svg;" parent="1" vertex="1">
+                    <mxGeometry x="1340" y="890" width="80" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="operator" value="&lt;b&gt;Workshop operator&lt;/b&gt;&lt;br&gt;browser and CLI" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;fontColor=#172B4D;whiteSpace=nowrap;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/azure2/identity/Users.svg;" parent="1" vertex="1">
+                    <mxGeometry x="90" y="470" width="80" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend" value="&lt;b&gt;Legend&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontColor=#172B4D;" parent="1" vertex="1">
+                    <mxGeometry x="310" y="1110" width="80" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-request" value="Request path" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontColor=#5E6C84;" parent="1" vertex="1">
+                    <mxGeometry x="448" y="1110" width="120" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-deploy" value="Image pull and identity" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontColor=#5E6C84;" parent="1" vertex="1">
+                    <mxGeometry x="648" y="1110" width="140" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-telemetry" value="Telemetry ingestion" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontColor=#5E6C84;" parent="1" vertex="1">
+                    <mxGeometry x="868" y="1110" width="130" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-alert" value="Alerting" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontColor=#5E6C84;" parent="1" vertex="1">
+                    <mxGeometry x="1078" y="1110" width="80" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-request-line" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#172B4D;strokeWidth=2;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="400" y="1122" as="sourcePoint"/>
+                        <mxPoint x="440" y="1122" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="legend-deploy-line" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;dashed=1;dashPattern=8 4;strokeColor=#107C10;strokeWidth=2;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="600" y="1122" as="sourcePoint"/>
+                        <mxPoint x="640" y="1122" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="legend-telemetry-line" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;dashed=1;dashPattern=1 4;strokeColor=#0078D4;strokeWidth=2;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="820" y="1122" as="sourcePoint"/>
+                        <mxPoint x="860" y="1122" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="legend-alert-line" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#D83B01;strokeWidth=2;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1030" y="1122" as="sourcePoint"/>
+                        <mxPoint x="1070" y="1122" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e-user-orders" value="HTTPS" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;strokeColor=#172B4D;strokeWidth=2;fontSize=11;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" parent="1" source="operator" target="orders-api" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-registry-orders" value="image pull" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;dashed=1;dashPattern=8 4;strokeColor=#107C10;strokeWidth=2;fontSize=11;fontColor=#1B6B1B;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" parent="1" source="registry" target="orders-api" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-cae-appi" value="requests, dependencies, exceptions" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;dashed=1;dashPattern=1 4;strokeColor=#0078D4;strokeWidth=2;fontSize=11;fontColor=#0F5CA8;labelBackgroundColor=#FFFFFF;exitX=0.1935;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ca-environment" target="app-insights">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-cae-law" value="console and system logs" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;dashed=1;dashPattern=1 4;strokeColor=#0078D4;strokeWidth=2;fontSize=11;fontColor=#0F5CA8;labelBackgroundColor=#FFFFFF;exitX=0.7097;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ca-environment" target="log-analytics">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-appi-law" value="workspace-based storage" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;dashed=1;dashPattern=1 4;strokeColor=#0078D4;strokeWidth=2;fontSize=11;fontColor=#0F5CA8;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="app-insights" target="log-analytics">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-orders-catalog" value="HTTP" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;strokeColor=#172B4D;strokeWidth=2;fontSize=11;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" parent="1" source="orders-api" target="catalog-api" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="740" y="510"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e-orders-sql" value="TDS 1433" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;strokeColor=#172B4D;strokeWidth=2;fontSize=11;fontColor=#172B4D;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.25;entryX=0;entryY=0.25;" parent="1" source="orders-api" target="sql" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-registry-catalog" value="image pull" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;dashed=1;dashPattern=8 4;strokeColor=#107C10;strokeWidth=2;fontSize=11;fontColor=#1B6B1B;labelBackgroundColor=#FFFFFF;exitX=0.75;exitY=1;entryX=0.75;entryY=0;" parent="1" source="registry" target="catalog-api" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="440" y="395"/>
+                            <mxPoint x="760" y="395"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e-sql-law" value="diagnostic settings" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;dashed=1;dashPattern=1 4;strokeColor=#0078D4;strokeWidth=2;fontSize=11;fontColor=#0F5CA8;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.9;entryX=0.75;entryY=0;" parent="1" source="sql" target="log-analytics" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1080" y="542"/>
+                            <mxPoint x="1080" y="810"/>
+                            <mxPoint x="760" y="810"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e-law-alerts" value="log query rules" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;strokeColor=#D83B01;strokeWidth=2;fontSize=11;fontColor=#A32D01;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" parent="1" source="log-analytics" target="alert-rules" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-alerts-action" value="fires" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;strokeColor=#D83B01;strokeWidth=2;fontSize=11;fontColor=#A32D01;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" parent="1" source="alert-rules" target="action-group" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="sre-agent" value="&lt;b&gt;Azure SRE Agent&lt;/b&gt;&lt;br&gt;investigates and diagnoses" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;fontColor=#172B4D;whiteSpace=nowrap;verticalLabelPosition=top;verticalAlign=bottom;image=https://sre.azure.com/SreAgent.svg;" vertex="1" parent="1">
+                    <mxGeometry x="1450" y="500" width="70" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-action-agent" value="alert notification" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;strokeColor=#D83B01;strokeWidth=2;fontSize=11;fontColor=#A32D01;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=1;entryY=0.5;" parent="1" source="action-group" target="sre-agent" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1620" y="930"/>
+                            <mxPoint x="1620" y="530"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e-identity-registry" value="AcrPull role" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=block;endFill=1;dashed=1;dashPattern=8 4;strokeColor=#107C10;strokeWidth=2;fontSize=11;fontColor=#1B6B1B;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="identity" target="registry">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e-agent-law" value="queries logs and telemetry" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=open;endFill=0;dashed=1;dashPattern=8 4;strokeColor=#0078D4;strokeWidth=2;fontSize=11;fontColor=#0F5CA8;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.986;entryY=0.815;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="sre-agent" target="log-analytics">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1490" y="1060"/>
+                            <mxPoint x="800" y="1060"/>
+                            <mxPoint x="800" y="955"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e-agent-sql" value="resource metrics" style="edgeStyle=orthogonalEdgeStyle;rounded=1;jumpStyle=arc;jumpSize=8;html=1;endArrow=open;endFill=0;dashed=1;dashPattern=8 4;strokeColor=#0078D4;strokeWidth=2;fontSize=11;fontColor=#0F5CA8;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="sre-agent" target="sql">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1340" y="530"/>
+                            <mxPoint x="1340" y="510"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="legend-agent" value="Agent read access" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;fontColor=#5E6C84;" vertex="1" parent="1">
+                    <mxGeometry x="1248" y="1110" width="130" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-agent-line" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;endFill=0;dashed=1;dashPattern=8 4;strokeColor=#0078D4;strokeWidth=2;" edge="1" parent="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1200" y="1122" as="sourcePoint"/>
+                        <mxPoint x="1240" y="1122" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

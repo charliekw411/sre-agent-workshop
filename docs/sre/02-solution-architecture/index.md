@@ -35,50 +35,7 @@ Read it properly. In Module 12 you paste a condensed version of this architectur
 
 This is the complete deployed environment.
 
-```mermaid
-flowchart TB
-    USER([Workshop operator])
-
-    subgraph RG["Resource group: rg-sre-agent-workshop-&lt;suffix&gt;"]
-        subgraph CAE["Container Apps environment"]
-            ORDERS["orders-api<br/>external ingress<br/>0.5 vCPU / 1 Gi"]
-            CATALOG["catalog-api<br/>internal ingress<br/>0.25 vCPU / 0.5 Gi"]
-        end
-
-        ACR[("Container registry")]
-        SQL[("Azure SQL Database<br/>sqldb-orders, Basic 2 GB")]
-
-        subgraph OBS["Observability"]
-            LAW[("Log Analytics workspace")]
-            APPI["Application Insights"]
-            RULES["Alert rules"]
-            AG["Action group"]
-        end
-
-        AGENT["Azure SRE Agent"]
-    end
-
-    USER -- HTTPS --> ORDERS
-    ORDERS -- HTTP --> CATALOG
-    ORDERS -- TDS 1433 --> SQL
-    ACR -. images .-> ORDERS
-    ACR -. images .-> CATALOG
-
-    ORDERS -- console and system logs --> LAW
-    CATALOG -- console and system logs --> LAW
-    SQL -- diagnostic settings --> LAW
-    ORDERS -- requests, dependencies, exceptions --> APPI
-    CATALOG -- requests, dependencies, exceptions --> APPI
-
-    LAW --> RULES
-    APPI --> RULES
-    RULES --> AG
-    AG -- fired alerts --> AGENT
-
-    LAW -. KQL .-> AGENT
-    APPI -. telemetry .-> AGENT
-    SQL -. metrics .-> AGENT
-```
+![Contoso Order Services solution architecture showing request, telemetry, alerting, and Azure SRE Agent flows](../../assets/images/solution-architecture.png)
 
 ## Component responsibilities
 
