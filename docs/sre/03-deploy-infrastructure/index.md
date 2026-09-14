@@ -1,14 +1,14 @@
 ---
 title: Module 03 - Deploy Azure Infrastructure
-description: Deploy the complete Contoso Order Services workshop environment with Azure Developer CLI and verify the application responds end to end.
-ms.date: 2026-09-09
+description: Deploy the complete workshop with azd up, including managed identity SQL initialization and version-controlled SRE Agent configuration.
+ms.date: 2026-09-14
 ms.topic: how-to
 keywords:
   - bicep
   - azure container apps
   - azure sql database
   - deployment
-estimated_reading_time: 15
+estimated_reading_time: 10
 ---
 
 <ul class="sre-meta">
@@ -19,333 +19,162 @@ estimated_reading_time: 15
 
 ## Overview
 
-One `azd up` command deploys the complete workshop environment. Azure Developer CLI creates the resource group, runs the Bicep deployment, builds both images remotely in Azure Container Registry, updates the Container Apps revisions, and saves the deployment outputs.
-
-Roughly 20 of the 30 minutes are Azure working while you watch. Use the wait to skim [Module 04](../04-enable-monitoring/index.md) so you know what comes next.
+One `azd up` provisions the apps, monitoring, Azure SRE Agent, managed identities,
+role assignments, and Key Vault. Hooks build images remotely in Azure Container
+Registry, deploy revisions, run the SQL initialization job, and synchronize the
+version-controlled agent configuration. No portal configuration, manual role
+grants, SQL credentials, or pasted agent configuration are required.
 
 ## Learning objectives
 
-* Deploy all workshop infrastructure with Azure Developer CLI.
-* Understand how a named `azd` environment isolates each participant's resources.
-* Build both container images remotely without a local Docker daemon.
-* Verify the full request path from public ingress through to the database.
+* Deploy the complete environment from a named Azure Developer CLI environment.
+* Explain the separation between SQL initialization and application identities.
+* Verify seed data, application health, and deployment outputs.
 
 ## Architecture context
 
-`azd up` coordinates each dependency in order.
-
 ```mermaid
 flowchart TD
-  AZD[azd up] --> P0[Create resource group]
-  P0 --> P1
-  subgraph P1["Provision: Bicep"]
-        A[Managed identity] --> B[Container registry]
-        A --> C[Log Analytics + App Insights]
-        A --> D[Azure SQL Database]
-        C --> E[Container Apps environment]
-    E --> H[Container apps + alert rules]
-    end
-    P1 --> P2
-  subgraph P2["Package: ACR remote build"]
-        F[orders-api image] --> G[catalog-api image]
-    end
-    P2 --> P3
-  subgraph P3["Deploy: Container App revisions"]
-    I[catalog-api image] --> J[orders-api image]
-    end
-    P3 --> V[Smoke test]
+    A[azd up] --> B[Provision infrastructure, SRE Agent, Key Vault and RBAC]
+    B --> C[Build images remotely in ACR]
+    C --> D[Deploy application revisions and SQL bootstrap job]
+    D --> E[Hook starts manual-trigger SQL job and waits for success]
+    E --> F[Sync incident filters, common prompts and knowledge]
+    F --> G[Export safe workshop identifiers and run smoke checks]
 ```
+
+The job uses a **manual trigger**, but the hook starts it automatically: attendees
+do not initialize SQL themselves. Its separate managed identity is the SQL
+Microsoft Entra administrator. SQL authentication is disabled. The Orders API
+uses its own managed identity with object-level grants only, not `db_owner`;
+storage release is exposed through a narrowly scoped privileged stored procedure.
 
 ## Tasks
 
-### Task 1: Confirm the selected environment
+### Task 1: Confirm prerequisites and the selected environment
+
+Complete [Module 01](../01-prerequisites/index.md), including both `az login` and
+`azd auth login`. Python 3.10 or later with PyYAML must be available to the cross-platform
+hooks; `python -m pip install -r requirements.txt` installs the repository's
+dependencies. No local .NET SDK or Docker daemon is needed for remote builds.
 
 ```bash
 azd env get-value AZURE_ENV_NAME
 azd env get-value AZURE_LOCATION
 ```
 
-The environment name should be unique to you. It becomes part of the resource group name, while Bicep derives a stable, globally unique suffix for DNS-based resource names.
+Use the supported default `eastus2`. The SRE Agent resource uses preview API
+`Microsoft.App/agents@2025-05-01-preview`; availability is region constrained.
 
-### Task 2: Deploy the complete environment
+Email notification is optional. To add an action-group receiver, set
+`azd env set ALERT_EMAIL "you@example.com"` before deployment. Hooks do not look
+up an email address in Microsoft Graph; leaving this unset does not block deployment.
+
+### Task 2: Deploy
 
 ```bash
-azd auth login
-az login
 azd up
 ```
 
-Select the intended subscription if prompted. The first deployment usually takes 15 to 25 minutes. The pre-provision hook generates the SQL password and fault token once, then resolves your alert email from Microsoft Entra ID. The post-deploy hook writes `.workshop/workshop.env` so the remaining lab scripts can use the deployment outputs.
+Select the same subscription used for Azure CLI authentication. Keep the
+deployment output: a successful ARM deployment alone is not sufficient if a
+later hook fails. Wait for SQL initialization and agent synchronization to
+complete before starting the incidents. Retry `azd up` after resolving any
+reported prerequisite, permission, regional availability, or propagation error.
 
-!!! warning "Local environment files contain secrets"
-  Both `.azure/<environment-name>/.env` and `.workshop/workshop.env` contain workshop credentials and are excluded by `.gitignore`. Do not commit or share either file.
+Before provisioning, the common hook registers required resource providers,
+waits up to fifteen minutes, and checks the selected region against the advertised
+`Microsoft.App/agents` locations. Provider registration is automatic, not a
+separate attendee setup task.
 
-### Task 3: Load and inspect the outputs
+### Task 3: Load the safe outputs
 
-```bash
-source .workshop/workshop.env
+=== "Bash"
 
-echo "Environment: ${AZURE_ENV_NAME}"
-echo "Resource group: ${RESOURCE_GROUP}"
-echo "Registry: ${ACR_LOGIN_SERVER}"
-echo "orders-api: https://${ORDERS_API_FQDN}"
+    ```bash
+    source .workshop/workshop.env
+    az resource list --resource-group "${RESOURCE_GROUP}" \
+      --query "[].{Name:name, Type:type}" --output table
+    ```
 
-az resource list \
-  --resource-group "${RESOURCE_GROUP}" \
-  --query "[].{Name:name, Type:type}" \
-  --output table
-```
+=== "PowerShell"
 
-### Task 4: Make the lab scripts executable
+    ```powershell
+    . ./.workshop/workshop.ps1
+    az resource list --resource-group $env:RESOURCE_GROUP `
+      --query "[].{Name:name, Type:type}" --output table
+    ```
 
-```bash
-chmod +x scripts/*.sh
-```
+The generated shell files use an explicit allowlist of non-secret identifiers,
+names, and endpoints. They do not contain credentials. The fault helper retrieves
+its secret just in time from Key Vault; do not export it or copy it into a file.
+Keep `.workshop/` and `.azure/` excluded from source control.
 
-## Deployment internals
+### Task 4: Understand repeatable SQL initialization
 
-`azd up` executes the same three-pass dependency chain shown below. You do not need to run these commands during the workshop; they remain as a troubleshooting reference for understanding which stage failed.
+The bootstrap job creates schema and grants, then inserts only missing reserved
+seed IDs. Existing orders and storage ballast are preserved on redeployment.
+The five seed orders all have customer `workshop-seed`, quantity `1`, and timestamp
+`2026-01-01T00:00:00Z`:
 
-### Task 1: Restore your workshop variables
+| Order ID | Product ID | Unit price |
+| --- | --- | --- |
+| -1 | SKU-1001 | 129.99 |
+| -2 | SKU-1002 | 349.00 |
+| -3 | SKU-1003 | 219.50 |
+| -4 | SKU-1004 | 45.75 |
+| -5 | SKU-1005 | 189.00 |
 
-```bash
-cd sre-agent-workshop
-source .workshop/workshop.env
-echo "Suffix: ${WORKSHOP_SUFFIX} | Region: ${LOCATION} | RG: ${RESOURCE_GROUP}"
-```
-
-If any value is blank, return to [How This Workshop Works](../00-workshop-intro/3-how-this-workshop-works.md) and recreate the file.
-
-### Task 2: Generate the workshop secrets
-
-Two secrets are needed: the SQL administrator password and the fault-injection token. Generate both rather than inventing them, and never hardcode them into a template.
-
-```bash
-export SQL_ADMIN_LOGIN="sreworkshopadmin"
-export SQL_ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)Aa1!"
-export FAULT_TOKEN="$(openssl rand -hex 24)"
-export ALERT_EMAIL="$(az ad signed-in-user show --query mail --output tsv)"
-
-# Fall back to the user principal name when the directory has no mail attribute.
-if [[ -z "${ALERT_EMAIL}" || "${ALERT_EMAIL}" == "null" ]]; then
-  export ALERT_EMAIL="$(az ad signed-in-user show --query userPrincipalName --output tsv)"
-fi
-
-cat >> .workshop/workshop.env <<EOF
-export SQL_ADMIN_LOGIN="${SQL_ADMIN_LOGIN}"
-export SQL_ADMIN_PASSWORD="${SQL_ADMIN_PASSWORD}"
-export FAULT_TOKEN="${FAULT_TOKEN}"
-export ALERT_EMAIL="${ALERT_EMAIL}"
-EOF
-
-echo "Alert email: ${ALERT_EMAIL}"
-```
-
-!!! danger "These values are credentials"
-    `.workshop/workshop.env` now contains a database administrator password and a token that unlocks endpoints designed to destroy the service. The repository `.gitignore` excludes the folder. Verify with `git check-ignore -v .workshop/workshop.env` before you commit anything.
-
-### Task 3: Create the resource group
-
-```bash
-az group create \
-  --name "${RESOURCE_GROUP}" \
-  --location "${LOCATION}" \
-  --tags workload=sre-agent-workshop environment=workshop \
-  --output table
-```
-
-### Task 4: Deploy the foundation resources
-
-```bash
-export ENTRA_ADMIN_OBJECT_ID="$(az ad signed-in-user show --query id --output tsv)"
-export ENTRA_ADMIN_NAME="$(az ad signed-in-user show --query userPrincipalName --output tsv)"
-
-az deployment group create \
-  --resource-group "${RESOURCE_GROUP}" \
-  --name "foundation-$(date +%Y%m%d%H%M%S)" \
-  --template-file infra/main.bicep \
-  --parameters \
-      suffix="${WORKSHOP_SUFFIX}" \
-      location="${LOCATION}" \
-      sqlAdminLogin="${SQL_ADMIN_LOGIN}" \
-      sqlAdminPassword="${SQL_ADMIN_PASSWORD}" \
-      sqlEntraAdminObjectId="${ENTRA_ADMIN_OBJECT_ID}" \
-      sqlEntraAdminName="${ENTRA_ADMIN_NAME}" \
-  --output none
-
-echo "Foundation deployment complete."
-```
-
-This takes eight to twelve minutes, dominated by the Container Apps environment and the SQL logical server.
-
-!!! tip "Watch it rather than staring at a blank terminal"
-    In a second shell, run `watch -n 15 "az resource list --resource-group ${RESOURCE_GROUP} --query '[].{Name:name,Type:type}' --output table"` to see resources appear.
-
-### Task 5: Capture the deployment outputs
-
-```bash
-export DEPLOYMENT_NAME="$(az deployment group list \
-  --resource-group "${RESOURCE_GROUP}" \
-  --query "[?starts_with(name, 'foundation-')] | sort_by(@, &properties.timestamp) | [-1].name" \
-  --output tsv)"
-
-OUTPUTS="$(az deployment group show \
-  --resource-group "${RESOURCE_GROUP}" \
-  --name "${DEPLOYMENT_NAME}" \
-  --query properties.outputs)"
-
-export ACR_NAME="$(echo "${OUTPUTS}" | jq -r .registryName.value)"
-export ACR_LOGIN_SERVER="$(echo "${OUTPUTS}" | jq -r .registryLoginServer.value)"
-export LOG_ANALYTICS_NAME="$(echo "${OUTPUTS}" | jq -r .workspaceName.value)"
-export LOG_ANALYTICS_ID="$(echo "${OUTPUTS}" | jq -r .workspaceResourceId.value)"
-export LOG_ANALYTICS_CUSTOMER_ID="$(echo "${OUTPUTS}" | jq -r .workspaceCustomerId.value)"
-export APP_INSIGHTS_NAME="$(echo "${OUTPUTS}" | jq -r .appInsightsName.value)"
-export SQL_SERVER_NAME="$(echo "${OUTPUTS}" | jq -r .sqlServerName.value)"
-export SQL_DATABASE_NAME="$(echo "${OUTPUTS}" | jq -r .sqlDatabaseName.value)"
-export CONTAINER_ENV_NAME="$(echo "${OUTPUTS}" | jq -r .containerAppsEnvironmentName.value)"
-
-cat >> .workshop/workshop.env <<EOF
-export ACR_NAME="${ACR_NAME}"
-export ACR_LOGIN_SERVER="${ACR_LOGIN_SERVER}"
-export LOG_ANALYTICS_NAME="${LOG_ANALYTICS_NAME}"
-export LOG_ANALYTICS_ID="${LOG_ANALYTICS_ID}"
-export LOG_ANALYTICS_CUSTOMER_ID="${LOG_ANALYTICS_CUSTOMER_ID}"
-export APP_INSIGHTS_NAME="${APP_INSIGHTS_NAME}"
-export SQL_SERVER_NAME="${SQL_SERVER_NAME}"
-export SQL_DATABASE_NAME="${SQL_DATABASE_NAME}"
-export CONTAINER_ENV_NAME="${CONTAINER_ENV_NAME}"
-EOF
-
-echo "Registry: ${ACR_LOGIN_SERVER}"
-```
-
-### Task 6: Build the container images
-
-`az acr build` builds in Azure, so you do not need Docker installed locally. Each build takes two to four minutes.
-
-```bash
-az acr build \
-  --registry "${ACR_NAME}" \
-  --image catalog-api:v1 \
-  --file src/CatalogApi/Dockerfile \
-  src/CatalogApi
-
-az acr build \
-  --registry "${ACR_NAME}" \
-  --image orders-api:v1 \
-  --file src/OrdersApi/Dockerfile \
-  src/OrdersApi
-
-az acr repository list --name "${ACR_NAME}" --output table
-```
-
-### Task 7: Deploy the container apps
-
-```bash
-az deployment group create \
-  --resource-group "${RESOURCE_GROUP}" \
-  --name "apps-$(date +%Y%m%d%H%M%S)" \
-  --template-file infra/apps.bicep \
-  --parameters \
-      suffix="${WORKSHOP_SUFFIX}" \
-      location="${LOCATION}" \
-      ordersImage="${ACR_LOGIN_SERVER}/orders-api:v1" \
-      catalogImage="${ACR_LOGIN_SERVER}/catalog-api:v1" \
-      sqlAdminLogin="${SQL_ADMIN_LOGIN}" \
-      sqlAdminPassword="${SQL_ADMIN_PASSWORD}" \
-      faultToken="${FAULT_TOKEN}" \
-  --output none
-
-export ORDERS_API_FQDN="$(az containerapp show \
-  --name orders-api \
-  --resource-group "${RESOURCE_GROUP}" \
-  --query properties.configuration.ingress.fqdn \
-  --output tsv)"
-
-cat >> .workshop/workshop.env <<EOF
-export ORDERS_API_FQDN="${ORDERS_API_FQDN}"
-EOF
-
-echo "orders-api is reachable at https://${ORDERS_API_FQDN}"
-```
-
-!!! warning "Managed identity role propagation"
-    The image pull uses a user-assigned managed identity with `AcrPull`. Role assignments can take up to five minutes to propagate. If the first revision reports `ImagePullFailure`, wait three minutes and run `az containerapp revision restart --name orders-api --resource-group "${RESOURCE_GROUP}" --revision "$(az containerapp revision list --name orders-api --resource-group "${RESOURCE_GROUP}" --query '[0].name' -o tsv)"`.
-
-### Task 8: Make the scripts executable
-
-```bash
-chmod +x scripts/*.sh
-```
+Re-running deployment is not a fault reset. Use the fault helper to reset an
+incident deliberately, rather than relying on initialization to delete data.
 
 ## Validation
 
-Run a full smoke test that exercises ingress, the internal dependency call, and the database write.
-
 ```bash
 source .workshop/workshop.env
-
-echo "--- Service metadata ---"
 curl --silent --fail "https://${ORDERS_API_FQDN}/" | jq .
-
-echo "--- Create an order ---"
+curl --silent --fail "https://${ORDERS_API_FQDN}/orders" | jq .
 curl --silent --fail --request POST "https://${ORDERS_API_FQDN}/orders" \
   --header 'Content-Type: application/json' \
   --data '{"customerId":"cust-001","productId":"SKU-1002","quantity":2}' | jq .
-
-echo "--- Read recent orders ---"
-curl --silent --fail "https://${ORDERS_API_FQDN}/orders" | jq '. | length'
-
-echo "--- Database storage usage ---"
+curl --silent --fail --request PUT "https://${ORDERS_API_FQDN}/orders/-1/quantity" \
+  --header 'Content-Type: application/json' \
+  --data '{"quantity":1}' --output /dev/null --write-out 'Quantity update: HTTP %{http_code}\n'
 curl --silent --fail "https://${ORDERS_API_FQDN}/storage" | jq .
-
-echo "--- Fault endpoint reachable and authenticated ---"
-curl --silent --fail --header "X-Fault-Token: ${FAULT_TOKEN}" \
-  "https://${ORDERS_API_FQDN}/fault/status" | jq .
-
-echo "--- Fault endpoint rejects a wrong token ---"
-curl --silent --output /dev/null --write-out 'HTTP %{http_code} (expected 401)\n' \
-  --header "X-Fault-Token: definitely-not-the-token" \
-  "https://${ORDERS_API_FQDN}/fault/status"
+./scripts/inject-fault.sh status
 ```
 
-Confirm both container apps are running.
+The quantity update uses reserved seed order `-1` and returns HTTP 204 without a
+response body. Quantities must be from 1 through 1000; invalid values return 400
+and an unknown order returns 404. The update changes only the order's quantity.
 
-```bash
-az containerapp list \
-  --resource-group "${RESOURCE_GROUP}" \
-  --query "[].{Name:name, Status:properties.runningStatus, Replicas:properties.template.scale.minReplicas, Fqdn:properties.configuration.ingress.fqdn}" \
-  --output table
-```
+For PowerShell fault operations, use `./scripts/inject-fault.ps1 status`.
+Both wrappers call the common Python implementation and retrieve authentication
+from Key Vault without displaying the secret.
 
 ## Expected results
 
-* The service metadata call returns `"service": "orders-api"`.
-* The order creation call returns HTTP 201 with an `orderId` and a `unitPrice` of `349.00`.
-* The recent orders call returns a count of at least 1.
-* The storage call returns `maxBytes` of `1073741824` and a small `usedPercent`.
-* The fault status call returns all faults inactive.
-* The wrong-token call returns `HTTP 401`.
-* Both container apps report `Running`.
+* Metadata identifies `orders-api`.
+* A fresh database has the five seed orders before any load generation.
+* Order creation returns HTTP 201 with a unit price of `349.00`.
+* Updating seed order `-1` to quantity `1` returns HTTP 204.
+* Storage reports a 1 GiB cap and low utilization on a fresh deployment.
+* Fault status shows no active faults on a fresh deployment.
+* Both apps run, the SQL job succeeds, and agent synchronization completes.
 
-If the order creation returns HTTP 500 with a catalog message, `catalog-api` has not finished starting. Wait 60 seconds and retry. If it returns HTTP 500 with a SQL message, check that the firewall rule allowing Azure services exists on the SQL server.
-
-<!-- SCREENSHOT: Azure portal resource group overview showing all deployed resources -->
+These are checks to perform against your deployment, not a claim that a live
+Azure deployment has been validated here. Use
+[Troubleshooting](../30-appendix/02-troubleshooting.md) for failures.
 
 ## Knowledge check
 
-??? question "Why does the workshop use `az acr build` instead of building images locally and pushing them?"
-    It removes the Docker dependency entirely, which matters for Cloud Shell users and for anyone on a locked-down corporate machine. It also builds on Azure infrastructure close to the registry, so the push is fast and does not depend on your upload bandwidth.
+??? question "Why is the SQL job separate from the Orders API?"
+    Initialization needs schema and permission management rights. Giving those rights to the request-serving identity would unnecessarily expand its privileges. The job owns initialization; the runtime only receives the object permissions it needs.
 
-??? question "The container apps pull images with a user-assigned managed identity rather than registry admin credentials. What is the practical benefit?"
-    There is no shared username and password to store, rotate, or leak. Access is a role assignment you can audit and revoke in one place, and it is scoped to `AcrPull` rather than to full registry administration. Registry admin accounts are a single credential shared by everything that pulls, which makes rotation an outage.
-
-??? question "`orders-api` is fixed at exactly one replica. What would you change for a production deployment, and what would that break in this workshop?"
-    Production would use `minReplicas: 2` or higher with an HTTP concurrency scale rule so a single unhealthy replica does not take out the service. In this workshop that change would let the platform absorb the Module 06 CPU load by adding replicas, hiding the saturation signal that the whole investigation depends on.
+??? question "Does another azd up erase the current incident?"
+    No. Initialization inserts missing seed IDs without deleting orders or storage ballast. Reset an incident explicitly with the fault helper.
 
 ## Next steps
-
-The application and detection resources are running. Next you inspect the monitoring configuration and establish a healthy baseline.
 
 [Next: Module 04 - Enable Native Azure Monitoring :material-arrow-right:](../04-enable-monitoring/index.md){ .md-button .md-button--primary }
 

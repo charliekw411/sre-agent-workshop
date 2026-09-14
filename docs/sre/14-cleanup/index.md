@@ -142,15 +142,22 @@ azd down --purge --force
 
 Deletion runs for five to fifteen minutes in the background.
 
-### Task 6: Handle the local credentials
+!!! warning "Key Vault names remain reserved after cleanup"
+    The workshop vault has purge protection and seven-day soft-delete retention. `azd down --purge` cannot override that protection: the deleted vault and its name remain reserved during retention. An immediate redeployment with the same environment-derived vault name may require recovery of the deleted vault. For a separate fresh workshop, choose a new azd environment name; otherwise wait for retention to expire or follow your organization's approved recovery process. Do not disable purge protection or attempt a portal workaround.
 
-`.azure/<environment-name>/.env` and `.workshop/workshop.env` contain a SQL administrator password and the fault-injection token. Both are now useless, but treat them as credentials anyway.
+### Task 6: Handle local deployment state
+
+The generated `.workshop/workshop.env` and `.workshop/workshop.ps1` contain only
+allowlisted non-secret identifiers and endpoints. SQL uses managed identity and
+fault credentials remain in Key Vault, not local exports. Remove stale deployment
+state if you do not intend to reuse the environment; keep investigation notes
+only as appropriate for your organization's data handling policy.
 
 === "Delete it"
 
     ```bash
     azd env delete "$(azd env get-value AZURE_ENV_NAME)" --force
-    rm -f .workshop/workshop.env
+    rm -f .workshop/workshop.env .workshop/workshop.ps1
     ```
 
 === "Keep it for a repeat run"

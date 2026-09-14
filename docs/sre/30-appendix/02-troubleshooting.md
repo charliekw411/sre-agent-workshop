@@ -16,9 +16,19 @@ Find the symptom, confirm the diagnosis with the check command, then apply the r
 
 ## Deployment problems
 
+### A fresh deployment cannot reuse a deleted Key Vault name
+
+The vault has purge protection and seven-day soft-delete retention. Cleanup
+cannot immediately purge it, even with `azd down --purge`. Reusing the same
+environment-derived vault name during retention may require recovery. Use a new
+azd environment name for a separate fresh workshop, wait for retention to expire,
+or follow your organization's approved recovery process; do not bypass protection.
+
 ### Deployment fails with MissingSubscriptionRegistration
 
-The resource provider is not registered on your subscription.
+The pre-provision hook automatically registers required resource providers and
+waits up to fifteen minutes. This error indicates registration failed, timed out,
+or is blocked for the deployment caller.
 
 ```bash
 az provider list \
@@ -26,11 +36,10 @@ az provider list \
   --output table
 ```
 
-Register the missing provider and wait a few minutes.
-
-```bash
-az provider register --namespace Microsoft.App --wait
-```
+Check the hook output and the caller's subscription permissions, including
+permission to register providers. Resolve access or policy restrictions, then
+rerun `azd up` so the hook can retry. `Microsoft.ContainerInstance` and
+`Microsoft.Storage` must also be available for the deployment script.
 
 ### Container registry name is already taken
 
@@ -42,16 +51,41 @@ az acr check-name --name "acr${WORKSHOP_SUFFIX}" --output table
 
 Choose a new suffix and start Module 03 again. The partially created resource group can be deleted first.
 
-### SQL server creation fails on password complexity
+### SQL initialization job fails
 
-The generated password did not satisfy the policy, which occasionally happens when the random characters are stripped.
+SQL is Entra-only, so password resets are not a troubleshooting step. Inspect the
+failed manual-trigger job execution and its logs. Confirm the bootstrap job uses
+its separate administrator managed identity, the Entra administrator configuration
+has propagated, and SQL networking allows the job to connect. Rerun `azd up`
+after addressing the reported failure. The hook waits for job success before
+agent configuration; existing orders and ballast are not deleted on retry.
 
 ```bash
-export SQL_ADMIN_PASSWORD="Workshop$(openssl rand -hex 8)Aa1!"
-echo "${SQL_ADMIN_PASSWORD}" | wc -c
+source .workshop/workshop.env
+az containerapp job execution list --name "${BOOTSTRAP_JOB_NAME}" \
+  --resource-group "${RESOURCE_GROUP}" --output table
 ```
 
-The password must be at least 16 characters and contain three of: uppercase, lowercase, digit, symbol. Update `.workshop/workshop.env` and rerun the deployment.
+### A hook cannot import yaml or authenticate
+
+Activate the same Python 3.10-or-later environment used to install
+`python -m pip install -r requirements.txt`. Check `python -c "import yaml"`.
+Run both `az login` and `azd auth login` in the intended tenant, and ensure both
+CLIs select the same subscription. `azd` authentication alone does not authenticate
+the Azure CLI commands used by the hooks.
+
+The hook rejects differing `oid` or `tid` claims in the CLIs' ARM tokens. Sign in
+to both with the same attendee identity and tenant; do not override deployment
+identity variables to bypass the check. azd supplies `AZURE_PRINCIPAL_ID` and
+`AZURE_PRINCIPAL_TYPE` before pre-provision runs.
+
+### Deployment fails while creating role assignments
+
+The deployment caller needs subscription `Owner`, or `Contributor` plus
+`User Access Administrator`, including resource group creation and all role
+assignments. Resource-group-only access or Contributor alone is insufficient.
+Resolve the prerequisite access with your subscription administrator and rerun
+`azd up`; do not manually grant missing runtime roles.
 
 ### Deployment succeeds but the container app shows ImagePullFailure
 
@@ -118,7 +152,10 @@ az sql server firewall-rule create \
   --end-ip-address 0.0.0.0
 ```
 
-If the firewall is correct, the password stored in the container app secret probably no longer matches the server. Redeploy `infra/apps.bicep` with the current password.
+If the firewall is correct, inspect the SQL bootstrap job result and the Orders
+managed identity configuration. Initialization must create the contained user and
+object-level grants before writes succeed. Do not grant `db_owner` to the API or
+add SQL authentication; reconcile the deployment with `azd up`.
 
 ### Fault endpoints return 404
 
@@ -129,17 +166,16 @@ az containerapp show --name orders-api --resource-group "${RESOURCE_GROUP}" \
   --query "properties.template.containers[0].env[?name=='Fault__Enabled' || name=='Fault__Token']" --output table
 ```
 
-`Fault__Enabled` must be `true` and `Fault__Token` must reference the `fault-token` secret. Redeploy `infra/apps.bicep` if either is wrong.
+`Fault__Enabled` must be `true` and `Fault__Token` must reference the Key Vault-backed
+Container Apps secret. Rerun `azd up` if either is wrong.
 
 ### Fault endpoints return 401
 
-The token in your shell does not match the token in the container app.
-
-```bash
-echo "${FAULT_TOKEN}" | wc -c
-```
-
-Rotate the secret to a known value using the procedure in [Workshop Variables](01-variables.md#recovering-the-generated-secrets).
+Use `./scripts/inject-fault.sh status` or `./scripts/inject-fault.ps1 status`,
+which retrieves the current secret from Key Vault just in time. Verify the
+selected environment, Azure CLI login, and deployment-assigned Key Vault access.
+Allow time for role propagation and secret-reference refresh, then rerun
+`azd up` if configuration has drifted. Do not print or persist the token.
 
 ## Telemetry problems
 
@@ -198,7 +234,11 @@ az monitor action-group show --name ag-sre-workshop --resource-group "${RESOURCE
   --query "emailReceivers[].{Email:emailAddress, Status:status}" --output table
 ```
 
-Status must be `Enabled`. Azure sends a confirmation email on creation; until it is acknowledged the receiver stays disabled. Check spam.
+The receiver is optional. If `ALERT_EMAIL` was not set in the azd environment,
+an empty receiver list is expected. To enable email, set
+`azd env set ALERT_EMAIL "you@example.com"` and rerun `azd up`. Hooks do not query
+Microsoft Graph for an email address. For a configured receiver, inspect its
+status and check spam for delivery or confirmation instructions.
 
 ## Azure SRE Agent problems
 
@@ -217,17 +257,50 @@ Expect `Reader` and `Monitoring Reader` on the resource group and `Log Analytics
 
 `Log Analytics Reader` is missing or is scoped to the wrong resource.
 
-```bash
-az role assignment create \
-  --assignee-object-id "${SRE_AGENT_PRINCIPAL_ID}" \
-  --assignee-principal-type ServicePrincipal \
-  --role "Log Analytics Reader" \
-  --scope "${LOG_ANALYTICS_ID}"
-```
+Check the role assignment list against the [permission record](../05-configure-sre-agent/index.md#deployment-api-contract-and-permission-record).
+Wait for propagation, then rerun `azd up` to reconcile assignments. Do not add
+manual grants or broaden the runtime's read-only scope.
+
+### Agent configuration returns 401 or 403
+
+The configuration caller, not the runtime identity, needs the agent-scoped
+`SRE Agent Administrator` role assigned by hooks. Check the Azure CLI account and
+allow time for that grant to propagate. The configuration API uses the resource's
+`properties.agentEndpoint` and token audience `https://azuresre.dev`.
+Retry `python scripts/workshop.py configure-agent` after correcting authentication.
+
+### Agent synchronization reports a retired incident filter
+
+Keep the named `workshop-` filter in `agent/incident-filters.yaml` with
+`spec.isEnabled: false`. Removing an existing filter from YAML fails closed;
+the hook does not assume a v2 DELETE endpoint exists.
+
+### Knowledge indexing does not finish
+
+The hook replaces owned `workshop-*.md` documents and polls `/files` for
+`isIndexed` or `indexStatus` for up to ten minutes. Confirm the manifests reference
+existing files relative to `agent/`, then retry the configuration refresh after
+investigating a service-side indexing failure. Do not store unrelated documents
+under the reserved `workshop-*.md` namespace. Index status does not prove remote
+source-byte equality; the contract does not expose downloads of uploaded source.
+
+### An investigation does not acknowledge or close the alert
+
+That is expected. Full Azure Monitor alert lifecycle integration requires
+subscription `Monitoring Contributor`, which this read-only workshop does not
+grant. Use the Azure Monitor investigative UI to inspect alert state; do not widen
+agent permissions to make a lifecycle action succeed.
 
 ### Azure SRE Agent is not available in my region
 
-Availability is rolling out progressively. Check the [Azure SRE Agent documentation](https://learn.microsoft.com/azure/sre-agent/) for the current list.
+The deployment targets `Microsoft.App/agents@2025-05-01-preview`, whose availability
+is constrained. Use the supported default `eastus2` and check the
+[Azure SRE Agent documentation](https://learn.microsoft.com/azure/sre-agent/)
+before selecting another region.
+
+The pre-provision hook checks `AZURE_LOCATION` against the locations advertised
+by `Microsoft.App/agents`. If that check fails, select a supported region in the
+azd environment rather than creating a separate agent manually.
 
 You can complete Modules 06 through 11 manually. Every investigation module includes the full KQL and Azure CLI commands, and the analytical content stands on its own.
 

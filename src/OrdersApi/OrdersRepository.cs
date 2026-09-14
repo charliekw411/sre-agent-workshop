@@ -16,41 +16,6 @@ public sealed class OrdersRepository(IConfiguration configuration, ILogger<Order
         configuration.GetConnectionString("OrdersDb")
         ?? throw new InvalidOperationException("Connection string 'OrdersDb' is not configured.");
 
-    public async Task EnsureSchemaAsync(CancellationToken cancellationToken)
-    {
-        const string sql = """
-            IF OBJECT_ID(N'dbo.Orders', N'U') IS NULL
-            BEGIN
-                CREATE TABLE dbo.Orders
-                (
-                    OrderId     BIGINT IDENTITY(1,1) PRIMARY KEY,
-                    CustomerId  NVARCHAR(64)   NOT NULL,
-                    ProductId   NVARCHAR(64)   NOT NULL,
-                    Quantity    INT            NOT NULL,
-                    UnitPrice   DECIMAL(18,2)  NOT NULL,
-                    CreatedUtc  DATETIME2(3)   NOT NULL CONSTRAINT DF_Orders_CreatedUtc DEFAULT SYSUTCDATETIME()
-                );
-                CREATE INDEX IX_Orders_CreatedUtc ON dbo.Orders (CreatedUtc DESC);
-            END;
-
-            IF OBJECT_ID(N'dbo.StorageBallast', N'U') IS NULL
-            BEGIN
-                CREATE TABLE dbo.StorageBallast
-                (
-                    BallastId  BIGINT IDENTITY(1,1) PRIMARY KEY,
-                    Payload    NVARCHAR(MAX)  NOT NULL,
-                    CreatedUtc DATETIME2(3)   NOT NULL CONSTRAINT DF_Ballast_CreatedUtc DEFAULT SYSUTCDATETIME()
-                );
-            END;
-            """;
-
-        await using var connection = new SqlConnection(ConnectionString);
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(sql, connection) { CommandTimeout = 60 };
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        logger.LogInformation("Orders schema verified.");
-    }
-
     public async Task<long> CreateOrderAsync(OrderRequest request, decimal unitPrice, CancellationToken cancellationToken)
     {
         const string sql = """
@@ -98,6 +63,20 @@ public sealed class OrdersRepository(IConfiguration configuration, ILogger<Order
         }
 
         return orders;
+    }
+
+    public async Task<bool> UpdateQuantityAsync(long orderId, int quantity, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE dbo.Orders SET Quantity = @Quantity WHERE OrderId = @OrderId;
+            """;
+
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.Add("@Quantity", SqlDbType.Int).Value = quantity;
+        command.Parameters.Add("@OrderId", SqlDbType.BigInt).Value = orderId;
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
     public async Task<(long UsedBytes, long MaxBytes)> GetStorageUsageAsync(CancellationToken cancellationToken)
@@ -172,14 +151,13 @@ public sealed class OrdersRepository(IConfiguration configuration, ILogger<Order
 
     public async Task<int> ReleaseStorageAsync(CancellationToken cancellationToken)
     {
-        const string sql = """
-            TRUNCATE TABLE dbo.StorageBallast;
-            DBCC SHRINKDATABASE (0, 10) WITH NO_INFOMSGS;
-            """;
-
         await using var connection = new SqlConnection(ConnectionString);
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(sql, connection) { CommandTimeout = 300 };
+        await using var command = new SqlCommand("dbo.ReleaseStorageBallast", connection)
+        {
+            CommandType = CommandType.StoredProcedure,
+            CommandTimeout = 300
+        };
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }

@@ -11,7 +11,7 @@ param location string = resourceGroup().location
 param suffix string
 
 @description('Email address that receives alert notifications.')
-param alertEmail string
+param alertEmail string = ''
 
 @description('CPU threshold in nanocores for orders-api. The container is allocated 0.5 vCPU, so 400000000 is 80 percent utilization.')
 param cpuThresholdNanoCores int = 400000000
@@ -57,7 +57,7 @@ resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
   properties: {
     groupShortName: 'sreWorkshop'
     enabled: true
-    emailReceivers: [
+    emailReceivers: empty(alertEmail) ? [] : [
       {
         name: 'workshop-operator'
         emailAddress: alertEmail

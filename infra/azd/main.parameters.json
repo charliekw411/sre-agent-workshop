@@ -8,14 +8,14 @@
     "location": {
       "value": "${AZURE_LOCATION}"
     },
-    "sqlAdminPassword": {
-      "value": "${SQL_ADMIN_PASSWORD}"
+    "deployerPrincipalId": {
+      "value": "${AZURE_PRINCIPAL_ID}"
     },
-    "faultToken": {
-      "value": "${FAULT_TOKEN}"
+    "deployerPrincipalType": {
+      "value": "${AZURE_PRINCIPAL_TYPE}"
     },
     "alertEmail": {
-      "value": "${ALERT_EMAIL}"
+      "value": "${ALERT_EMAIL=}"
     }
   }
 }

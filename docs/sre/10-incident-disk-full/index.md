@@ -70,8 +70,7 @@ The gap between phase 2 and phase 3 is the most valuable property of this incide
 ```bash
 source .workshop/workshop.env
 
-curl --silent --header "X-Fault-Token: ${FAULT_TOKEN}" \
-  "https://${ORDERS_API_FQDN}/fault/status" | jq '{cpuLoadActive, errorInjectionActive, storagePhase}'
+./scripts/inject-fault.sh status
 
 curl --silent "https://${ORDERS_API_FQDN}/storage" | jq .
 ```

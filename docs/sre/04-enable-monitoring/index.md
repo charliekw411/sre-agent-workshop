@@ -20,7 +20,7 @@ estimated_reading_time: 15
 
 ## Overview
 
-Detection is the part of incident response most teams get wrong, usually by alerting on everything and therefore on nothing. This module builds a small, deliberate detection layer: five metric alerts and two log alerts, each mapped to a specific failure mode you reproduce later.
+Detection is the part of incident response most teams get wrong, usually by alerting on everything and therefore on nothing. This module inspects the detection layer already provisioned by `azd up`: five metric alerts and two log alerts, each mapped to a specific failure mode you reproduce later.
 
 You also establish a healthy baseline. An investigation that cannot answer "what does normal look like" is guesswork, for you and for the agent.
 
@@ -216,7 +216,12 @@ EOF
 echo "Fill in .workshop/notes/baseline.md with the values above."
 ```
 
-### Task 7: Confirm the action group can reach you
+### Task 7: Inspect the optional notification receiver
+
+The action group is provisioned by `azd up`. An email receiver is configured only
+when you set `ALERT_EMAIL` in the azd environment. No receiver is expected when
+that optional value is unset; alert rules and read-only investigation do not
+depend on email delivery.
 
 ```bash
 az monitor action-group show \
@@ -226,7 +231,10 @@ az monitor action-group show \
   --output table
 ```
 
-Azure sends a confirmation email when the receiver is created. If the status is not `Enabled`, check your inbox and spam folder.
+If you configured an email receiver, inspect its status and check your inbox and
+spam folder for any Azure notification or confirmation instructions. To add or
+change the receiver, set `azd env set ALERT_EMAIL "you@example.com"` and rerun
+`azd up`; no portal configuration is required.
 
 <!-- SCREENSHOT: Azure Monitor alert rules list showing all seven rules enabled -->
 
@@ -271,7 +279,7 @@ REQ_ROWS=$(az monitor log-analytics query --workspace "${LOG_ANALYTICS_CUSTOMER_
 
 ## Next steps
 
-Detection is in place. Now connect the agent that consumes it.
+Detection is verified. Now inspect the agent and version-controlled configuration already deployed alongside it.
 
 [Next: Module 05 - Configure Azure SRE Agent :material-arrow-right:](../05-configure-sre-agent/index.md){ .md-button .md-button--primary }
 

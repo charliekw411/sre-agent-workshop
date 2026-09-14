@@ -21,7 +21,7 @@ estimated_reading_time: 12
 
 You cannot investigate a system you do not understand, and neither can an agent. This module walks the architecture you deploy in Module 03: what each component does, how requests flow, where telemetry goes, and which parts are designed to fail.
 
-Read it properly. In Module 12 you paste a condensed version of this architecture into the agent's custom instructions, and the quality of that description directly determines the quality of the diagnoses you get.
+Read it properly. Deployment loads the checked-in architecture as agent knowledge. In Module 12 you improve that Markdown and synchronize it with `azd up` or `python scripts/workshop.py configure-agent`; the quality of that description directly affects the diagnoses you get.
 
 ## Learning objectives
 
@@ -45,13 +45,23 @@ The public entry point. It accepts order submissions, queries order history, and
 
 It also hosts the fault-injection controller at `/fault/*`, gated by an `X-Fault-Token` header.
 
+`PUT /orders/{id}/quantity` updates an existing order's quantity with values from
+1 through 1000. This exercises the runtime's narrow SQL update permission without
+granting schema-management rights.
+
 ### catalog-api
 
 An internal-only service that returns product and pricing data. It has no ingress from outside the environment, which means the only way to reach it is through `orders-api`. That constraint matters in Module 08: when `catalog-api` degrades, the customer-visible symptom appears on `orders-api`, and the investigation has to walk the dependency chain backwards.
 
 ### Azure SQL Database
 
-A Basic tier database with a 2 GB maximum size. The small ceiling is deliberate. It makes the storage exhaustion incident in Module 10 finish in minutes instead of hours, and it costs almost nothing.
+A Standard S0 database with a deliberately capped 1 GiB maximum size. The small
+ceiling makes the storage exhaustion incident finish in minutes instead of hours.
+Authentication is Entra-only: a separate SQL bootstrap job identity creates the
+schema and grants; the Orders API identity has object-level permissions, not
+`db_owner`. Initialization inserts the five deterministic seed orders documented
+in [Module 03](../03-deploy-infrastructure/index.md) without overwriting existing
+orders or storage ballast.
 
 ### Log Analytics workspace
 
@@ -63,7 +73,9 @@ Workspace-based, backed by the same Log Analytics workspace. It captures the req
 
 ### Azure SRE Agent
 
-Scoped to the resource group with read access to resources and telemetry. Module 05 configures it.
+Scoped to the resource group with read access to resources and telemetry.
+`azd up` provisions it, assigns permissions, and synchronizes the checked-in
+configuration. Module 05 verifies the deployment.
 
 ## Request flow
 
@@ -110,7 +122,7 @@ Each arrow to Application Insights is a correlated telemetry item sharing one op
 
 The fault endpoints live in `orders-api` and follow three rules.
 
-* Every endpoint requires a matching `X-Fault-Token` header. The token is generated at deployment time and stored in `.workshop/workshop.env`.
+* Every endpoint requires a matching `X-Fault-Token` header. The secret stays in Key Vault; `scripts/inject-fault.sh` and `scripts/inject-fault.ps1` retrieve it just in time. Generated shell exports contain only safe identifiers and endpoints.
 * Every endpoint is bounded. CPU load stops after a duration, error injection has a decaying time-to-live, and storage fill has a row cap.
 * Every endpoint has a reset. `POST /fault/reset` clears all active fault state so you can return the system to health without redeploying.
 
