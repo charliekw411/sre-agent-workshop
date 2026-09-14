@@ -45,9 +45,13 @@ flowchart LR
 
 Choose a short, unique environment name, such as your alias followed by `workshop`. Environment names must be unique when participants share a subscription because each name maps to one resource group.
 
+Run these commands from the cloned repository after completing the tooling and
+both-login prerequisites in [Module 01](../01-prerequisites/index.md). If you have
+not installed the tools yet, treat this task as a preview and return afterward.
+
 ```bash
 azd env new "<your-alias>-workshop"
-azd env set AZURE_LOCATION eastus
+azd env set AZURE_LOCATION eastus2
 ```
 
 `azd` stores this state under `.azure/<environment-name>/`, which is excluded from source control. The deployment derives a collision-resistant resource suffix from the subscription ID and environment name.
@@ -63,6 +67,10 @@ azd env get-values
 # Available after azd up in Module 03
 source .workshop/workshop.env
 ```
+
+In PowerShell, load `. ./.workshop/workshop.ps1` instead. Both exports contain
+allowlisted non-secret identifiers and endpoints. The common Python hooks need
+Python 3.10 or later and PyYAML; no local Docker or .NET SDK is needed for deployment.
 
 !!! important "One environment per participant"
     An `azd` environment is a deployment target, not a shell or virtual machine. Participants can run `azd` from a local terminal, a dev container, GitHub Codespaces, or Azure Cloud Shell. Each participant's Azure runtime is an isolated resource group containing one Container Apps managed environment and the rest of the workshop resources.
@@ -99,7 +107,7 @@ Container registry names cannot contain hyphens, which is why that one row looks
     Allocate 90 minutes for Modules 00 through 05 as a guided walkthrough, then let attendees work Modules 06 through 11 independently. Reserve the final 45 minutes for Modules 12 and 13, which generate the most discussion.
 
 !!! warning "Do not skip Module 04"
-    Module 04 creates the alert rules that make the incidents detectable. Skipping it produces an environment where you can break the application but neither you nor the agent gets a signal, which turns the investigation modules into guesswork.
+    Module 03 deploys the monitoring and agent configuration through `azd up`. Module 04 verifies telemetry and establishes a baseline; skipping verification can leave you investigating without useful data.
 
 ## Validation
 
@@ -123,7 +131,7 @@ The commands return your unique environment name and chosen Azure region.
     A different `azd` environment is selected. Run `azd env list`, then select yours with `azd env select <name>`.
 
 ??? question "Why is `.workshop/` in `.gitignore`?"
-    `azd up` exports deployment values, including the SQL administrator password and fault-injection secret, for compatibility with the lab scripts. Committing it would publish credentials to your repository history.
+    It contains participant-specific deployment identifiers and investigation notes, not shared source. The generated exports contain no secrets; fault helpers retrieve credentials from Key Vault just in time. Keeping the directory ignored also prevents accidental publication of future local artifacts.
 
 ## Next steps
 

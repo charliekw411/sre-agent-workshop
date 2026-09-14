@@ -64,11 +64,14 @@ Note that `catalog-api` and the database remain perfectly healthy. Their latency
 ```bash
 source .workshop/workshop.env
 
-curl --silent --header "X-Fault-Token: ${FAULT_TOKEN}" \
-  "https://${ORDERS_API_FQDN}/fault/status" | jq '{cpuLoadActive, errorInjectionActive, storagePhase}'
+./scripts/inject-fault.sh status
 ```
 
 All three should show no active fault. Confirm your load generator from Module 04 is still running; if not, restart it.
+
+The helper retrieves the fault secret from Key Vault just in time. PowerShell
+users can run `./scripts/inject-fault.ps1 status` and use the same arguments for
+the injection commands below. Do not copy authentication tokens into commands.
 
 ### Task 2: Record the incident start time
 
@@ -185,8 +188,7 @@ Paste the result into `.workshop/notes/incident-01-high-cpu.md` under the timeli
 
 ```bash
 source .workshop/workshop.env
-curl --silent --header "X-Fault-Token: ${FAULT_TOKEN}" \
-  "https://${ORDERS_API_FQDN}/fault/status" | jq '{cpuLoadActive, cpuLoadThreads, cpuLoadUntilUtc}'
+./scripts/inject-fault.sh status
 ```
 
 ## Expected results

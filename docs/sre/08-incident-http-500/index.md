@@ -71,8 +71,7 @@ Only the first of these is the trigger. All three are findings.
 ```bash
 source .workshop/workshop.env
 
-curl --silent --header "X-Fault-Token: ${FAULT_TOKEN}" \
-  "https://${ORDERS_API_FQDN}/fault/status" | jq '{cpuLoadActive, errorInjectionActive, storagePhase}'
+./scripts/inject-fault.sh status
 
 az monitor log-analytics query \
   --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \

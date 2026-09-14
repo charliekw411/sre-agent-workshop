@@ -1,7 +1,7 @@
 ---
 title: Running Locally or in Codespaces
-description: Run the sample application on your own machine, preview the documentation site locally, and use GitHub Codespaces or Azure Cloud Shell for the workshop.
-ms.date: 2026-09-08
+description: Preview documentation, develop the sample services, and deploy the workshop from a local or browser-hosted terminal.
+ms.date: 2026-09-14
 ms.topic: how-to
 keywords:
   - local development
@@ -13,128 +13,119 @@ estimated_reading_time: 7
 
 ## Overview
 
-Three scenarios are covered here: previewing the documentation site, running the sample application locally, and running the workshop from a browser without installing anything.
+Local terminals, Codespaces, and Azure Cloud Shell all use the same `azd up`
+deployment. None needs a local Docker daemon or .NET SDK for deployment: images
+build remotely in Azure Container Registry. All need Azure CLI, `azd` 1.18 or
+later, Python 3.10 or later, and PyYAML.
 
 ## Preview the documentation site
 
-The site is built with MkDocs and Material for MkDocs, the same toolchain as the [Azure Container Apps .NET Workshop](https://azure.github.io/aca-dotnet-workshop/).
+The site uses MkDocs and Material for MkDocs.
+
+=== "Bash"
+
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate
+    python -m pip install -r requirements.txt
+    python -m mkdocs serve
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python -m venv .venv
+    . ./.venv/Scripts/Activate.ps1
+    python -m pip install -r requirements.txt
+    python -m mkdocs serve
+    ```
+
+Open [http://localhost:8000](http://localhost:8000). Changes under `docs/` reload
+automatically. Validate documentation using the existing strict build:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-make serve
+python -m mkdocs build --strict --site-dir dist
 ```
 
-On Windows PowerShell:
+The Makefile's `make build-docs-website` target installs the same requirements
+and runs this build. `make serve` installs them and starts the preview.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m mkdocs serve
-```
+## Local application development
 
-Open [http://localhost:8000](http://localhost:8000). Edits to files under `docs/` reload automatically.
-
-Before opening a pull request, confirm the strict build passes. Continuous integration runs the same command, and it fails on broken internal links and missing assets.
-
-```bash
-make build-docs-website
-```
-
-## Run the sample application locally
-
-Both services run on .NET 8. `catalog-api` has no dependencies and starts immediately.
+Local source development, unlike attendee deployment, requires the .NET 8 SDK.
+The catalog service can run independently:
 
 ```bash
 cd src/CatalogApi
 dotnet run --urls http://localhost:8081
 ```
 
-In a second terminal, start `orders-api` pointing at it.
+The full Orders API path depends on an Entra-only Azure SQL database, its contained
+runtime user, and object-level grants initialized by the separate managed identity
+job. Use `azd up` for the integrated workshop rather than a local SQL administrator
+connection string. Do not reuse the bootstrap identity as an application identity.
 
-```bash
-cd src/OrdersApi
-export Catalog__BaseUrl="http://localhost:8081"
-export Fault__Enabled="true"
-export Fault__Token="local-development-token"
-export ConnectionStrings__OrdersDb="Server=localhost,1433;Database=sqldb-orders;User ID=sa;Password=<your-local-password>;Encrypt=True;TrustServerCertificate=True;"
-dotnet run --urls http://localhost:8080
-```
-
-For local SQL Server, run it in a container.
-
-```bash
-docker run --rm --detach \
-  --name sqlserver \
-  --env ACCEPT_EULA=Y \
-  --env "MSSQL_SA_PASSWORD=<your-local-password>" \
-  --publish 1433:1433 \
-  mcr.microsoft.com/mssql/server:2022-latest
-```
-
-!!! warning "Local SQL credentials"
-    Replace `<your-local-password>` with a value you generate. Do not reuse a password from any other environment, and do not commit it. The container is intended for local development only and exposes SQL Server on all interfaces.
-
-Verify the pair works.
-
-```bash
-curl --silent http://localhost:8080/ | jq .
-
-curl --silent --request POST http://localhost:8080/orders \
-  --header 'Content-Type: application/json' \
-  --data '{"customerId":"cust-001","productId":"SKU-1002","quantity":1}' | jq .
-
-curl --silent --header "X-Fault-Token: local-development-token" \
-  http://localhost:8080/fault/status | jq .
-```
-
-The application starts even when the database is unreachable. Order writes fail, everything else works, and the failure is logged rather than fatal. That is intentional; a crash loop before telemetry is emitted is worse than a running service that reports what is broken.
+Fault operations against the deployed app use `./scripts/inject-fault.sh` or
+`./scripts/inject-fault.ps1`. The common Python helper retrieves the secret from
+Key Vault just in time; do not save credentials in local development settings.
 
 ## GitHub Codespaces
 
-Codespaces gives you the Azure CLI, .NET, Python, and Docker without local installation.
+Codespaces provides a browser-hosted terminal. Verify tool availability rather
+than assuming the selected image includes all prerequisites.
 
 1. Open the repository on GitHub.
-2. Select **Code**, then **Codespaces**, then **Create codespace on main**.
-3. In the Codespaces terminal:
+2. Select **Code**, **Codespaces**, then **Create codespace on main**.
+3. Complete [Module 01](../01-prerequisites/index.md), including dependencies and
+   both authentication contexts:
 
 ```bash
 az login --use-device-code
-make install
-chmod +x scripts/*.sh
+azd auth login
+azd version
+python -c "import yaml"
 ```
 
-Then start at [Module 01](../01-prerequisites/index.md). Every command in the workshop works unchanged.
-
-!!! tip "Port forwarding"
-    When you run `make serve` in a Codespace, port 8000 is forwarded automatically and a preview link appears. The same applies to ports 8080 and 8081 if you run the sample application there.
+Then select your named environment and run `azd up`. When running the MkDocs
+preview, forward port 8000 through Codespaces.
 
 ## Azure Cloud Shell
 
-Cloud Shell is the fastest path if you cannot install software locally. It includes the Azure CLI, Bicep, `jq`, and Git.
-
-1. Open [https://shell.azure.com](https://shell.azure.com) and select Bash.
-2. Clone the repository.
+Open [Azure Cloud Shell](https://shell.azure.com), select Bash, and clone the
+repository. Check tool versions and install the existing Python dependencies in
+a virtual environment as shown above.
 
 ```bash
 git clone https://github.com/charliekw411/sre-agent-workshop.git
 cd sre-agent-workshop
-chmod +x scripts/*.sh
+az login
+azd auth login
+azd version
 ```
 
-Two constraints apply. Cloud Shell sessions time out after roughly 20 minutes of inactivity, which will interrupt the load generator from Module 04, so run that from a session you keep active or from a local terminal. Cloud Shell also has no Docker daemon, which is why the workshop uses `az acr build` rather than local image builds.
+Cloud Shell authentication does not remove the need to check both CLIs. Use the
+same tenant and subscription and complete the permissions checks in Module 01.
+Cloud Shell sessions can time out and interrupt the long-running load generator,
+so keep its terminal active or run the generator from a local terminal.
 
-## Editor setup
+## Bash and PowerShell exports
 
-For editing the workshop content, these extensions help:
+After deployment:
 
-| Extension                 | Purpose                                        |
-|---------------------------|------------------------------------------------|
-| `ms-azuretools.vscode-bicep` | Bicep authoring, validation, and formatting |
-| `ms-dotnettools.csdevkit`    | C# language support for the sample services |
-| `davidanson.vscode-markdownlint` | Markdown linting matching the CI rules  |
-| `ms-vscode.azurecli`         | Azure CLI IntelliSense in shell scripts     |
+```bash
+source .workshop/workshop.env
+./scripts/inject-fault.sh status
+```
+
+```powershell
+. ./.workshop/workshop.ps1
+./scripts/inject-fault.ps1 status
+```
+
+The generated files contain allowlisted non-secret identifiers and endpoints.
+PowerShell accesses these as `$env:RESOURCE_GROUP`, for example. Agent content
+refresh uses the same cross-platform command:
+`python scripts/workshop.py configure-agent`.
 
 <div class="sre-nav" markdown>
 [:material-arrow-left: Cost Management](03-cost-management.md)

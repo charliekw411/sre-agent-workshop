@@ -110,10 +110,16 @@ The agent uses a managed identity with Azure role-based access control assignmen
 |--------------------------------|---------------------------------------|--------------------------|
 | Enumerate and read resources   | Reader                                | Workshop resource group  |
 | Query workspace telemetry      | Log Analytics Reader                   | Log Analytics workspace  |
-| Read application telemetry     | Monitoring Reader                      | Application Insights     |
-| Perform bounded mitigations    | Contributor or a narrower custom role  | Specific resources only  |
+| Read metrics and alerts        | Monitoring Reader                      | Workshop resource group  |
+| Perform bounded mitigations    | Not granted in this workshop           | None                     |
 
 Two rules keep this safe. Grant the agent no more than you would grant a new on-call engineer on their first week. Scope assignments to the resource group under investigation rather than the subscription, so a misconfigured prompt cannot reach production from a lab.
+
+Deployment grants these read-only runtime permissions automatically. The
+attendee receives agent-scoped `SRE Agent Administrator` for configuration,
+not additional runtime authority. Full Azure Monitor alert lifecycle operations
+require subscription `Monitoring Contributor`, which this workshop does not
+grant; automated investigation does not promise alert acknowledgement or closure.
 
 !!! warning "Do not grant subscription-wide Contributor"
     It is tempting, it works immediately, and it is the single most common mistake teams make when piloting agentic tooling. Scope to the resource group. This workshop does exactly that in [Module 05](../05-configure-sre-agent/index.md).

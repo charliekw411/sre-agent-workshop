@@ -37,6 +37,14 @@ make build-docs-website
 
 The build fails on broken internal links and missing assets, which is the same check continuous integration runs.
 
+Deployment hooks also require Python 3.10 or later and PyYAML from `requirements.txt`. Keep
+deployment and agent refresh logic cross-platform in `scripts/workshop.py`; the
+Bash and PowerShell entry points should share that implementation.
+
+Run `python scripts/workshop.py validate` for local manifest validation. The
+shared CLI also exposes `prepare`, `postdeploy`, `configure-agent`, `export`, and
+`fault`; `azd` invokes the deployment lifecycle commands through its hooks.
+
 Preview your changes while editing:
 
 ```bash
@@ -54,10 +62,21 @@ az bicep lint --file infra/main.bicep
 
 For application changes:
 
+Local application validation needs the .NET 8 SDK. Attendee deployments use ACR
+remote builds and do not need a local .NET SDK or Docker daemon.
+
 ```bash
 dotnet build src/OrdersApi/OrdersApi.csproj --configuration Release
 dotnet build src/CatalogApi/CatalogApi.csproj --configuration Release
 ```
+
+For deployment documentation, retain the single `azd up` path after `az login`
+and `azd auth login`: infrastructure and RBAC, remote images, the SQL bootstrap
+job, then version-controlled agent synchronization. Do not introduce manual
+portal configuration, runtime role grants, SQL credentials, or token-bearing
+shell examples. Keep the API and permission record in
+[Module 05](docs/sre/05-configure-sre-agent/index.md) aligned with the implementation.
+Report local validation separately from live Azure validation.
 
 ## Documentation standards
 

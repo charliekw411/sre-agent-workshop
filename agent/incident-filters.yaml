@@ -1,0 +1,14 @@
+version: 1
+filters:
+  - metadata:
+      name: workshop-alerts
+    spec:
+      incidentPlatform: AzMonitor
+      isEnabled: true
+      priorities:
+        - Sev1
+        - Sev2
+      handlingAgent: default
+      agentMode: Review
+      deepInvestigationEnabled: false
+      maxAutomatedInvestigationAttempts: 1

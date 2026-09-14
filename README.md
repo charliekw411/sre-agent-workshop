@@ -56,6 +56,8 @@ Contoso Order Services, a two-service order-processing platform:
 * Log Analytics workspace and workspace-based Application Insights
 * Five metric alert rules and two log alert rules
 * Azure SRE Agent scoped to the workshop resource group
+* Key Vault for the fault-injection secret and managed identity access
+* A manual-trigger SQL bootstrap job, started and checked automatically by deployment hooks
 
 Estimated cost is 2 to 4 US dollars for a single-day run. See [Cost Management](docs/sre/30-appendix/03-cost-management.md).
 
@@ -85,13 +87,47 @@ Open [http://localhost:8000](http://localhost:8000).
 
 ## Prerequisites
 
-* An Azure subscription where you can create resources and assign roles. Contributor alone is not sufficient.
+* Subscription `Owner`, or `Contributor` plus `User Access Administrator`, to create the resource group and all role assignments.
 * Azure Developer CLI 1.18 or later.
 * Azure CLI 2.60 or later with the `containerapp`, `application-insights`, and `log-analytics` extensions.
 * Bash or PowerShell.
+* Python 3.10 or later with PyYAML (`python -m pip install -r requirements.txt`).
 * `jq` for parsing command output.
 
 Full details in [Module 01](docs/sre/01-prerequisites/index.md).
+
+## Deploy the complete workshop
+
+From the cloned repository, with prerequisites installed:
+
+```bash
+az login
+az account set --subscription "<your-subscription-id>"
+azd auth login
+azd env new "<your-alias>-workshop"
+azd env set AZURE_LOCATION eastus2
+azd up
+```
+
+`azd up` provisions apps, monitoring, SRE Agent, RBAC, and Key Vault; builds images
+remotely; starts the SQL initialization job; then syncs `agent/incident-filters.yaml`
+and `agent/knowledge.yaml`. No local Docker or .NET SDK, portal configuration,
+manual role grants, SQL passwords, or pasted agent configuration are required.
+SRE Agent uses `Microsoft.App/agents@2025-05-01-preview`; region availability is
+constrained, so use the supported default `eastus2`.
+
+SQL is Entra-only, with a separate bootstrap identity and object-level runtime
+permissions. Initialization inserts five deterministic seed orders without
+overwriting existing orders or ballast; see [Module 03](docs/sre/03-deploy-infrastructure/index.md).
+The runtime agent investigates read-only; it is not granted the subscription
+`Monitoring Contributor` role needed for full Azure Monitor alert lifecycle operations.
+
+After deployment, load `source .workshop/workshop.env` in Bash or
+`. ./.workshop/workshop.ps1` in PowerShell. These allowlisted exports contain only
+safe identifiers and endpoints, not secrets. Use `./scripts/inject-fault.sh status`
+or `./scripts/inject-fault.ps1 status`; the helpers retrieve fault credentials
+from Key Vault just in time. To refresh checked-in agent content without a full
+deployment, run `python scripts/workshop.py configure-agent`.
 
 ## A warning about the sample application
 

@@ -15,6 +15,7 @@ Contoso Order Services is a two-service order-processing platform running on Azu
 
 * Public HTTP API and the only externally reachable component.
 * Accepts order submissions on `POST /orders` and serves order history on `GET /orders`.
+* Updates an existing order through `PUT /orders/{id}/quantity`, accepting quantities from 1 through 1000.
 * Calls `catalog-api` synchronously to resolve product pricing before every write.
 * Writes orders to Azure SQL Database.
 * Allocated 0.5 vCPU and 1 GiB memory.
@@ -33,6 +34,9 @@ Contoso Order Services is a two-service order-processing platform running on Azu
 * Azure SQL Database, Standard S0 service objective.
 * Maximum size is capped at 1 GB, which is far below the tier maximum. This is deliberate.
 * Reaching the size cap fails writes with SQL error 40544 while reads continue to succeed.
+* Authentication is Microsoft Entra-only. A separate bootstrap job identity is the SQL administrator; the Orders API identity has object-level grants, not `db_owner`.
+* Storage release uses a narrowly scoped privileged stored procedure, rather than granting schema ownership to the runtime.
+* Initialization inserts only missing seed orders, preserving existing orders and storage ballast on redeployment. Reserved IDs -1 through -5 map to SKU-1001 through SKU-1005, priced 129.99, 349.00, 219.50, 45.75, and 189.00. All use customer `workshop-seed`, quantity 1, and timestamp `2026-01-01T00:00:00Z`.
 
 ## Business impact model
 
@@ -59,13 +63,21 @@ These are real properties of the system. Treat them as candidate contributing fa
 
 ## Deployment model
 
-* Infrastructure is deployed with Bicep from `infra/main.bicep`, `infra/apps.bicep`, and `infra/alerts.bicep`.
+* `azd up` provisions infrastructure, monitoring, SRE Agent, Key Vault, and role assignments with Bicep.
 * Container images are built with `az acr build` and pulled using a user-assigned managed identity.
+* Hooks start the manual-trigger SQL initialization job and wait for success before synchronizing `agent/incident-filters.yaml` and `agent/knowledge.yaml`.
+* Agent instructions and runbooks are checked-in Markdown. Refresh them through `azd up` or `python scripts/workshop.py configure-agent`, not portal configuration.
+* The SRE runtime has Reader and Monitoring Reader at resource-group scope and Log Analytics Reader at workspace scope. It investigates read-only and cannot remediate, access fault secrets, or acknowledge/close Azure Monitor alerts.
+* The attendee's agent-scoped SRE Agent Administrator role permits configuration; it does not expand runtime permissions.
 * Changes appear in the Azure Activity log and as new Container Apps revisions. Check both when correlating an incident with a change.
 
 ## Fault injection
 
 `orders-api` exposes workshop-only endpoints under `/fault`, protected by an `X-Fault-Token` header. When these are active, the container console log contains a line beginning `FAULT INJECTED`. Always search `ContainerAppConsoleLogs_CL` for that string early in an investigation, because it explains behavior that no configuration or deployment change would account for.
+
+Attendees invoke the Bash or PowerShell fault helper, which retrieves its secret
+from Key Vault just in time. Generated workshop shell files contain only
+allowlisted non-secret identifiers and endpoints.
 
 | Endpoint              | Injected condition                                    |
 |-----------------------|-------------------------------------------------------|

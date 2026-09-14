@@ -105,15 +105,26 @@ The difference is that the first one can be checked against the output and the s
 
 ### Task 3: Apply the instructions to the agent
 
-1. Open the Azure SRE Agent resource in the portal.
-2. Go to the custom instructions or knowledge configuration.
-3. Paste the contents of `agent/instructions/architecture.md` and `agent/instructions/investigation-principles.md`.
-4. Add the runbooks as separate knowledge entries where the agent supports them.
-5. Save and allow a few minutes for the configuration to take effect.
+The initial `azd up` already loaded the checked-in instructions and runbooks.
+After editing the Markdown, review the local references in `agent/knowledge.yaml`
+and synchronize from the repository root:
 
-<!-- SCREENSHOT: SRE Agent custom instructions configuration pane with architecture context applied -->
+```bash
+python scripts/workshop.py configure-agent
+```
 
-If your agent supports a repository or document link instead of pasted text, point it at the `agent/` folder so the instructions stay version controlled and reviewable.
+Alternatively, run `azd up` to redeploy and synchronize both
+`agent/incident-filters.yaml` and `agent/knowledge.yaml`. No portal configuration
+or copy-and-paste is needed. The uploader removes owned `workshop-*.md` knowledge
+documents, including retired entries, before uploading the desired files and
+triggering indexing; it preserves files outside that reserved namespace. Common
+prompts are updated under stable names and their fields are read back. The hook
+waits up to ten minutes for knowledge indexing, not a remote source-byte comparison.
+Keep the edits in version control.
+
+To retire an incident filter, retain its YAML entry with `spec.isEnabled: false`.
+Removing it instead causes a fail-closed error because v2 filter deletion is not
+part of the documented contract.
 
 ### Task 4: Re-run the environment description prompt
 
