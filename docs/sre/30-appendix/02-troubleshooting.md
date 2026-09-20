@@ -28,13 +28,26 @@ or follow your organization's approved recovery process; do not bypass protectio
 
 The pre-provision hook automatically registers required resource providers and
 waits up to fifteen minutes. This error indicates registration failed, timed out,
-or is blocked for the deployment caller.
+or is blocked for the deployment caller. The hook prints registration requests
+and pending provider names and states while it waits; a timeout also lists the
+providers still pending.
+
+In a second terminal, use `az provider show` to inspect a provider reported by
+the hook without interrupting deployment. Ensure Azure CLI is using the same
+subscription as `azd`. For example:
 
 ```bash
-az provider list \
-  --query "[?registrationState!='Registered'] | [?contains(namespace, 'Microsoft.App') || contains(namespace, 'Microsoft.Sql') || contains(namespace, 'Microsoft.Insights')].{Namespace:namespace, State:registrationState}" \
+az provider show --namespace Microsoft.Insights \
+  --query "{Namespace:namespace, State:registrationState}" \
   --output table
 ```
+
+Older hooks compared provider namespaces case-sensitively. Azure can return
+`microsoft.insights` for `Microsoft.Insights`, causing a false timeout even when
+it is registered. If the hook stays silent and times out despite registered
+providers, update `scripts/workshop.py` in the checkout where you run `azd up`
+before retrying. Updating a separate worktree does not update your deployment
+checkout.
 
 Check the hook output and the caller's subscription permissions, including
 permission to register providers. Resolve access or policy restrictions, then

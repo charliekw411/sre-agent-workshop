@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import yaml
 
@@ -232,14 +232,80 @@ class ReconciliationTests(unittest.TestCase):
             self.assertEqual(request.call_count, 1)
 
 
-class BootstrapTests(unittest.TestCase):
+class ProviderRegistrationTests(unittest.TestCase):
+    def test_registered_providers_ignore_namespace_case(self):
+        for transform in (str.lower, str.upper, str.swapcase):
+            registered = [{"namespace": transform(provider), "state": "Registered"} for provider in workshop.PROVIDERS]
+            with self.subTest(transform=transform.__name__), \
+                    patch.object(workshop, "az", return_value=registered) as cli, \
+                    patch.object(workshop.time, "sleep") as sleep, patch("builtins.print") as progress:
+                workshop.register_providers()
+            cli.assert_called_once_with(
+                "provider", "list", "--query", "[].{namespace:namespace,state:registrationState}"
+            )
+            sleep.assert_not_called()
+            progress.assert_called_with("All required Azure resource providers are registered.", flush=True)
+
     def test_provider_registration_skips_existing_and_waits(self):
-        initial = [{"namespace": provider, "state": "Registered"} for provider in workshop.PROVIDERS if provider != "Microsoft.App"]
-        final = initial + [{"namespace": "Microsoft.App", "state": "Registered"}]
-        with patch.object(workshop, "az", side_effect=[initial, None, final]) as cli, patch.object(workshop.time, "sleep"):
+        initial = [{"namespace": provider.lower(), "state": "Registered"} for provider in workshop.PROVIDERS if provider != "Microsoft.App"]
+        registering = initial + [{"namespace": "microsoft.app", "state": "Registering"}]
+        final = initial + [{"namespace": "MICROSOFT.APP", "state": "Registered"}]
+        with patch.object(workshop, "az", side_effect=[initial, None, registering, final]) as cli, \
+                patch.object(workshop.time, "sleep") as sleep, patch("builtins.print") as progress:
             workshop.register_providers()
         self.assertEqual(cli.call_args_list[1].args, ("provider", "register", "--namespace", "Microsoft.App"))
+        self.assertEqual(cli.call_count, 4)
+        self.assertEqual(sleep.call_args_list, [call(10), call(10)])
+        progress.assert_has_calls([
+            call("Checking required Azure resource providers...", flush=True),
+            call("Requesting registration for Microsoft.App...", flush=True),
+            call("Waiting for provider registration (1/90): Microsoft.App (not returned)", flush=True),
+            call("Waiting for provider registration (2/90): Microsoft.App (Registering)", flush=True),
+            call("All required Azure resource providers are registered.", flush=True),
+        ])
 
+    def test_registration_can_complete_on_the_last_poll(self):
+        initial = [{"namespace": "Microsoft.Insights", "state": "Registering"}]
+        final = [{"namespace": "microsoft.insights", "state": "Registered"}]
+        with patch.object(workshop, "PROVIDERS", {"Microsoft.Insights"}), \
+                patch.object(workshop, "az", side_effect=[initial, None] + [initial] * 89 + [final]) as cli, \
+                patch.object(workshop.time, "sleep") as sleep, patch("builtins.print") as progress:
+            workshop.register_providers()
+        self.assertEqual(cli.call_count, 92)
+        self.assertEqual(sleep.call_args_list, [call(10)] * 90)
+        progress.assert_called_with("All required Azure resource providers are registered.", flush=True)
+
+    def test_timeout_reports_only_pending_providers_and_their_states(self):
+        current = [
+            {"namespace": "microsoft.insights", "state": "Registered"},
+            {"namespace": "MICROSOFT.APP", "state": "Registering"},
+        ]
+        with patch.object(workshop, "PROVIDERS", {"Microsoft.App", "Microsoft.Insights", "Microsoft.Sql"}), \
+                patch.object(workshop, "az", side_effect=[current, None, None] + [current] * 90) as cli, \
+                patch.object(workshop.time, "sleep") as sleep, patch("builtins.print") as progress:
+            with self.assertRaisesRegex(workshop.DeploymentError, "within fifteen minutes") as error:
+                workshop.register_providers()
+        self.assertIn("Microsoft.App (Registering)", str(error.exception))
+        self.assertIn("Microsoft.Sql (not returned)", str(error.exception))
+        self.assertNotIn("Microsoft.Insights", str(error.exception))
+        self.assertEqual(cli.call_count, 93)
+        self.assertEqual(sleep.call_args_list, [call(10)] * 90)
+        progress.assert_called_with(
+            "Waiting for provider registration (90/90): Microsoft.App (Registering), Microsoft.Sql (not returned)",
+            flush=True,
+        )
+
+    def test_registration_error_aborts_without_polling(self):
+        initial = [{"namespace": "microsoft.app", "state": "NotRegistered"}]
+        with patch.object(workshop, "PROVIDERS", {"Microsoft.App"}), \
+                patch.object(workshop, "az", side_effect=[initial, workshop.DeploymentError("Registration denied")]), \
+                patch.object(workshop.time, "sleep") as sleep, patch("builtins.print"):
+            with self.assertRaisesRegex(workshop.DeploymentError, "Registration denied"):
+                workshop.register_providers()
+        sleep.assert_not_called()
+
+
+class BootstrapTests(unittest.TestCase):
     def test_success_waits_for_exact_job_execution(self):
         values = {"RESOURCE_GROUP": "rg-workshop", "BOOTSTRAP_JOB_NAME": "bootstrap"}
         outputs = [

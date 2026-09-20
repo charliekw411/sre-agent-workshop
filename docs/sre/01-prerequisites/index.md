@@ -134,10 +134,13 @@ The deployment caller must be allowed to register resource providers.
 The pre-provision hook automatically registers required providers, including
 `Microsoft.App`, `Microsoft.ContainerRegistry`, `Microsoft.OperationalInsights`,
 `Microsoft.Insights`, `Microsoft.Sql`, `Microsoft.ManagedIdentity`,
-`Microsoft.KeyVault`, `Microsoft.AlertsManagement`, `Microsoft.Monitor`,
+`Microsoft.KeyVault`, `Microsoft.AlertsManagement`,
 `Microsoft.ContainerInstance`, and `Microsoft.Storage`. The last two support
 the deployment script. The hook waits up to fifteen minutes for registration;
-no manual registration step is required.
+no manual registration step is required. It matches provider namespaces
+case-insensitively and prints the pending providers and their last reported states
+before each ten-second polling delay. Azure CLI request time can extend the total
+wait. Already registered providers are skipped.
 
 ### Task 5: Select the environment and supported region
 

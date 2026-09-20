@@ -211,21 +211,35 @@ def export_values(values):
 
 def register_providers():
     def states():
-        return {item["namespace"]: item["state"] for item in az(
+        return {item["namespace"].casefold(): item["state"] for item in az(
             "provider", "list", "--query", "[].{namespace:namespace,state:registrationState}"
         )}
 
+    def pending_details():
+        return ", ".join(
+            f"{provider} ({current.get(provider.casefold(), 'not returned')})"
+            for provider in sorted(pending)
+        )
+
+    print("Checking required Azure resource providers...", flush=True)
     current = states()
-    pending = {provider for provider in PROVIDERS if current.get(provider) != "Registered"}
+    pending = {provider for provider in PROVIDERS if current.get(provider.casefold()) != "Registered"}
     for provider in sorted(pending):
+        print(f"Requesting registration for {provider}...", flush=True)
         az("provider", "register", "--namespace", provider)
-    for _ in range(90):
+    for attempt in range(90):
         if not pending:
-            return
+            break
+        print(f"Waiting for provider registration ({attempt + 1}/90): {pending_details()}", flush=True)
         time.sleep(10)
         current = states()
-        pending = {provider for provider in pending if current.get(provider) != "Registered"}
-    raise DeploymentError("Resource provider registration did not complete within fifteen minutes.")
+        pending = {provider for provider in pending if current.get(provider.casefold()) != "Registered"}
+    if pending:
+        raise DeploymentError(
+            "Resource provider registration did not complete within fifteen minutes. "
+            f"Still pending: {pending_details()}."
+        )
+    print("All required Azure resource providers are registered.", flush=True)
 
 
 def token_identity(token):
@@ -235,6 +249,7 @@ def token_identity(token):
 
 
 def prepare():
+    print("Validating agent configuration...", flush=True)
     load_config()
     values = environment()
     # Remove credentials left by earlier workshop revisions without echoing them.
@@ -258,17 +273,19 @@ def prepare():
         os.environ.pop(key, None)
         values.pop(key, None)
     export_values(values)
+    print("Checking Azure CLI and azd deployment identity...", flush=True)
     token = az("account", "get-access-token", "--resource", "https://management.azure.com/")["accessToken"]
     azd_token = json.loads(cli("azd", "auth", "token", "--scope", "https://management.azure.com/.default", "--output", "json"))["token"]
     if token_identity(token) != token_identity(azd_token):
         raise DeploymentError("Azure CLI and azd must be signed into the same principal and tenant.")
     register_providers()
+    location = required(values, "AZURE_LOCATION")
+    print(f"Checking SRE Agent availability in {location}...", flush=True)
     locations = az("provider", "show", "--namespace", "Microsoft.App",
                    "--query", "resourceTypes[?resourceType=='agents'].locations | [0]")
-    location = required(values, "AZURE_LOCATION")
     if not isinstance(locations, list) or location.lower() not in {item.replace(" ", "").lower() for item in locations}:
         raise DeploymentError("The selected Azure region does not advertise SRE Agent support; select a supported region such as eastus2.")
-    print("Validated agent configuration and deployment identity; no credentials exported.")
+    print("Validated agent configuration and deployment identity; no credentials exported.", flush=True)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
