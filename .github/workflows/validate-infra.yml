@@ -84,4 +84,4 @@ jobs:
         run: ./scripts/invoke-workshop.ps1 validate
       - name: Validate Bash entrypoints
         if: runner.os == 'Linux'
-        run: shellcheck scripts/prepare-azd-env.sh scripts/export-azd-env.sh scripts/postdeploy.sh scripts/inject-fault.sh
+        run: shellcheck scripts/prepare-azd-env.sh scripts/export-azd-env.sh scripts/postprovision.sh scripts/postdeploy.sh scripts/inject-fault.sh

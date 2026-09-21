@@ -1,7 +1,7 @@
 ---
 title: Module 01 - Prerequisites
 description: Verify tooling, both Azure logins, subscription permissions, and preview regional availability before azd up.
-ms.date: 2026-09-14
+ms.date: 2026-09-21
 ms.topic: how-to
 keywords:
   - prerequisites
@@ -121,6 +121,14 @@ continue. Do not work around failed deployment by manually granting runtime role
 `SRE Agent Administrator` role. Runtime access is deliberately read-only; see the
 [permission record](../05-configure-sre-agent/index.md#deployment-api-contract-and-permission-record).
 
+Fault helpers also require permission to start and read Container Apps job
+executions through ARM and query the Log Analytics workspace. The subscription
+roles above include those operations. Helpers never retrieve the vault credential
+on your machine, so you need no VPN or private-vault data access. The attendee's
+legacy vault `Key Vault Secrets User` grant remains for authorized in-network
+administration, not local helper use. The SRE runtime has neither job-start nor
+secret permissions.
+
 ### Task 4: Prepare tooling extensions
 
 ```bash
@@ -130,14 +138,19 @@ az extension add --name application-insights --upgrade
 az extension add --name log-analytics --upgrade
 ```
 
+The `log-analytics` extension is required for fault helpers as well as telemetry
+exercises: it retrieves the non-secret job result after log ingestion.
+
 The deployment caller must be allowed to register resource providers.
 The pre-provision hook automatically registers required providers, including
 `Microsoft.App`, `Microsoft.ContainerRegistry`, `Microsoft.OperationalInsights`,
 `Microsoft.Insights`, `Microsoft.Sql`, `Microsoft.ManagedIdentity`,
-`Microsoft.KeyVault`, `Microsoft.AlertsManagement`,
-`Microsoft.ContainerInstance`, and `Microsoft.Storage`. The last two support
-the deployment script. The hook waits up to fifteen minutes for registration;
-no manual registration step is required. It matches provider namespaces
+`Microsoft.KeyVault`, `Microsoft.AlertsManagement`, and `Microsoft.Network`.
+The old token deployment script has been removed; no supporting storage account
+or Azure Container Instance is needed, so `Microsoft.ContainerInstance` and
+`Microsoft.Storage` are no longer required by these hooks. The hook waits up to
+fifteen minutes for registration; no manual registration step is required.
+It matches provider namespaces
 case-insensitively and prints the pending providers and their last reported states
 before each ten-second polling delay. Azure CLI request time can extend the total
 wait. Already registered providers are skipped.
@@ -163,7 +176,11 @@ selection. This check does not override subscription policy or preview access
 restrictions.
 
 !!! warning "Corporate subscription policies"
-    This workshop intentionally uses public application ingress and public SQL network access. Policies that require private endpoints or deny preview resources can block deployment. Use an approved workshop subscription rather than bypassing policy.
+    SQL and Key Vault have `publicNetworkAccess: Disabled`, private endpoints, and VNet-linked private DNS. The Consumption workload-profile Container Apps environment uses a delegated subnet. Removing the ARM token deployment script also removes its storage shared-key dependency. This accommodates the inherited policies that deny SQL/vault public access and storage shared keys, not every corporate policy. Basic ACR remains public with Entra authentication and admin/anonymous access off; Azure Monitor ingestion/query and Orders HTTPS ingress remain public. If policy also blocks those paths or preview resources, additional architecture work or an approved environment is required. Do not re-enable public SQL/vault access or shared keys, add bypass tags, or seek exemptions as a workshop workaround.
+
+If you are updating an earlier deployment, read the
+[migration guidance](../03-deploy-infrastructure/index.md#updating-an-earlier-deployment).
+Existing apps or jobs on a non-VNet environment cannot move in place.
 
 ## Validation
 

@@ -1,7 +1,7 @@
 ---
 title: Cost Management
 description: Estimated cost of the Azure SRE Agent workshop environment, the main cost drivers, and how to pause the environment between sessions.
-ms.date: 2026-09-08
+ms.date: 2026-09-21
 ms.topic: how-to
 keywords:
   - cost management
@@ -12,9 +12,15 @@ estimated_reading_time: 6
 
 ## Overview
 
-The workshop environment is deliberately small, but it is not free, and the largest cost driver is the one people forget: Log Analytics ingestion from a load generator left running overnight.
+The workshop environment is deliberately small, but it is not free. Private
+endpoint hours continue to accrue while you are away, and Log Analytics ingestion
+from a load generator left running overnight can dominate the bill.
 
-All figures below are approximate, use US East list pricing, and exclude tax. Use the [Azure pricing calculator](https://azure.microsoft.com/pricing/calculator/) for your own region and agreement.
+The original application estimates below are approximate planning figures, not
+current regional quotes. The new private-endpoint figure uses an illustrative
+rate, not a verified price for your region. Taxes are excluded. Use the
+[Azure pricing calculator](https://azure.microsoft.com/pricing/calculator/) for
+your region and agreement.
 
 ## Estimated cost
 
@@ -25,18 +31,36 @@ All figures below are approximate, use US East list pricing, and exclude tax. Us
 | Log Analytics                  | Ingestion and 30-day retention       | 0.30 to 2.00 USD         |
 | Application Insights           | Workspace-based, included above      | Included                 |
 | Container registry             | Basic tier                           | 0.17 USD                 |
+| Private Endpoints              | Two, one for SQL and one for Key Vault | About 0.48 USD for endpoint hours at an illustrative 0.01 USD/hour per endpoint, plus data processing |
+| Private DNS                    | Two VNet-linked zones and DNS queries | Region- and usage-dependent |
+| Container Apps jobs            | Short on-demand SQL bootstrap, token initialization, and fault-client executions | Execution- and duration-dependent |
+| Key Vault                      | Standard tier, managed-identity secret operations | Usage-dependent |
 | Azure Monitor alert rules      | Five metric, two log                 | 0.20 USD                 |
 | Managed identity               | User-assigned                        | Free                     |
 | Azure SRE Agent                | See current product pricing          | Varies                   |
 
-A single-day workshop run typically lands between 2 and 4 US dollars, excluding Azure SRE Agent. Leaving the environment running for a week with an active load generator can reach 20 to 30 US dollars, almost entirely from log ingestion.
+The original 2 to 4 US dollars per day estimate excluded Azure SRE Agent and
+predated private networking and the token/fault jobs. It is not a complete
+estimate for this design. Budget above that baseline for two billable Private
+Endpoints, data processing, private DNS, and short on-demand job executions;
+regional rates and actual usage vary. The illustrative endpoint-hours subtotal
+alone adds about 0.48 US dollars per full day, even if the apps scale to zero.
+Check current SRE Agent pricing separately.
+
+This scope retains public Basic ACR remote builds and public Azure Monitor
+ingestion/query and Orders ingress. It adds no Premium ACR, dedicated build pool,
+NAT gateway, or VPN. If policy also requires those public paths to become private,
+the extra architecture and costs need separate planning.
 
 !!! warning "Log ingestion is the variable that surprises people"
     The load generator in Module 04 sends five requests per second. Each produces request telemetry, dependency telemetry, and console log lines across two services. Left running for a week that is several gigabytes of ingestion. Stop the generator when you stop working.
 
 ## Reducing cost between sessions
 
-If you are running the workshop across multiple sessions, scale down rather than delete.
+If you are running the workshop across multiple sessions, scaling the apps down
+can reduce compute charges without deleting data. It does not pause SQL, registry,
+Private Endpoint, or private DNS charges. Jobs run on demand rather than
+continuously, but starting them and ingesting their logs still adds usage.
 
 ```bash
 source .workshop/workshop.env

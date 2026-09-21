@@ -1,7 +1,7 @@
 ---
 title: Running Locally or in Codespaces
 description: Preview documentation, develop the sample services, and deploy the workshop from a local or browser-hosted terminal.
-ms.date: 2026-09-14
+ms.date: 2026-09-21
 ms.topic: how-to
 keywords:
   - local development
@@ -62,12 +62,27 @@ dotnet run --urls http://localhost:8081
 
 The full Orders API path depends on an Entra-only Azure SQL database, its contained
 runtime user, and object-level grants initialized by the separate managed identity
-job. Use `azd up` for the integrated workshop rather than a local SQL administrator
-connection string. Do not reuse the bootstrap identity as an application identity.
+job. SQL public network access is disabled; the deployed apps and bootstrap job
+reach it through a private endpoint and VNet-linked DNS. A standalone local Orders
+process does not gain that private network access from an Azure CLI login.
+Use `azd up` for the integrated workshop rather than a local SQL administrator
+connection string or public firewall workaround. Do not reuse the bootstrap
+identity as an application identity.
 
 Fault operations against the deployed app use `./scripts/inject-fault.sh` or
-`./scripts/inject-fault.ps1`. The common Python helper retrieves the secret from
-Key Vault just in time; do not save credentials in local development settings.
+`./scripts/inject-fault.ps1` with the same commands and defaults. The common Python
+helper starts and waits for `workshop-fault-client` through ARM. The job retrieves
+the credential inside the VNet; your laptop, Codespace, or Cloud Shell never
+retrieves it and needs no VPN or private-vault data access. The helper uses the
+Azure CLI `log-analytics` extension to retrieve only the non-secret correlated
+JSON result. Do not save credentials in local development settings.
+
+Results can take up to five minutes to arrive after job success, and status is
+a job-captured snapshot rather than live state at log arrival. If retrieval
+times out, use `python scripts/workshop.py fault-result <request-id>` with the
+reported 32-character ID to retry only read-only log retrieval. Do not reinject.
+Queries cover the last hour (`PT1H`), subject to log availability policies.
+See [fault helper results](01-variables.md#fault-helper-results-and-retry).
 
 ## GitHub Codespaces
 

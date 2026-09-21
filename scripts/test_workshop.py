@@ -78,7 +78,7 @@ class ExportTests(unittest.TestCase):
             responses = [{"accessToken": token}, ["East US 2"]]
             with patch.object(workshop, "ROOT", root), patch.object(workshop, "environment", return_value=values), \
                     patch.object(workshop, "az", side_effect=responses), patch.object(workshop, "cli", return_value=json.dumps({"token": token})) as cli, \
-                    patch.object(workshop, "register_providers"), patch.dict(os.environ):
+                    patch.object(workshop, "register_providers"), patch.object(workshop, "check_network_migration"), patch.dict(os.environ):
                 workshop.prepare()
             self.assertNotIn("obsolete-value", env_file.read_text())
             self.assertNotIn("obsolete-value", config_file.read_text())
@@ -129,17 +129,22 @@ class ExportTests(unittest.TestCase):
         with self.assertRaises(workshop.DeploymentError):
             workshop.NoRedirect().redirect_request(None, None, 302, "", {}, "https://attacker.example")
 
-    def test_fault_credential_is_only_used_in_memory(self):
-        values = {"ORDERS_API_FQDN": "orders.example.azurecontainerapps.io", "KEY_VAULT_NAME": "kv-workshop"}
+    def test_fault_credentials_never_reach_the_attendee_process(self):
+        values = {"RESOURCE_GROUP": "rg-workshop", "FAULT_CLIENT_JOB_NAME": "fault-client"}
         output = io.StringIO()
         with patch.object(workshop, "environment", return_value=values), \
-                patch.object(workshop, "az", return_value="a" * 64) as cli, \
-                patch.object(workshop, "http", return_value={"status": "healthy"}) as http, \
+                patch.object(workshop, "az") as cli, patch.object(workshop, "http") as http, \
+                patch.object(workshop, "run_job", return_value="fault-run") as run, \
+                patch.object(workshop, "fault_result", return_value={"status": "healthy"}) as result, \
                 patch.object(workshop.sys, "stdout", output):
             workshop.fault("status", [])
-        self.assertEqual(http.call_args.args[2]["X-Fault-Token"], "a" * 64)
-        self.assertNotIn("a" * 64, output.getvalue())
-        self.assertNotIn("a" * 64, str(cli.call_args_list))
+        cli.assert_not_called()
+        http.assert_not_called()
+        overrides = run.call_args.args[3]
+        self.assertEqual(json.loads(base64.b64decode(overrides["WORKSHOP_REQUEST"])),
+                         {"path": "status", "parameters": {}})
+        result.assert_called_once_with(values, overrides["WORKSHOP_REQUEST_ID"], "fault-run")
+        self.assertEqual(json.loads(output.getvalue()), {"status": "healthy"})
 
 
 class FakeAgent:
@@ -303,6 +308,221 @@ class ProviderRegistrationTests(unittest.TestCase):
             with self.assertRaisesRegex(workshop.DeploymentError, "Registration denied"):
                 workshop.register_providers()
         sleep.assert_not_called()
+
+
+class PrivateAccessTests(unittest.TestCase):
+    def test_fresh_and_partial_deployments_do_not_require_app_deletion(self):
+        for responses in ([False], [True, [], []], [True, [{
+            "name": "orders-api", "environmentId": "/managedEnvironments/cae-private-workshop",
+        }], [{"environmentId": "/managedEnvironments/cae-private-workshop"}]]):
+            with self.subTest(responses=responses), patch.object(workshop, "az", side_effect=responses) as cli:
+                workshop.check_network_migration({"AZURE_ENV_NAME": "workshop"})
+                self.assertFalse(any("delete" in item.args for item in cli.call_args_list))
+
+    def test_existing_non_vnet_apps_fail_before_an_unsupported_move(self):
+        with patch.object(workshop, "az", side_effect=[True, [{
+            "name": "orders-api", "environmentId": "/managedEnvironments/cae-workshop",
+        }]]):
+            with self.assertRaisesRegex(workshop.DeploymentError, "new azd environment"):
+                workshop.check_network_migration({"AZURE_ENV_NAME": "workshop"})
+
+    def test_existing_non_vnet_job_is_detected_even_when_apps_are_absent(self):
+        with patch.object(workshop, "az", side_effect=[True, [], [{
+            "environmentId": "/managedEnvironments/cae-workshop",
+        }]]):
+            with self.assertRaisesRegex(workshop.DeploymentError, "apps or jobs"):
+                workshop.check_network_migration({"AZURE_ENV_NAME": "workshop"})
+
+    def test_migration_does_not_treat_malformed_inventory_as_an_empty_group(self):
+        for response in (None, "false", {}):
+            with self.subTest(response=response), patch.object(workshop, "az", return_value=response):
+                with self.assertRaisesRegex(workshop.DeploymentError, "existence response"):
+                    workshop.check_network_migration({"AZURE_ENV_NAME": "workshop"})
+
+    def test_secret_reference_is_attached_only_after_private_initialization(self):
+        values = {
+            "RESOURCE_GROUP": "rg-workshop", "TOKEN_INITIALIZER_JOB_NAME": "token-init",
+            "KEY_VAULT_URI": "https://kv-workshop.vault.azure.net/",
+            "ORDERS_IDENTITY_RESOURCE_ID": "/identities/orders",
+        }
+        calls = []
+        with patch.object(workshop, "run_job", side_effect=lambda *args: calls.append("initialize")), \
+                patch.object(workshop, "az", side_effect=lambda *args: calls.append(args)):
+            workshop.initialize_private_access(values)
+        self.assertEqual(calls[0], "initialize")
+        self.assertEqual(calls[1][:3], ("containerapp", "secret", "set"))
+        self.assertIn("fault-token=keyvaultref:https://kv-workshop.vault.azure.net/secrets/fault-token,identityref:/identities/orders", calls[1])
+        self.assertIn("Fault__Token=secretref:fault-token", calls[2])
+        self.assertIn("Fault__Enabled=true", calls[2])
+
+    def test_failed_initialization_cannot_enable_faults(self):
+        with patch.object(workshop, "run_job", side_effect=workshop.DeploymentError("Initialization failed")), \
+                patch.object(workshop, "az") as cli:
+            with self.assertRaisesRegex(workshop.DeploymentError, "Initialization failed"):
+                workshop.initialize_private_access({})
+        cli.assert_not_called()
+
+    def test_job_start_merges_overrides_into_the_complete_template(self):
+        saved = {
+            "containers": [
+                {
+                    "name": "workshop-private-client", "image": "mcr.microsoft.com/azure-cli:2.64.0",
+                    "command": ["python3"], "args": ["-c", "job source"],
+                    "resources": {"cpu": 0.25, "memory": "0.5Gi"},
+                    "env": [
+                        {"name": "KEY_VAULT_URI", "value": "https://kv-workshop.vault.azure.net"},
+                        {"name": "WORKSHOP_REQUEST_ID", "value": ""},
+                        {"name": "existing-reference", "secretRef": "retained-reference"},
+                    ],
+                },
+                {"name": "sidecar", "image": "example/sidecar", "env": []},
+            ],
+            "initContainers": [{"name": "setup", "image": "example/setup"}],
+        }
+        original = copy.deepcopy(saved)
+        captured = {}
+
+        def azure(*args):
+            if args[:3] == ("containerapp", "job", "show"):
+                return saved
+            if args[:3] == ("containerapp", "job", "start"):
+                path = Path(args[args.index("--yaml") + 1])
+                captured["path"] = path
+                captured["template"] = yaml.safe_load(path.read_text(encoding="utf-8"))
+                self.assertNotIn("--env-vars", args)
+                self.assertNotIn("--container-name", args)
+                return {"name": "/jobs/client/executions/client-run"}
+            if args[:4] == ("containerapp", "job", "execution", "show"):
+                return {"properties": {"status": "Succeeded"}}
+            self.fail(f"Unexpected CLI operation: {args[:4]}")
+
+        with patch.object(workshop, "az", side_effect=azure):
+            execution = workshop.run_job(
+                {"RESOURCE_GROUP": "rg-workshop", "FAULT_CLIENT_JOB_NAME": "client"},
+                "FAULT_CLIENT_JOB_NAME", "Fault client", {"WORKSHOP_REQUEST_ID": "a" * 32},
+            )
+        self.assertEqual(execution, "client-run")
+        expected = copy.deepcopy(original)
+        expected["containers"][0]["env"][1] = {"name": "WORKSHOP_REQUEST_ID", "value": "a" * 32}
+        self.assertEqual(captured["template"], expected)
+        self.assertEqual(saved, original)
+        self.assertFalse(captured["path"].exists())
+
+    def test_execution_template_is_removed_when_start_fails(self):
+        captured = []
+
+        def start(*args):
+            captured.append(Path(args[args.index("--yaml") + 1]))
+            self.assertTrue(captured[0].exists())
+            raise workshop.DeploymentError("Start request failed")
+
+        with patch.object(workshop, "private_execution_template", return_value={"containers": []}), \
+                patch.object(workshop, "az", side_effect=start):
+            with self.assertRaisesRegex(workshop.DeploymentError, "Start request failed"):
+                workshop.run_job(
+                    {"RESOURCE_GROUP": "rg-workshop", "FAULT_CLIENT_JOB_NAME": "client"},
+                    "FAULT_CLIENT_JOB_NAME", "Fault client", {"WORKSHOP_REQUEST_ID": "a" * 32},
+                )
+        self.assertFalse(captured[0].exists())
+
+    def test_malformed_execution_templates_fail_before_start(self):
+        for saved in (
+            None, {"containers": []},
+            {"containers": [{"name": "workshop-private-client", "env": "invalid"}]},
+            {"containers": [{"name": "workshop-private-client", "env": [
+                {"name": "duplicate", "value": "1"}, {"name": "duplicate", "value": "2"},
+            ]}]},
+        ):
+            with self.subTest(saved=saved), patch.object(workshop, "az", return_value=saved) as cli:
+                with self.assertRaises(workshop.DeploymentError):
+                    workshop.private_execution_template("rg-workshop", "client", {"WORKSHOP_REQUEST_ID": "a" * 32})
+                cli.assert_called_once()
+
+    def test_fault_request_defaults_are_preserved(self):
+        with patch.object(workshop, "environment", return_value={}), \
+                patch.object(workshop, "run_job", return_value="run") as run, \
+                patch.object(workshop, "fault_result", return_value={}), patch("builtins.print"):
+            workshop.fault("cpu", [])
+        request = json.loads(base64.b64decode(run.call_args.args[3]["WORKSHOP_REQUEST"]))
+        self.assertEqual(request, {"path": "cpu", "parameters": {"seconds": 600, "threads": 4}})
+
+    def test_invalid_fault_arguments_do_not_start_a_job(self):
+        with patch.object(workshop, "run_job") as run:
+            with self.assertRaisesRegex(workshop.DeploymentError, "Too many"):
+                workshop.fault("status", ["1"])
+        run.assert_not_called()
+
+    def test_uncertain_start_retains_request_id_without_reinjecting(self):
+        with patch.object(workshop, "environment", return_value={}), \
+                patch.object(workshop, "run_job", side_effect=workshop.DeploymentError("Start failed")) as run, \
+                patch.object(workshop, "fault_result") as result:
+            with self.assertRaisesRegex(workshop.DeploymentError, "may have executed"):
+                workshop.fault("cpu", [])
+        run.assert_called_once()
+        result.assert_not_called()
+
+    def test_fault_result_waits_for_correlated_logs_without_reinjection(self):
+        request_id = "a" * 32
+        line = f'WORKSHOP_RESULT:{request_id}:{{"cpuLoadActive":true}}'
+        with patch.object(workshop, "az", side_effect=[[], [{"Log_s": line}]]) as cli, \
+                patch.object(workshop.time, "sleep") as sleep, patch("builtins.print"):
+            result = workshop.fault_result({"LOG_ANALYTICS_CUSTOMER_ID": "workspace"}, request_id, "run")
+        self.assertEqual(result, {"cpuLoadActive": True})
+        self.assertEqual(cli.call_count, 2)
+        self.assertTrue(all(item.args[:3] == ("monitor", "log-analytics", "query") for item in cli.call_args_list))
+        self.assertIn(f"WORKSHOP_RESULT:{request_id}:", cli.call_args_list[0].args[6])
+        self.assertIn("ContainerGroupName_s startswith 'run'", cli.call_args_list[0].args[6])
+        self.assertIn("distinct Log_s", cli.call_args_list[0].args[6])
+        sleep.assert_called_once_with(5)
+
+    def test_fault_result_timeout_explains_read_only_recovery(self):
+        request_id = "a" * 32
+        with patch.object(workshop, "az", return_value=[]) as cli, \
+                patch.object(workshop.time, "sleep") as sleep, patch("builtins.print"):
+            with self.assertRaisesRegex(workshop.DeploymentError, f"fault-result {request_id}"):
+                workshop.fault_result({"LOG_ANALYTICS_CUSTOMER_ID": "workspace"}, request_id, "run")
+        self.assertEqual(cli.call_count, 60)
+        self.assertEqual(sleep.call_args_list, [call(5)] * 60)
+
+    def test_fault_result_deadline_includes_query_time(self):
+        with patch.object(workshop, "az", return_value=[]) as cli, \
+                patch.object(workshop.time, "monotonic", side_effect=[0, 301]), \
+                patch.object(workshop.time, "sleep") as sleep, patch("builtins.print"):
+            with self.assertRaisesRegex(workshop.DeploymentError, "Do not reinject"):
+                workshop.fault_result({"LOG_ANALYTICS_CUSTOMER_ID": "workspace"}, "a" * 32, "run")
+        cli.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_query_failure_retains_request_id_and_read_only_recovery(self):
+        with patch.object(workshop, "az", side_effect=workshop.DeploymentError("Query denied")):
+            with self.assertRaisesRegex(workshop.DeploymentError, "fault-result " + "a" * 32):
+                workshop.fault_result({"LOG_ANALYTICS_CUSTOMER_ID": "workspace"}, "a" * 32, "run")
+
+    def test_conflicting_job_results_do_not_report_success(self):
+        prefix = "WORKSHOP_RESULT:" + "a" * 32 + ":"
+        with patch.object(workshop, "az", return_value=[
+            {"Log_s": prefix + '{"cpuLoadActive":true}'},
+            {"Log_s": prefix + '{"cpuLoadActive":false}'},
+        ]):
+            with self.assertRaisesRegex(workshop.DeploymentError, "conflicting result"):
+                workshop.fault_result({"LOG_ANALYTICS_CUSTOMER_ID": "workspace"}, "a" * 32, "run")
+
+    def test_read_only_recovery_does_not_assert_unknown_execution_success(self):
+        with patch.object(workshop, "az", return_value=[]), \
+                patch.object(workshop.time, "monotonic", side_effect=[0, 301]), patch("builtins.print"):
+            with self.assertRaises(workshop.DeploymentError) as error:
+                workshop.fault_result({"LOG_ANALYTICS_CUSTOMER_ID": "workspace"}, "a" * 32)
+        self.assertNotIn("succeeded", str(error.exception))
+
+    def test_fault_result_rejects_uncorrelated_or_malformed_records(self):
+        for rows in (
+            {}, [{"Log_s": "WORKSHOP_RESULT:other:{}"}],
+            [{"Log_s": "WORKSHOP_RESULT:" + "a" * 32 + ":[]"}],
+            [{"Log_s": "WORKSHOP_RESULT:" + "a" * 32 + ":not-json"}],
+        ):
+            with self.subTest(rows=rows), patch.object(workshop, "az", return_value=rows):
+                with self.assertRaises(workshop.DeploymentError):
+                    workshop.fault_result({"LOG_ANALYTICS_CUSTOMER_ID": "workspace"}, "a" * 32, "run")
 
 
 class BootstrapTests(unittest.TestCase):

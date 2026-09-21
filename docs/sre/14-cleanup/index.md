@@ -1,7 +1,7 @@
 ---
 title: Module 14 - Cleanup
 description: Remove every Azure resource created by the workshop, verify nothing is left behind, and keep the artifacts worth keeping.
-ms.date: 2026-09-09
+ms.date: 2026-09-21
 ms.topic: how-to
 keywords:
   - cleanup
@@ -18,7 +18,10 @@ estimated_reading_time: 8
 
 ## Overview
 
-The workshop deployed an always-on Container Apps replica, a Standard tier SQL database, a container registry, and a Log Analytics workspace that has been ingesting telemetry for hours. None of that stops costing money because you closed your laptop.
+The workshop deployed always-on Container Apps replicas, a Standard tier SQL
+database, a container registry, a Log Analytics workspace, two billable Private
+Endpoints, and private DNS. None of that stops costing money because you closed
+your laptop. Scaling the apps to zero does not stop endpoint-hour charges.
 
 This module removes everything and verifies the removal, which is the part people skip.
 
@@ -35,18 +38,21 @@ Almost everything lives in the workshop resource group, which makes deletion a s
 
 ```mermaid
 flowchart TB
-    RG["Resource group<br/>rg-sre-agent-workshop-&lt;suffix&gt;"]
-    RG --> R1[Container Apps environment and apps]
+    RG["Resource group<br/>rg-sre-agent-workshop-&lt;environment&gt;"]
+    RG --> R1[Container Apps environment, apps and three jobs]
     RG --> R2[Container registry]
     RG --> R3[Log Analytics workspace]
     RG --> R4[Application Insights]
     RG --> R5[Azure SQL server and database]
     RG --> R6[Alert rules and action group]
-    RG --> R7[Managed identity]
+    RG --> R7[Managed identities]
     RG --> R8[Azure SRE Agent]
+    RG --> R9[Key Vault]
+    RG --> R10[VNet and two Private Endpoints]
+    RG --> R11[Private DNS zones and VNet links]
 
     OUT1["Role assignments<br/>scoped outside the group"] -.->|verify separately| CHECK[Manual verification]
-    OUT2["Local credentials in<br/>.workshop/workshop.env"] -.->|delete or secure| CHECK
+    OUT2["Local state and notes<br/>.azure/ and .workshop/"] -.->|delete or retain safely| CHECK
 
     classDef external fill:#fef3c7,stroke:#b45309,color:#78350f
     class OUT1,OUT2 external
@@ -64,6 +70,12 @@ source .workshop/workshop.env
 ```
 
 Press ++ctrl+c++ in the terminal running `generate-load.sh`.
+
+The fault helpers start the private job and retrieve only its non-secret JSON
+result from Log Analytics. Results may arrive up to five minutes after job success;
+status is a snapshot from that job. If a result times out, use
+`python scripts/workshop.py fault-result <request-id>` with the reported ID instead
+of repeating an action to recover its logs.
 
 ### Task 2: Keep what is worth keeping
 
@@ -113,7 +125,8 @@ if [[ -n "${SRE_AGENT_PRINCIPAL_ID:-}" ]]; then
 fi
 ```
 
-If any scope is outside `rg-sre-agent-workshop-<suffix>`, delete it explicitly.
+If any workshop-created scope is outside `rg-sre-agent-workshop-<environment>`,
+review and delete that assignment explicitly.
 
 ```bash
 # Only run for assignments whose scope is outside the workshop resource group.
@@ -131,16 +144,36 @@ echo "About to delete: ${RESOURCE_GROUP}"
 az resource list --resource-group "${RESOURCE_GROUP}" --query "[].{Name:name, Type:type}" --output table
 ```
 
-Read that list. Confirm it contains only workshop resources and that the resource group name matches your suffix.
+Read that list. Confirm it contains only workshop resources and that the resource
+group name matches the selected environment. In addition to apps and monitoring,
+the current inventory includes:
+
+* `cae-private-<suffix>` and the `orders-db-bootstrap`, `workshop-token-init`, and `workshop-fault-client` jobs
+* Key Vault and managed identities, including `id-token-<suffix>` and `id-fault-<suffix>`
+* `vnet-<suffix>`, its delegated Container Apps and private-endpoint subnets, and both SQL/vault Private Endpoints
+* `privatelink.database.windows.net` and `privatelink.vaultcore.azure.net`, their VNet links, and endpoint DNS zone groups
+
+The current design creates no ARM token deployment script, script-supporting
+storage account, or Azure Container Instance. If you retried an older failed
+deployment, an empty `cae-*` environment and old failed deployment-script metadata
+may still appear. They are not removed automatically during redeployment;
+deliberate deletion of their workshop resource group removes those leftovers
+alongside the current resources. This cleanup deletes data, not an in-place
+migration path for existing apps.
 
 ```bash
-azd down --purge --force
+azd down
 ```
 
 !!! danger "Verify the resource group name before you press enter"
-  `azd down --purge --force` is not reversible. Confirm the selected environment with `azd env get-value AZURE_ENV_NAME` and verify the resource listing before running it.
+  Deleting the workshop removes its applications and SQL data. Confirm the selected environment with `azd env get-value AZURE_ENV_NAME`, verify the resource listing, and review the interactive deletion prompt. If asked to purge the protected vault, choose **No**.
 
-Deletion runs for five to fifteen minutes in the background.
+Allow several minutes for Azure resource deletion to finish. Before removing
+local environment state, confirm this returns `false`:
+
+```bash
+az group exists --name "${RESOURCE_GROUP}"
+```
 
 !!! warning "Key Vault names remain reserved after cleanup"
     The workshop vault has purge protection and seven-day soft-delete retention. `azd down --purge` cannot override that protection: the deleted vault and its name remain reserved during retention. An immediate redeployment with the same environment-derived vault name may require recovery of the deleted vault. For a separate fresh workshop, choose a new azd environment name; otherwise wait for retention to expire or follow your organization's approved recovery process. Do not disable purge protection or attempt a portal workaround.
@@ -156,7 +189,7 @@ only as appropriate for your organization's data handling policy.
 === "Delete it"
 
     ```bash
-    azd env delete "$(azd env get-value AZURE_ENV_NAME)" --force
+    azd env remove "$(azd env get-value AZURE_ENV_NAME)"
     rm -f .workshop/workshop.env .workshop/workshop.ps1
     ```
 

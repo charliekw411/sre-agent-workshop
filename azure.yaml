@@ -45,6 +45,15 @@ hooks:
       shell: sh
       run: bash ./scripts/prepare-azd-env.sh
       dir: .
+  postprovision:
+    windows:
+      shell: pwsh
+      run: ./scripts/postprovision.ps1
+      dir: .
+    posix:
+      shell: sh
+      run: bash ./scripts/postprovision.sh
+      dir: .
   postdeploy:
     windows:
       shell: pwsh

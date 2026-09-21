@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+import copy
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -36,13 +38,15 @@ SAFE_OUTPUTS = {
     "SRE_AGENT_PRINCIPAL_ID", "SRE_AGENT_IDENTITY_RESOURCE_ID",
     "SRE_AGENT_IDENTITY_PRINCIPAL_ID", "KEY_VAULT_URI", "FAULT_TOKEN_SECRET_URI",
     "ORDERS_IDENTITY_PRINCIPAL_ID", "ORDERS_IDENTITY_CLIENT_ID", "ORDERS_IDENTITY_RESOURCE_ID",
+    "TOKEN_INITIALIZER_JOB_NAME", "FAULT_CLIENT_JOB_NAME", "VIRTUAL_NETWORK_NAME",
+    "SQL_PRIVATE_ENDPOINT_NAME", "KEY_VAULT_PRIVATE_ENDPOINT_NAME",
 }
 LEGACY_SECRETS = {"SQL_ADMIN_PASSWORD", "SQL_ADMIN_LOGIN", "FAULT_TOKEN"}
 PROVIDERS = {
     "Microsoft.App", "Microsoft.ContainerRegistry", "Microsoft.OperationalInsights",
     "Microsoft.Insights", "Microsoft.Sql", "Microsoft.ManagedIdentity",
     "Microsoft.KeyVault", "Microsoft.AlertsManagement",
-    "Microsoft.ContainerInstance", "Microsoft.Storage",
+    "Microsoft.Network",
 }
 
 
@@ -248,6 +252,33 @@ def token_identity(token):
     return str(uuid.UUID(claims["oid"])), str(uuid.UUID(claims["tid"]))
 
 
+def check_network_migration(values):
+    group = "rg-sre-agent-workshop-" + required(values, "AZURE_ENV_NAME")
+    exists = az("group", "exists", "--name", group)
+    if type(exists) is not bool:
+        raise DeploymentError("Unexpected resource-group existence response.")
+    if not exists:
+        return
+    inventories = (
+        (("containerapp", "list"),
+         "[?name=='orders-api' || name=='catalog-api'].{environmentId:properties.managedEnvironmentId}"),
+        (("containerapp", "job", "list"),
+         "[?name=='orders-db-bootstrap' || name=='workshop-token-init' || name=='workshop-fault-client']."
+         "{environmentId:properties.environmentId}"),
+    )
+    for command, query in inventories:
+        resources = az(*command, "--resource-group", group, "--query", query)
+        if not isinstance(resources, list):
+            raise DeploymentError("Unexpected app or job inventory while checking network migration.")
+        for resource in resources:
+            environment_id = resource.get("environmentId") if isinstance(resource, dict) else None
+            if not isinstance(environment_id, str) or not environment_id.rsplit("/", 1)[-1].startswith("cae-private-"):
+                raise DeploymentError(
+                    "Existing workshop apps or jobs use the previous non-VNet environment and cannot move in place. "
+                    "Use a new azd environment name; no existing apps, jobs, or data have been deleted."
+                )
+
+
 def prepare():
     print("Validating agent configuration...", flush=True)
     load_config()
@@ -279,6 +310,8 @@ def prepare():
     if token_identity(token) != token_identity(azd_token):
         raise DeploymentError("Azure CLI and azd must be signed into the same principal and tenant.")
     register_providers()
+    print("Checking existing application network compatibility...", flush=True)
+    check_network_migration(values)
     location = required(values, "AZURE_LOCATION")
     print(f"Checking SRE Agent availability in {location}...", flush=True)
     locations = az("provider", "show", "--namespace", "Microsoft.App",
@@ -446,25 +479,99 @@ def configure_agent(values=None):
     print("SRE Agent instructions, indexed knowledge, and incident filters applied and verified.")
 
 
+def private_execution_template(group, job, overrides):
+    saved = az("containerapp", "job", "show", "--name", job, "--resource-group", group,
+               "--query", "properties.template")
+    if not isinstance(saved, dict) or not isinstance(saved.get("containers"), list):
+        raise DeploymentError("Private job returned an unexpected execution template.")
+    template = copy.deepcopy(saved)
+    containers = [
+        item for item in template["containers"]
+        if isinstance(item, dict) and item.get("name") == "workshop-private-client"
+    ]
+    if len(containers) != 1:
+        raise DeploymentError("Private job must have exactly one workshop-private-client container.")
+    variables = containers[0].get("env", [])
+    if not isinstance(variables, list):
+        raise DeploymentError("Private job returned unexpected environment settings.")
+    by_name = {}
+    for variable in variables:
+        name = variable.get("name") if isinstance(variable, dict) else None
+        if not isinstance(name, str) or not name or name in by_name:
+            raise DeploymentError("Private job environment names must be nonempty and unique.")
+        by_name[name] = variable
+    for name, value in overrides.items():
+        by_name[name] = {"name": name, "value": value}
+    containers[0]["env"] = list(by_name.values())
+    return template
+
+
+def run_job(values, output_name, label, overrides=None):
+    group = required(values, "RESOURCE_GROUP")
+    job = required(values, output_name)
+    arguments = ["containerapp", "job", "start", "--name", job, "--resource-group", group]
+    if overrides:
+        template = private_execution_template(group, job, overrides)
+        # Execution overrides replace the whole template; partial --env-vars loses static settings.
+        with tempfile.TemporaryDirectory(prefix="sre-workshop-job-") as temporary:
+            path = Path(temporary) / "execution.yaml"
+            path.write_text(yaml.safe_dump(template, sort_keys=False), encoding="utf-8")
+            path.chmod(0o600)
+            execution = az(*arguments, "--yaml", str(path))
+    else:
+        execution = az(*arguments)
+    execution_name = execution.get("name") if isinstance(execution, dict) else None
+    if not isinstance(execution_name, str) or not execution_name:
+        raise DeploymentError(f"{label} did not return a job execution name.")
+    execution_name = execution_name.rsplit("/", 1)[-1]
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", execution_name):
+        raise DeploymentError(f"{label} returned an unexpected job execution name.")
+    print(f"{label}: waiting for execution {execution_name}...", file=sys.stderr, flush=True)
+    deadline = time.monotonic() + 1200
+    for attempt in range(120):
+        result = az("containerapp", "job", "execution", "show", "--name", job,
+                    "--resource-group", group, "--job-execution-name", execution_name)
+        properties = result.get("properties") if isinstance(result, dict) else None
+        status = properties.get("status") if isinstance(properties, dict) else None
+        if not isinstance(status, str) or not status:
+            raise DeploymentError(f"{label} returned an unexpected execution status.")
+        if status == "Succeeded":
+            return execution_name
+        if status in {"Failed", "Stopped", "Degraded"}:
+            raise DeploymentError(
+                f"{label} job failed (execution {execution_name}, status {status}); inspect its Azure logs."
+            )
+        if attempt % 3 == 0:
+            print(f"{label}: {status}...", file=sys.stderr, flush=True)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(10, remaining))
+    raise DeploymentError(f"{label} job execution {execution_name} timed out after twenty minutes.")
+
+
+def initialize_private_access(values):
+    run_job(values, "TOKEN_INITIALIZER_JOB_NAME", "Private Key Vault initialization", {
+        "WORKSHOP_REQUEST_ID": uuid.uuid4().hex,
+    })
+    group = required(values, "RESOURCE_GROUP")
+    vault = trusted_url(required(values, "KEY_VAULT_URI"), ".vault.azure.net")
+    identity = required(values, "ORDERS_IDENTITY_RESOURCE_ID")
+    az("containerapp", "secret", "set", "--name", "orders-api", "--resource-group", group,
+       "--secrets", f"fault-token=keyvaultref:{vault}/secrets/fault-token,identityref:{identity}")
+    az("containerapp", "update", "--name", "orders-api", "--resource-group", group,
+       "--set-env-vars", "Fault__Token=secretref:fault-token", "Fault__Enabled=true")
+    print("Private Key Vault initialized; Orders API uses a managed-identity secret reference.", flush=True)
+
+
 def bootstrap(values):
     group = required(values, "RESOURCE_GROUP")
     job = required(values, "BOOTSTRAP_JOB_NAME")
     app = az("containerapp", "show", "--name", "orders-api", "--resource-group", group)
     image = app["properties"]["template"]["containers"][0]["image"]
     az("containerapp", "job", "update", "--name", job, "--resource-group", group, "--image", image)
-    execution = az("containerapp", "job", "start", "--name", job, "--resource-group", group)
-    execution_name = execution["name"].rsplit("/", 1)[-1]
-    for _ in range(120):
-        result = az("containerapp", "job", "execution", "show", "--name", job,
-                    "--resource-group", group, "--job-execution-name", execution_name)
-        status = result["properties"]["status"]
-        if status == "Succeeded":
-            print("Database bootstrap succeeded; schema, runtime grants, and seed records verified.")
-            return
-        if status in {"Failed", "Stopped", "Degraded"}:
-            raise DeploymentError("Database bootstrap job failed; inspect its Azure logs, then rerun azd up.")
-        time.sleep(10)
-    raise DeploymentError("Database bootstrap job timed out after twenty minutes.")
+    run_job(values, "BOOTSTRAP_JOB_NAME", "Database bootstrap")
+    print("Database bootstrap succeeded; schema, runtime grants, and seed records verified.")
 
 
 def verify_app(values):
@@ -482,9 +589,63 @@ def verify_app(values):
             time.sleep(10)
 
 
+def fault_result(values, request_id, execution_name=None):
+    prefix = f"WORKSHOP_RESULT:{request_id}:"
+    query = (
+        "union isfuzzy=true ContainerAppConsoleLogs_CL, "
+        "(datatable(TimeGenerated:datetime, ContainerGroupName_s:string, Log_s:string)[]) "
+        f"| where Log_s startswith_cs '{prefix}' "
+    )
+    if execution_name:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", execution_name):
+            raise DeploymentError("Unexpected job execution name for result retrieval.")
+        query += f"| where ContainerGroupName_s startswith '{execution_name}' "
+    query += "| distinct Log_s | take 2"
+    retry_command = f"python {Path('scripts') / 'workshop.py'} fault-result {request_id}"
+    deadline = time.monotonic() + 300
+    for attempt in range(60):
+        try:
+            rows = az("monitor", "log-analytics", "query",
+                      "--workspace", required(values, "LOG_ANALYTICS_CUSTOMER_ID"),
+                      "--analytics-query", query, "--timespan", "PT1H")
+        except DeploymentError as error:
+            raise DeploymentError(
+                f"Result query for request {request_id} failed. Check the log-analytics extension and "
+                f"workspace query permissions. Do not reinject; retry retrieval with: {retry_command}. {error}"
+            ) from None
+        if not isinstance(rows, list):
+            raise DeploymentError("Unexpected private-job log query response.")
+        if len(rows) > 1:
+            raise DeploymentError(
+                f"Request {request_id} has conflicting result records. Do not reinject; inspect its job executions."
+            )
+        if rows:
+            line = rows[0].get("Log_s") if isinstance(rows[0], dict) else None
+            if not isinstance(line, str) or not line.startswith(prefix):
+                raise DeploymentError("Private-job result did not match this request.")
+            try:
+                result = json.loads(line[len(prefix):])
+            except json.JSONDecodeError:
+                raise DeploymentError("Private-job result is not valid JSON; output withheld.") from None
+            if not isinstance(result, dict):
+                raise DeploymentError("Private-job result has an unexpected shape.")
+            return result
+        if attempt % 6 == 0:
+            print("Waiting for the non-secret request result in Log Analytics...",
+                  file=sys.stderr, flush=True)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(5, remaining))
+    context = f"Fault execution {execution_name} succeeded, but " if execution_name else ""
+    raise DeploymentError(
+        f"{context}result {request_id} has not reached Log Analytics "
+        "after five minutes. Do not reinject the fault to retry log retrieval. "
+        f"Run: {retry_command}"
+    )
+
+
 def fault(action, arguments):
-    values = environment()
-    url = trusted_url("https://" + required(values, "ORDERS_API_FQDN"), ".azurecontainerapps.io")
     actions = {
         "cpu": ("cpu", ("seconds", "threads"), (600, 4)),
         "errors": ("errors", ("ratePercent", "ttlSeconds"), (100, 900)),
@@ -498,19 +659,29 @@ def fault(action, arguments):
         raise DeploymentError("Too many fault arguments.")
     numbers = [int(value) for value in arguments]
     parameters = dict(zip(fields, numbers + list(defaults[len(numbers):])))
-    token = az("keyvault", "secret", "show", "--vault-name", required(values, "KEY_VAULT_NAME"),
-               "--name", "fault-token", "--query", "value")
-    if not isinstance(token, str) or not re.fullmatch(r"[0-9a-fA-F]{48,128}", token):
-        raise DeploymentError("Fault credential is unavailable or has an unexpected format.")
-    result = http("GET" if action == "status" else "POST", url + "/fault/" + path,
-                  {"X-Fault-Token": token, "Content-Type": "application/json"},
-                  None if action == "status" else json.dumps(parameters).encode())
+    request = base64.b64encode(json.dumps({"path": path, "parameters": parameters}).encode()).decode()
+    values = environment()
+    request_id = uuid.uuid4().hex
+    print(f"Starting private fault request {request_id}...", file=sys.stderr, flush=True)
+    try:
+        execution = run_job(values, "FAULT_CLIENT_JOB_NAME", "Private fault client", {
+            "WORKSHOP_REQUEST_ID": request_id, "WORKSHOP_REQUEST": request,
+        })
+    except DeploymentError as error:
+        raise DeploymentError(
+            f"Private fault request {request_id} did not report success and may have executed. "
+            "Do not reinject without inspecting its execution and logs. "
+            f"Result lookup: python {Path('scripts') / 'workshop.py'} fault-result {request_id}. {error}"
+        ) from None
+    result = fault_result(values, request_id, execution)
     print(json.dumps(result, indent=2))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("validate", "prepare", "postdeploy", "configure-agent", "export", "fault"))
+    parser.add_argument("command", choices=(
+        "validate", "prepare", "postprovision", "postdeploy", "configure-agent", "export", "fault", "fault-result",
+    ))
     parser.add_argument("arguments", nargs="*")
     args = parser.parse_args()
     if args.command == "validate":
@@ -520,6 +691,10 @@ def main():
         prepare()
     elif args.command == "configure-agent":
         configure_agent()
+    elif args.command == "fault-result":
+        if len(args.arguments) != 1 or not re.fullmatch(r"[a-f0-9]{32}", args.arguments[0]):
+            raise DeploymentError("Supply the 32-character request ID printed by the fault helper.")
+        print(json.dumps(fault_result(environment(), args.arguments[0]), indent=2))
     elif args.command == "fault":
         action = args.arguments[0] if args.arguments else "status"
         if action not in {"cpu", "errors", "storage", "release", "reset", "status"}:
@@ -527,6 +702,8 @@ def main():
         fault(action, args.arguments[1:])
     else:
         values = environment()
+        if args.command == "postprovision":
+            initialize_private_access(values)
         if args.command == "postdeploy":
             load_config()
             bootstrap(values)

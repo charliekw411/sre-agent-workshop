@@ -37,6 +37,10 @@ resource bootstrapIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@202
   name: 'id-bootstrap-${suffix}'
 }
 
+resource faultIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: 'id-fault-${suffix}'
+}
+
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: 'kv-${suffix}'
 }
@@ -50,7 +54,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
 }
 
 resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
-  name: 'cae-${suffix}'
+  name: 'cae-private-${suffix}'
 }
 
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' existing = {
@@ -188,11 +192,6 @@ resource ordersApi 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'appinsights-connection-string'
           value: appInsights.properties.ConnectionString
         }
-        {
-          name: 'fault-token'
-          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/fault-token'
-          identity: identity.id
-        }
       ]
     }
     template: {
@@ -215,12 +214,9 @@ resource ordersApi 'Microsoft.App/containerApps@2024-03-01' = {
               value: sqlConnectionString
             }
             {
-              name: 'Fault__Token'
-              secretRef: 'fault-token'
-            }
-            {
               name: 'Fault__Enabled'
-              value: 'true'
+              // The postprovision hook initializes the private vault before enabling faults.
+              value: 'false'
             }
             {
               name: 'Catalog__BaseUrl'
@@ -324,7 +320,23 @@ resource bootstrapJob 'Microsoft.App/jobs@2024-03-01' = {
   }
 }
 
+module faultClient './private-job.bicep' = {
+  name: 'fault-client'
+  params: {
+    location: location
+    resourceName: 'workshop-fault-client'
+    operation: 'fault'
+    environmentId: containerAppsEnvironment.id
+    identityResourceId: faultIdentity.id
+    identityClientId: faultIdentity.properties.clientId
+    keyVaultUri: keyVault.properties.vaultUri
+    ordersApiUrl: 'https://${ordersApi.properties.configuration.ingress.fqdn}'
+    tags: tags
+  }
+}
+
 output bootstrapJobName string = bootstrapJob.name
+output faultClientJobName string = faultClient.outputs.jobName
 output ordersApiName string = ordersApi.name
 output ordersApiFqdn string = ordersApi.properties.configuration.ingress.fqdn
 output ordersApiResourceId string = ordersApi.id

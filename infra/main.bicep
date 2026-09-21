@@ -19,9 +19,6 @@ param deployerPrincipalId string
 ])
 param deployerPrincipalType string = 'User'
 
-@description('Reruns the server-side secret existence check on each deployment without rotating an existing token.')
-param tokenInitializationRun string = utcNow()
-
 @description('Log Analytics retention in days.')
 @minValue(30)
 @maxValue(730)
@@ -59,6 +56,12 @@ resource bootstrapIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@202
 
 resource tokenIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'id-token-${suffix}'
+  location: location
+  tags: tags
+}
+
+resource faultIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-fault-${suffix}'
   location: location
   tags: tags
 }
@@ -124,7 +127,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     enableSoftDelete: true
     softDeleteRetentionInDays: 7
     enablePurgeProtection: true
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: 'Disabled'
   }
 }
 
@@ -151,6 +154,16 @@ resource attendeeSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01
   }
 }
 
+resource faultSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, faultIdentity.id, secretsUserRoleId)
+  scope: keyVault
+  properties: {
+    principalId: faultIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsUserRoleId)
+  }
+}
+
 resource tokenSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(keyVault.id, tokenIdentity.id, secretsOfficerRoleId)
   scope: keyVault
@@ -159,86 +172,6 @@ resource tokenSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsOfficerRoleId)
   }
-}
-
-resource faultTokenGenerator 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
-  name: 'generate-fault-token'
-  location: location
-  tags: tags
-  kind: 'AzureCLI'
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${tokenIdentity.id}': {}
-    }
-  }
-  properties: {
-    azCliVersion: '2.64.0'
-    forceUpdateTag: tokenInitializationRun
-    timeout: 'PT20M'
-    cleanupPreference: 'Always'
-    retentionInterval: 'P1D'
-    environmentVariables: [
-      {
-        name: 'KEY_VAULT_URI'
-        value: keyVault.properties.vaultUri
-      }
-      {
-        name: 'KEY_VAULT_RESOURCE'
-        value: 'https://${substring(environment().suffixes.keyvaultDns, 1)}'
-      }
-    ]
-    // The generated secret stays in Python memory and an HTTPS body, never CLI arguments or logs.
-    scriptContent: '''
-set +x
-set -eu
-export AZURE_CORE_OUTPUT=none
-export AZURE_CORE_ONLY_SHOW_ERRORS=true
-export AZURE_LOGGING_ENABLE_LOG_FILE=false
-export AZURE_CORE_COLLECT_TELEMETRY=false
-python3 - <<'PY'
-import json
-import os
-import secrets
-import subprocess
-import time
-import urllib.request
-
-vault = os.environ["KEY_VAULT_URI"].rstrip("/")
-for attempt in range(90):
-    try:
-        credential = subprocess.run(
-            ["az", "account", "get-access-token", "--resource", os.environ["KEY_VAULT_RESOURCE"],
-             "--query", "accessToken", "--output", "tsv", "--only-show-errors"],
-            capture_output=True, text=True, check=True, timeout=60,
-        ).stdout.strip()
-        headers = {"Authorization": "Bearer " + credential, "Content-Type": "application/json"}
-        url = vault + "/secrets?api-version=7.4"
-        while url:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
-                page = json.load(response)
-            if any(item["id"].split("/secrets/", 1)[-1].split("/")[0] == "fault-token"
-                   for item in page.get("value", [])):
-                raise SystemExit(0)
-            url = page.get("nextLink")
-        body = json.dumps({"value": secrets.token_hex(32)}).encode()
-        request = urllib.request.Request(
-            vault + "/secrets/fault-token?api-version=7.4",
-            data=body, headers=headers, method="PUT",
-        )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            response.read()
-        raise SystemExit(0)
-    except Exception:
-        # Retry propagation/transient failures; never print response bodies or exception details.
-        time.sleep(10)
-raise SystemExit("Unable to initialize the workshop token in Key Vault.")
-PY
-'''
-  }
-  dependsOn: [
-    tokenSecretsOfficer
-  ]
 }
 
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -282,7 +215,7 @@ resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
   }
   properties: {
     minimalTlsVersion: '1.2'
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: 'Disabled'
     restrictOutboundNetworkAccess: 'Disabled'
     administrators: {
       administratorType: 'ActiveDirectory'
@@ -292,16 +225,6 @@ resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
       tenantId: subscription().tenantId
       azureADOnlyAuthentication: true
     }
-  }
-}
-
-// Allows Container Apps outbound traffic, which presents as an Azure service address.
-resource allowAzureServices 'Microsoft.Sql/servers/firewallRules@2023-08-01-preview' = {
-  parent: sqlServer
-  name: 'AllowAllWindowsAzureIps'
-  properties: {
-    startIpAddress: '0.0.0.0'
-    endIpAddress: '0.0.0.0'
   }
 }
 
@@ -361,11 +284,33 @@ resource databaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
   }
 }
 
+module privateNetwork './network.bicep' = {
+  name: 'private-network'
+  params: {
+    location: location
+    suffix: suffix
+    sqlServerId: sqlServer.id
+    keyVaultId: keyVault.id
+    tags: tags
+  }
+}
+
 resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: 'cae-${suffix}'
+  // An environment without a VNet cannot be converted in place after a partial deployment.
+  name: 'cae-private-${suffix}'
   location: location
   tags: tags
   properties: {
+    vnetConfiguration: {
+      infrastructureSubnetId: privateNetwork.outputs.infrastructureSubnetId
+      internal: false
+    }
+    workloadProfiles: [
+      {
+        name: 'Consumption'
+        workloadProfileType: 'Consumption'
+      }
+    ]
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
@@ -375,6 +320,23 @@ resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01'
     }
     zoneRedundant: false
   }
+}
+
+module faultTokenInitializer './private-job.bicep' = {
+  name: 'fault-token-initializer'
+  params: {
+    location: location
+    resourceName: 'workshop-token-init'
+    operation: 'initialize'
+    environmentId: containerAppsEnvironment.id
+    identityResourceId: tokenIdentity.id
+    identityClientId: tokenIdentity.properties.clientId
+    keyVaultUri: keyVault.properties.vaultUri
+    tags: tags
+  }
+  dependsOn: [
+    tokenSecretsOfficer
+  ]
 }
 
 resource environmentDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
@@ -400,6 +362,10 @@ output bootstrapIdentityClientId string = bootstrapIdentity.properties.clientId
 output keyVaultName string = keyVault.name
 output keyVaultUri string = keyVault.properties.vaultUri
 output faultTokenSecretUri string = '${keyVault.properties.vaultUri}secrets/fault-token'
+output tokenInitializerJobName string = faultTokenInitializer.outputs.jobName
+output virtualNetworkName string = privateNetwork.outputs.virtualNetworkName
+output sqlPrivateEndpointName string = privateNetwork.outputs.sqlPrivateEndpointName
+output keyVaultPrivateEndpointName string = privateNetwork.outputs.keyVaultPrivateEndpointName
 
 output registryName string = registry.name
 output registryLoginServer string = registry.properties.loginServer

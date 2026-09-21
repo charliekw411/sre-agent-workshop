@@ -1,7 +1,7 @@
 ---
 title: Module 02 - Solution Architecture
 description: The Contoso Order Services architecture, request flow, telemetry pipeline, fault injection design, and failure modes used throughout the workshop.
-ms.date: 2026-09-08
+ms.date: 2026-09-21
 ms.topic: concept
 keywords:
   - solution architecture
@@ -33,9 +33,47 @@ Read it properly. Deployment loads the checked-in architecture as agent knowledg
 
 ## Architecture context
 
-This is the complete deployed environment.
+This image shows the application and telemetry flows, not the complete network
+design. The private data-service paths are shown separately below.
 
 ![Contoso Order Services solution architecture showing request, telemetry, alerting, and Azure SRE Agent flows](../../assets/images/solution-architecture.png)
+
+### Private data-service connectivity
+
+```mermaid
+flowchart LR
+    Client[Public HTTPS client] --> Orders
+    subgraph VNet["vnet-&lt;suffix&gt;"]
+        subgraph ACA["Delegated subnet: cae-private-&lt;suffix&gt;"]
+            Orders[orders-api] --> Catalog[catalog-api: internal ingress]
+            Jobs[SQL bootstrap and token/fault jobs]
+        end
+        SQLPE[SQL private endpoint]
+        VaultPE[Key Vault private endpoint]
+        Orders --> SQLPE
+        Orders --> VaultPE
+        Jobs --> SQLPE
+        Jobs --> VaultPE
+    end
+    SQLPE --> SQL["Azure SQL: public access disabled"]
+    VaultPE --> Vault["Key Vault: public access disabled"]
+```
+
+The Container Apps environment uses a Consumption workload profile in a subnet
+delegated to `Microsoft.App/environments`. SQL and Key Vault each have
+`publicNetworkAccess: Disabled` and an endpoint on the separate private-endpoint
+subnet. Private DNS zones `privatelink.database.windows.net` and
+`privatelink.vaultcore.azure.net` are linked to `vnet-<suffix>`, so their normal
+service hostnames resolve to private endpoint addresses for these workloads.
+There is no public SQL firewall or `AllowAllWindowsAzureIps` rule.
+
+This is not an all-private environment. Orders retains public HTTPS ingress;
+Catalog retains internal ingress. Basic ACR remains public for Entra-authenticated
+remote builds and managed-identity image pulls, with admin and anonymous access
+off. Azure Monitor ingestion and queries also remain public. No Premium ACR,
+dedicated build pool, NAT gateway, or VPN is added. If policy also prohibits these
+public paths, additional architecture work or an approved environment is required,
+not a policy bypass.
 
 ## Component responsibilities
 
@@ -51,7 +89,11 @@ granting schema-management rights.
 
 ### catalog-api
 
-An internal-only service that returns product and pricing data. It has no ingress from outside the environment, which means the only way to reach it is through `orders-api`. That constraint matters in Module 08: when `catalog-api` degrades, the customer-visible symptom appears on `orders-api`, and the investigation has to walk the dependency chain backwards.
+An internal-only service that returns product and pricing data. It has no ingress
+from outside the environment, so external clients reach its functionality through
+`orders-api`. That constraint matters in Module 08: when `catalog-api` degrades,
+the customer-visible symptom appears on `orders-api`, and the investigation has to
+walk the dependency chain backwards.
 
 ### Azure SQL Database
 
@@ -62,6 +104,22 @@ schema and grants; the Orders API identity has object-level permissions, not
 `db_owner`. Initialization inserts the five deterministic seed orders documented
 in [Module 03](../03-deploy-infrastructure/index.md) without overwriting existing
 orders or storage ballast.
+
+### Key Vault and private jobs
+
+The vault holds `fault-token`. The manual-trigger `workshop-token-init` job uses
+`id-token-<suffix>` with vault-scoped `Key Vault Secrets Officer`. During
+`postprovision` it creates only a missing token and preserves an existing token.
+The hook waits for success, attaches the private Key Vault reference to Orders,
+and then enables fault endpoints. Initial app provisioning leaves faults disabled.
+The previous `Microsoft.Resources/deploymentScripts` resource
+`generate-fault-token` is removed; there is no script-supporting storage account
+or Azure Container Instance.
+
+The separate `workshop-fault-client` job uses `id-fault-<suffix>` with only
+vault-scoped `Key Vault Secrets User`. It reads the credential inside the VNet and
+calls the existing Orders `/fault` routes. It cannot create or rotate the token.
+Neither job gives the SRE runtime permission to start jobs or retrieve secrets.
 
 ### Log Analytics workspace
 
@@ -122,7 +180,7 @@ Each arrow to Application Insights is a correlated telemetry item sharing one op
 
 The fault endpoints live in `orders-api` and follow three rules.
 
-* Every endpoint requires a matching `X-Fault-Token` header. The secret stays in Key Vault; `scripts/inject-fault.sh` and `scripts/inject-fault.ps1` retrieve it just in time. Generated shell exports contain only safe identifiers and endpoints.
+* Every endpoint requires a matching `X-Fault-Token` header. Only the in-VNet fault-client job retrieves the credential for helper requests; the attendee laptop never retrieves it. Generated shell exports contain only safe identifiers and endpoints.
 * Every endpoint is bounded. CPU load stops after a duration, error injection has a decaying time-to-live, and storage fill has a row cap.
 * Every endpoint has a reset. `POST /fault/reset` clears all active fault state so you can return the system to health without redeploying.
 
@@ -131,8 +189,24 @@ The fault endpoints live in `orders-api` and follow three rules.
 | `POST /fault/cpu`     | Saturates worker threads with a busy loop for N seconds       | 06     |
 | `POST /fault/errors`  | Makes `catalog-api` calls fail at a configured rate            | 08     |
 | `POST /fault/storage` | Bulk inserts padded rows until the database hits its size cap | 10     |
+| `POST /fault/storage/release` | Releases storage ballast through the scoped procedure | 10     |
 | `POST /fault/reset`   | Clears all fault state                                        | All    |
 | `GET  /fault/status`  | Returns currently active faults                                | All    |
+
+`scripts/inject-fault.sh` and `scripts/inject-fault.ps1` keep the same commands and
+defaults. They start and wait for the job through ARM, then use the Azure CLI
+`log-analytics` extension to read only its correlated, non-secret JSON result from
+`ContainerAppConsoleLogs_CL`. The caller needs job-start and log-query permission,
+not VPN connectivity or private-vault data access.
+
+Progress is written to stderr and the JSON result to stdout. Retrieval waits up
+to five minutes for ingestion after job success. A status response is the snapshot
+captured by the job, not necessarily the current state at log arrival; fault timers
+can expire during that delay. If retrieval times out, the helper reports the
+execution and 32-character request ID. Retry only
+`python scripts/workshop.py fault-result <request-id>`, which queries the last hour
+(`PT1H`) without starting another job. Do not reinject to recover a missing result.
+Log availability policies apply; a failed job needs log investigation instead.
 
 !!! danger "These endpoints are hostile by design"
     They exist to destroy the availability of the service that hosts them. Never merge this controller into a real application. If you adapt this workshop for internal training, keep the fault code behind a compile-time flag that is off in every configuration except the workshop.

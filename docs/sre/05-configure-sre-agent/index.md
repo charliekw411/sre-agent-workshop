@@ -1,7 +1,7 @@
 ---
 title: Module 05 - Configure Azure SRE Agent
 description: Verify the automatically provisioned Azure SRE Agent, its least-privilege access, and version-controlled configuration.
-ms.date: 2026-09-08
+ms.date: 2026-09-21
 ms.topic: how-to
 keywords:
   - azure sre agent
@@ -39,8 +39,13 @@ of this workshop.
 | --- | --- | --- |
 | Attendee/deployer | Subscription `Owner`, or `Contributor` plus `User Access Administrator` | Create the resource group and all deployment role assignments. |
 | Attendee/configuration caller | `SRE Agent Administrator` at the agent resource, assigned by hooks | Synchronize version-controlled agent configuration. |
-| Attendee/fault-helper caller | `Key Vault Secrets User` at the workshop vault, assigned by deployment | Retrieve fault authentication just in time. This grant does not apply to the SRE runtime. |
-| SRE runtime managed identity | `Reader` and `Monitoring Reader` at the workshop resource group; `Log Analytics Reader` at the workspace | Read-only automated investigation. |
+| Attendee/fault-helper caller | Existing subscription role above, including Container Apps job start/read and workspace log queries | Start and wait for `workshop-fault-client` through ARM, then retrieve only its non-secret correlated JSON result. No laptop vault access or VPN is needed. |
+| Attendee/in-network secret reader | Legacy `Key Vault Secrets User` at the workshop vault, retained by deployment | Read secrets from an authorized in-network administration environment. Local fault helpers do not use this grant; it does not bypass private networking or permit secret writes. |
+| Token-initializer identity `id-token-<suffix>` | `Key Vault Secrets Officer` at the workshop vault | `workshop-token-init` creates only a missing `fault-token` inside the VNet and preserves existing tokens. |
+| Fault-client identity `id-fault-<suffix>` | `Key Vault Secrets User` at the workshop vault only | `workshop-fault-client` reads the credential inside the VNet and calls `/fault` routes. It has no secret-write permission. |
+| Orders identity `id-<suffix>` | `AcrPull` at the registry; `Key Vault Secrets User` at the vault; SQL object-level grants | Pull the image, resolve the private Key Vault secret reference, and serve requests without SQL schema-management rights. |
+| SQL-bootstrap identity `id-bootstrap-<suffix>` | `AcrPull` at the registry; SQL Microsoft Entra administrator | Initialize SQL schema and runtime grants through the private endpoint, preserving existing orders and ballast. |
+| SRE runtime managed identity | `Reader` and `Monitoring Reader` at the workshop resource group; `Log Analytics Reader` at the workspace | Read-only automated investigation, including network configuration and non-secret job logs. No job-start or secret privileges. |
 
 Deployment resolves the attendee identity through azd's built-in
 `AZURE_PRINCIPAL_ID` and `AZURE_PRINCIPAL_TYPE` values, supported in azd 1.18 or
@@ -53,7 +58,15 @@ or persisting either token.
 The workshop does **not** grant the runtime subscription-wide `Monitoring Contributor`.
 Full Azure Monitor alert lifecycle integration requires that broader permission;
 do not expect the agent to acknowledge or close alerts. Configuration access for
-the attendee is distinct from the runtime identity's read-only access.
+the attendee is distinct from the runtime identity's read-only access. Neither
+the attendee's job-start permissions nor the private jobs' vault roles are
+assigned to the SRE runtime.
+
+Fault helpers use the Azure CLI `log-analytics` extension after the job succeeds.
+Log ingestion may delay the response by up to five minutes, and status is a
+snapshot captured by the job. A result timeout is recovered with the read-only
+`python scripts/workshop.py fault-result <request-id>` command, never by
+reinjecting. See [result retrieval](../30-appendix/01-variables.md#fault-helper-results-and-retry).
 
 The preview resource uses `accessLevel: Low` and action mode `Review`, not
 invented `Reader` or `ReadOnly` API enum values. Scoped Azure RBAC grants enforce
@@ -63,7 +76,8 @@ system-assigned identities.
 ## Overview
 
 `azd up` has provisioned Azure SRE Agent and its permissions, then synchronized
-`agent/incident-filters.yaml` and `agent/knowledge.yaml` after SQL initialization.
+`agent/incident-filters.yaml` and `agent/knowledge.yaml` after private-vault
+initialization, SQL initialization, and the smoke request.
 This module verifies that configuration and the read-only investigation boundary.
 There are no portal setup steps or manual role grants.
 
@@ -85,7 +99,7 @@ The agent's view of your system is exactly the intersection of what it is scoped
 flowchart TB
     AGENT["Azure SRE Agent<br/>managed identity"]
 
-    subgraph Scope["Scope: rg-sre-agent-workshop-&lt;suffix&gt;"]
+    subgraph Scope["Scope: rg-sre-agent-workshop-&lt;environment&gt;"]
         R1[Reader on the resource group]
         R2[Monitoring Reader on the resource group]
         R3[Log Analytics Reader on the workspace]
@@ -104,6 +118,7 @@ flowchart TB
         B1[Modify any resource]
         B2[Read other resource groups]
         B3[Read secrets or connection strings]
+        B4[Start token or fault-client jobs]
     end
 
     AGENT --> R1 --> V1
@@ -116,9 +131,10 @@ flowchart TB
     AGENT -.blocked.-> B1
     AGENT -.blocked.-> B2
     AGENT -.blocked.-> B3
+    AGENT -.blocked.-> B4
 
     classDef blocked fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
-    class B1,B2,B3 blocked
+    class B1,B2,B3,B4 blocked
 ```
 
 ## Tasks
@@ -152,7 +168,7 @@ az role assignment list \
 ```
 
 !!! danger "Roles this workshop deliberately does not grant"
-    The SRE runtime has no `Contributor`, `Owner`, `Key Vault Secrets User`, or subscription-wide `Monitoring Contributor` grant. It can investigate resources and telemetry but cannot retrieve fault secrets, perform remediation, or acknowledge/close Azure Monitor alerts. Do not confuse the attendee's agent-scoped administration role with runtime privileges.
+    The SRE runtime has no `Contributor`, `Owner`, Key Vault secret role, job-start privilege, or subscription-wide `Monitoring Contributor` grant. It can investigate resources, private DNS and endpoint configuration, and telemetry, but cannot retrieve fault secrets, start private jobs, perform remediation, or acknowledge/close Azure Monitor alerts. Do not confuse the attendee's agent-scoped administration role with runtime privileges.
 
 ### Task 3: Review version-controlled configuration
 
@@ -246,7 +262,7 @@ If the agent reports that it cannot see any resources, role assignment propagati
     Scoping to the workspace resource makes the grant explicit and independently revocable. If you later move the workspace to a shared monitoring resource group, which is common in production, the assignment follows the workspace rather than silently breaking or silently widening. Explicit scope also makes access reviews readable: someone can see exactly which workspace the agent queries.
 
 ??? question "Can the SRE runtime retrieve the fault secret or SQL administrator credentials?"
-    No. It has no Key Vault data-plane secret permissions. SQL is Entra-only: a separate bootstrap managed identity performs initialization, and the Orders managed identity receives narrow runtime grants. There are no SQL administrator passwords to retrieve.
+    No. It has no Key Vault data-plane secret permissions and cannot start the token or fault-client jobs. SQL is Entra-only: a separate bootstrap managed identity performs initialization, and the Orders managed identity receives narrow runtime grants. There are no SQL administrator passwords to retrieve.
 
 ??? question "Your security team asks what happens if someone prompts the agent to delete a resource. What is your answer?"
     In this configuration the action fails at the Azure Resource Manager authorization layer, because the identity holds no write permissions on any resource. The attempt is recorded in the Activity log with the agent identity as the caller. Prompt-level guardrails are useful defense in depth, but the permission boundary is the control you rely on, because it is enforced outside the model.

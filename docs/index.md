@@ -1,7 +1,7 @@
 ---
 title: Azure SRE Agent Workshop
 description: A hands-on workshop that teaches you to detect, investigate, and resolve production incidents on Azure using Azure SRE Agent and native Azure monitoring.
-ms.date: 2026-09-08
+ms.date: 2026-09-21
 ms.topic: overview
 keywords:
   - azure sre agent
@@ -27,7 +27,7 @@ By the end you will have run a full incident lifecycle: detection, triage, inves
 
 * :material-rocket-launch: **Deploy once, break repeatedly**
 
-    One Bicep deployment gives you a Container Apps environment, Azure SQL Database, Log Analytics, Application Insights, and a full alerting stack.
+    One `azd up` gives you VNet-integrated Container Apps, private SQL and Key Vault endpoints, managed-identity jobs, Log Analytics, Application Insights, and a full alerting stack. Orders HTTPS, ACR builds, and Azure Monitor ingestion/query remain public.
 
 * :material-fire: **Three realistic incidents**
 
@@ -97,10 +97,14 @@ flowchart TD
 | Root cause analysis and tuning     | 11 - 13 | 90 minutes         |
 | Cleanup                            | 14      | 10 minutes         |
 
-Total hands-on time is roughly five hours. Running the deployed environment costs a few US dollars per day; see [Cost Management](sre/30-appendix/03-cost-management.md) for the breakdown and for guidance on scaling to zero between sessions.
+Total hands-on time is roughly five hours. Budget for the application, monitoring,
+two billable Private Endpoints, private DNS, and short on-demand jobs, plus current
+Azure SRE Agent pricing. The original 2 to 4 US dollars per day estimate predates
+the added network and job costs. See [Cost Management](sre/30-appendix/03-cost-management.md)
+for the illustrative breakdown and the costs that continue when apps scale to zero.
 
 !!! warning "Delete your resources when you finish"
-    The workshop deliberately provisions an Azure SQL Database and an always-on Container Apps replica. Leaving them running after the workshop costs money for no benefit. [Module 14](sre/14-cleanup/index.md) removes everything in a single command.
+    SQL, the always-on app replicas, Private Endpoints, and private DNS continue to incur charges when you close your terminal. [Module 14](sre/14-cleanup/index.md) explains resource-group cleanup, including old empty environments left by an earlier failed deployment.
 
 ## Who this is for
 

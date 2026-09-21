@@ -1,7 +1,7 @@
 ---
 title: Module 06 - Generate High CPU Incident
 description: Trigger a controlled CPU saturation incident on orders-api, observe the effect on latency and throughput, and confirm Azure Monitor detects it.
-ms.date: 2026-09-08
+ms.date: 2026-09-21
 ms.topic: how-to
 keywords:
   - cpu saturation
@@ -32,18 +32,22 @@ Start here because the investigation loop is the same for every incident. Learn 
 
 ## Architecture context
 
-The fault runs inside the `orders-api` container. Nothing else in the system is touched, which is what makes the blast radius easy to reason about.
+The private fault-client job invokes the existing fault route, but the CPU load
+runs inside the `orders-api` container. Only that application is the fault target,
+which keeps the blast radius straightforward to reason about.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant You
+    participant F as workshop-fault-client
     participant O as orders-api
     participant K as catalog-api
     participant D as Azure SQL Database
     participant M as Azure Monitor
 
-    You->>O: POST /fault/cpu (4 threads, 600s)
+    You->>F: Start job through ARM
+    F->>O: POST /fault/cpu (4 threads, 600s)
     O->>O: Spawn busy-loop threads
     Note over O: CPU rises to allocation limit
     O->>M: UsageNanoCores climbs
@@ -67,15 +71,23 @@ source .workshop/workshop.env
 ./scripts/inject-fault.sh status
 ```
 
-All three should show no active fault. Confirm your load generator from Module 04 is still running; if not, restart it.
+The job's snapshot should show no active fault. Confirm your load generator from
+Module 04 is still running; if not, restart it.
 
-The helper retrieves the fault secret from Key Vault just in time. PowerShell
-users can run `./scripts/inject-fault.ps1 status` and use the same arguments for
-the injection commands below. Do not copy authentication tokens into commands.
+The helper starts and waits for `workshop-fault-client` through ARM. The job reads
+the credential inside the VNet, never on your laptop, then the helper retrieves
+only its correlated non-secret JSON result from Log Analytics. PowerShell users
+can run `./scripts/inject-fault.ps1 status` with the same arguments for the
+injection commands below. No VPN or local token retrieval is needed.
+
+!!! important "Job results can arrive after the state has changed"
+    Retrieval waits up to five minutes for ingestion after job success. Progress goes to stderr and JSON to stdout. Status is a job-captured snapshot, not necessarily the current state when printed. If a result times out, keep the execution name and 32-character request ID and use `python scripts/workshop.py fault-result <request-id>` to retry only read-only log retrieval. Do not reinject to recover a result. Queries cover the last hour (`PT1H`), subject to log availability policies. See [fault helper results](../30-appendix/01-variables.md#fault-helper-results-and-retry).
 
 ### Task 2: Record the incident start time
 
-Time is the primary key of an investigation. Write it down before you break anything.
+Time is the primary key of an investigation. Record when you invoke the helper,
+then refine the injection time from the job execution and `FAULT INJECTED` logs.
+Job startup and result ingestion are separate delays.
 
 ```bash
 export INCIDENT_1_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -85,7 +97,7 @@ mkdir -p .workshop/notes
 cat > .workshop/notes/incident-01-high-cpu.md <<EOF
 # Incident 1: CPU saturation on orders-api
 
-* Injected at (UTC): ${INCIDENT_1_START}
+* Helper invoked at (UTC): ${INCIDENT_1_START}
 * Fault: 4 CPU-bound threads for 600 seconds
 * Expected primary signal: saturation
 * Expected secondary signal: latency
@@ -108,7 +120,10 @@ EOF
 ./scripts/inject-fault.sh cpu 600 4
 ```
 
-Four busy-loop threads against a 0.5 vCPU allocation guarantees saturation. The fault stops automatically after 600 seconds, so there is no way to forget about it and burn credits overnight.
+Four busy-loop threads against a 0.5 vCPU allocation guarantees saturation. The
+fault stops automatically 600 seconds after the job invokes the endpoint, not
+600 seconds after the helper returns. Start Task 4 in another terminal while
+the helper waits for log ingestion so you do not miss the start of the incident.
 
 ### Task 4: Watch the impact in real time
 
@@ -180,7 +195,7 @@ Paste the result into `.workshop/notes/incident-01-high-cpu.md` under the timeli
 
 ## Validation
 
-* [x] `GET /fault/status` reports `cpuLoadActive: true` while the fault is running.
+* [x] A `/fault/status` snapshot captured during the incident reports `cpuLoadActive: true`; it may arrive after the fault ends.
 * [x] `UsageNanoCores` for `orders-api` exceeds 400,000,000.
 * [x] P95 latency has risen substantially above your Module 04 baseline.
 * [x] `alert-orders-api-high-cpu` reaches the `Fired` state.
