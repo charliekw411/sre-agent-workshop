@@ -19,8 +19,8 @@ param deployerPrincipalType string = 'User'
 
 param tags object = {}
 
-resource operationalIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-sre-${suffix}'
+resource sreAgentIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-sre-agent-runtime-${suffix}'
   location: location
   tags: tags
 }
@@ -39,28 +39,28 @@ var logAnalyticsReaderRoleId = '73c42c96-874c-492b-b04d-ab87d138a893'
 var administratorRoleId = 'e79298df-d852-4c6d-84f9-5d13249d1e55'
 
 resource operationalReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(resourceGroup().id, operationalIdentity.id, readerRoleId)
+  name: guid(resourceGroup().id, sreAgentIdentity.id, readerRoleId)
   properties: {
-    principalId: operationalIdentity.properties.principalId
+    principalId: sreAgentIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', readerRoleId)
   }
 }
 
 resource operationalMonitoringReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(resourceGroup().id, operationalIdentity.id, monitoringReaderRoleId)
+  name: guid(resourceGroup().id, sreAgentIdentity.id, monitoringReaderRoleId)
   properties: {
-    principalId: operationalIdentity.properties.principalId
+    principalId: sreAgentIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', monitoringReaderRoleId)
   }
 }
 
 resource operationalLogReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(workspace.id, operationalIdentity.id, logAnalyticsReaderRoleId)
+  name: guid(workspace.id, sreAgentIdentity.id, logAnalyticsReaderRoleId)
   scope: workspace
   properties: {
-    principalId: operationalIdentity.properties.principalId
+    principalId: sreAgentIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', logAnalyticsReaderRoleId)
   }
@@ -76,18 +76,18 @@ resource agent 'Microsoft.App/agents@2025-05-01-preview' = {
   identity: {
     type: 'SystemAssigned, UserAssigned'
     userAssignedIdentities: {
-      '${operationalIdentity.id}': {}
+      '${sreAgentIdentity.id}': {}
     }
   }
   properties: {
     knowledgeGraphConfiguration: {
-      identity: operationalIdentity.id
+      identity: sreAgentIdentity.id
       managedResources: [
         resourceGroup().id
       ]
     }
     actionConfiguration: {
-      identity: operationalIdentity.id
+      identity: sreAgentIdentity.id
       accessLevel: 'Low'
       mode: 'Review'
     }
@@ -199,5 +199,5 @@ output agentName string = agent.name
 output agentResourceId string = agent.id
 output agentEndpoint string = agent.properties.agentEndpoint
 output agentPrincipalId string = agent.identity.principalId
-output operationalIdentityResourceId string = operationalIdentity.id
-output operationalIdentityPrincipalId string = operationalIdentity.properties.principalId
+output operationalIdentityResourceId string = sreAgentIdentity.id
+output operationalIdentityPrincipalId string = sreAgentIdentity.properties.principalId

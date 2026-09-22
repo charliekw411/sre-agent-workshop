@@ -149,7 +149,7 @@ group name matches the selected environment. In addition to apps and monitoring,
 the current inventory includes:
 
 * `cae-private-<suffix>` and the `orders-db-bootstrap`, `workshop-token-init`, and `workshop-fault-client` jobs
-* Key Vault and managed identities, including `id-token-<suffix>` and `id-fault-<suffix>`
+* Key Vault and purpose-named managed identities, including `id-orders-api-<suffix>`, `id-orders-db-bootstrap-<suffix>`, and `id-sre-agent-runtime-<suffix>`
 * `vnet-<suffix>`, its delegated Container Apps and private-endpoint subnets, and both SQL/vault Private Endpoints
 * `privatelink.database.windows.net` and `privatelink.vaultcore.azure.net`, their VNet links, and endpoint DNS zone groups
 

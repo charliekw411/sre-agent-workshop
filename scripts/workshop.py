@@ -48,6 +48,9 @@ PROVIDERS = {
     "Microsoft.KeyVault", "Microsoft.AlertsManagement",
     "Microsoft.Network",
 }
+SUBSCRIPTION_FEATURES = {
+    ("Microsoft.Network", "AllowBringYourOwnPublicIpAddress"),
+}
 
 
 class DeploymentError(Exception):
@@ -213,7 +216,9 @@ def export_values(values):
         path.chmod(0o600)
 
 
-def register_providers():
+def register_providers(providers=None):
+    required_providers = PROVIDERS if providers is None else set(providers)
+
     def states():
         return {item["namespace"].casefold(): item["state"] for item in az(
             "provider", "list", "--query", "[].{namespace:namespace,state:registrationState}"
@@ -227,7 +232,10 @@ def register_providers():
 
     print("Checking required Azure resource providers...", flush=True)
     current = states()
-    pending = {provider for provider in PROVIDERS if current.get(provider.casefold()) != "Registered"}
+    pending = {
+        provider for provider in required_providers
+        if current.get(provider.casefold(), "").casefold() != "registered"
+    }
     for provider in sorted(pending):
         print(f"Requesting registration for {provider}...", flush=True)
         az("provider", "register", "--namespace", provider)
@@ -237,13 +245,74 @@ def register_providers():
         print(f"Waiting for provider registration ({attempt + 1}/90): {pending_details()}", flush=True)
         time.sleep(10)
         current = states()
-        pending = {provider for provider in pending if current.get(provider.casefold()) != "Registered"}
+        pending = {
+            provider for provider in pending
+            if current.get(provider.casefold(), "").casefold() != "registered"
+        }
     if pending:
         raise DeploymentError(
             "Resource provider registration did not complete within fifteen minutes. "
             f"Still pending: {pending_details()}."
         )
     print("All required Azure resource providers are registered.", flush=True)
+
+
+def register_subscription_features():
+    def state(namespace, feature):
+        value = az(
+            "feature", "show", "--namespace", namespace, "--name", feature,
+            "--query", "properties.state",
+        )
+        if not isinstance(value, str) or not value:
+            raise DeploymentError(
+                f"Azure returned an invalid registration state for {namespace}/{feature}."
+            )
+        return value
+
+    print("Checking required Azure subscription features...", flush=True)
+    pending = {}
+    for namespace, feature in sorted(SUBSCRIPTION_FEATURES):
+        current = state(namespace, feature)
+        if current.casefold() == "registered":
+            continue
+        pending[(namespace, feature)] = current
+        if current.casefold() not in {"registering", "pending"}:
+            print(f"Requesting registration for {namespace}/{feature}...", flush=True)
+            az("feature", "register", "--namespace", namespace, "--name", feature)
+
+    for attempt in range(90):
+        if not pending:
+            break
+        details = ", ".join(
+            f"{namespace}/{feature} ({current})"
+            for (namespace, feature), current in sorted(pending.items())
+        )
+        print(f"Waiting for subscription feature registration ({attempt + 1}/90): {details}", flush=True)
+        time.sleep(10)
+        for namespace, feature in list(pending):
+            current = state(namespace, feature)
+            if current.casefold() == "registered":
+                del pending[(namespace, feature)]
+            else:
+                pending[(namespace, feature)] = current
+
+    if pending:
+        details = ", ".join(
+            f"{namespace}/{feature} ({current})"
+            for (namespace, feature), current in sorted(pending.items())
+        )
+        raise DeploymentError(
+            "Subscription feature registration did not complete within fifteen minutes. "
+            f"Still pending: {details}. Check Subscription > Preview features in the Azure portal."
+        )
+
+    feature_namespaces = {namespace for namespace, _ in SUBSCRIPTION_FEATURES}
+    if feature_namespaces:
+        print("Refreshing providers for registered subscription features...", flush=True)
+        for namespace in sorted(feature_namespaces):
+            az("provider", "register", "--namespace", namespace)
+        register_providers(feature_namespaces)
+    print("All required Azure subscription features are registered.", flush=True)
 
 
 def token_identity(token):
@@ -310,6 +379,7 @@ def prepare():
     if token_identity(token) != token_identity(azd_token):
         raise DeploymentError("Azure CLI and azd must be signed into the same principal and tenant.")
     register_providers()
+    register_subscription_features()
     print("Checking existing application network compatibility...", flush=True)
     check_network_migration(values)
     location = required(values, "AZURE_LOCATION")

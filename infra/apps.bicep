@@ -25,20 +25,20 @@ param tags object = {
   environment: 'workshop'
 }
 
-resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: 'id-${suffix}'
+resource ordersApiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: 'id-orders-api-${suffix}'
 }
 
-resource catalogIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: 'id-catalog-${suffix}'
+resource catalogApiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: 'id-catalog-api-${suffix}'
 }
 
-resource bootstrapIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: 'id-bootstrap-${suffix}'
+resource ordersDatabaseBootstrapIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: 'id-orders-db-bootstrap-${suffix}'
 }
 
-resource faultIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: 'id-fault-${suffix}'
+resource faultClientIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: 'id-fault-client-${suffix}'
 }
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
@@ -62,8 +62,8 @@ resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' existing = {
 }
 
 var databaseName = 'sqldb-orders'
-var sqlConnectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${databaseName};Authentication=Active Directory Managed Identity;User Id=${identity.properties.clientId};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
-var bootstrapConnectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${databaseName};Authentication=Active Directory Managed Identity;User Id=${bootstrapIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
+var sqlConnectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${databaseName};Authentication=Active Directory Managed Identity;User Id=${ordersApiIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
+var bootstrapConnectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${databaseName};Authentication=Active Directory Managed Identity;User Id=${ordersDatabaseBootstrapIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
 
 resource catalogApi 'Microsoft.App/containerApps@2024-03-01' = {
   name: 'catalog-api'
@@ -76,7 +76,7 @@ resource catalogApi 'Microsoft.App/containerApps@2024-03-01' = {
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
-      '${catalogIdentity.id}': {}
+      '${catalogApiIdentity.id}': {}
     }
   }
   properties: {
@@ -93,7 +93,7 @@ resource catalogApi 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: registry.properties.loginServer
-          identity: catalogIdentity.id
+          identity: catalogApiIdentity.id
         }
       ]
       secrets: [
@@ -168,7 +168,7 @@ resource ordersApi 'Microsoft.App/containerApps@2024-03-01' = {
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
-      '${identity.id}': {}
+      '${ordersApiIdentity.id}': {}
     }
   }
   properties: {
@@ -184,7 +184,7 @@ resource ordersApi 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: registry.properties.loginServer
-          identity: identity.id
+          identity: ordersApiIdentity.id
         }
       ]
       secrets: [
@@ -272,7 +272,7 @@ resource bootstrapJob 'Microsoft.App/jobs@2024-03-01' = {
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
-      '${bootstrapIdentity.id}': {}
+      '${ordersDatabaseBootstrapIdentity.id}': {}
     }
   }
   properties: {
@@ -288,7 +288,7 @@ resource bootstrapJob 'Microsoft.App/jobs@2024-03-01' = {
       registries: [
         {
           server: registry.properties.loginServer
-          identity: bootstrapIdentity.id
+          identity: ordersDatabaseBootstrapIdentity.id
         }
       ]
     }
@@ -311,7 +311,7 @@ resource bootstrapJob 'Microsoft.App/jobs@2024-03-01' = {
             }
             {
               name: 'ORDERS_IDENTITY_PRINCIPAL_ID'
-              value: identity.properties.principalId
+              value: ordersApiIdentity.properties.principalId
             }
           ]
         }
@@ -327,8 +327,8 @@ module faultClient './private-job.bicep' = {
     resourceName: 'workshop-fault-client'
     operation: 'fault'
     environmentId: containerAppsEnvironment.id
-    identityResourceId: faultIdentity.id
-    identityClientId: faultIdentity.properties.clientId
+    identityResourceId: faultClientIdentity.id
+    identityClientId: faultClientIdentity.properties.clientId
     keyVaultUri: keyVault.properties.vaultUri
     ordersApiUrl: 'https://${ordersApi.properties.configuration.ingress.fqdn}'
     tags: tags

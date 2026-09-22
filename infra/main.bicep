@@ -36,32 +36,32 @@ param tags object = {
 var databaseName = 'sqldb-orders'
 var acrName = 'acr${suffix}'
 
-resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-${suffix}'
+resource ordersApiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-orders-api-${suffix}'
   location: location
   tags: tags
 }
 
-resource catalogIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-catalog-${suffix}'
+resource catalogApiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-catalog-api-${suffix}'
   location: location
   tags: tags
 }
 
-resource bootstrapIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-bootstrap-${suffix}'
+resource ordersDatabaseBootstrapIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-orders-db-bootstrap-${suffix}'
   location: location
   tags: tags
 }
 
-resource tokenIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-token-${suffix}'
+resource faultTokenInitializerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-fault-token-init-${suffix}'
   location: location
   tags: tags
 }
 
-resource faultIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-fault-${suffix}'
+resource faultClientIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-fault-client-${suffix}'
   location: location
   tags: tags
 }
@@ -83,31 +83,31 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = 
 
 var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 
-resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(registry.id, identity.id, acrPullRoleId)
+resource ordersApiAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(registry.id, ordersApiIdentity.id, acrPullRoleId)
   scope: registry
   properties: {
-    principalId: identity.properties.principalId
+    principalId: ordersApiIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
   }
 }
 
-resource catalogAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(registry.id, catalogIdentity.id, acrPullRoleId)
+resource catalogApiAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(registry.id, catalogApiIdentity.id, acrPullRoleId)
   scope: registry
   properties: {
-    principalId: catalogIdentity.properties.principalId
+    principalId: catalogApiIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
   }
 }
 
-resource bootstrapAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(registry.id, bootstrapIdentity.id, acrPullRoleId)
+resource ordersDatabaseBootstrapAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(registry.id, ordersDatabaseBootstrapIdentity.id, acrPullRoleId)
   scope: registry
   properties: {
-    principalId: bootstrapIdentity.properties.principalId
+    principalId: ordersDatabaseBootstrapIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
   }
@@ -134,11 +134,11 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 var secretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 var secretsOfficerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
 
-resource ordersSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, identity.id, secretsUserRoleId)
+resource ordersApiSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, ordersApiIdentity.id, secretsUserRoleId)
   scope: keyVault
   properties: {
-    principalId: identity.properties.principalId
+    principalId: ordersApiIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsUserRoleId)
   }
@@ -154,21 +154,21 @@ resource attendeeSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01
   }
 }
 
-resource faultSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, faultIdentity.id, secretsUserRoleId)
+resource faultClientSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, faultClientIdentity.id, secretsUserRoleId)
   scope: keyVault
   properties: {
-    principalId: faultIdentity.properties.principalId
+    principalId: faultClientIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsUserRoleId)
   }
 }
 
-resource tokenSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, tokenIdentity.id, secretsOfficerRoleId)
+resource faultTokenInitializerSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, faultTokenInitializerIdentity.id, secretsOfficerRoleId)
   scope: keyVault
   properties: {
-    principalId: tokenIdentity.properties.principalId
+    principalId: faultTokenInitializerIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsOfficerRoleId)
   }
@@ -220,8 +220,8 @@ resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
     administrators: {
       administratorType: 'ActiveDirectory'
       principalType: 'Application'
-      login: bootstrapIdentity.name
-      sid: bootstrapIdentity.properties.principalId
+      login: ordersDatabaseBootstrapIdentity.name
+      sid: ordersDatabaseBootstrapIdentity.properties.principalId
       tenantId: subscription().tenantId
       azureADOnlyAuthentication: true
     }
@@ -329,13 +329,13 @@ module faultTokenInitializer './private-job.bicep' = {
     resourceName: 'workshop-token-init'
     operation: 'initialize'
     environmentId: containerAppsEnvironment.id
-    identityResourceId: tokenIdentity.id
-    identityClientId: tokenIdentity.properties.clientId
+    identityResourceId: faultTokenInitializerIdentity.id
+    identityClientId: faultTokenInitializerIdentity.properties.clientId
     keyVaultUri: keyVault.properties.vaultUri
     tags: tags
   }
   dependsOn: [
-    tokenSecretsOfficer
+    faultTokenInitializerSecretsOfficer
   ]
 }
 
@@ -353,12 +353,12 @@ resource environmentDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-0
   }
 }
 
-output identityName string = identity.name
-output identityResourceId string = identity.id
-output identityClientId string = identity.properties.clientId
-output identityPrincipalId string = identity.properties.principalId
-output bootstrapIdentityResourceId string = bootstrapIdentity.id
-output bootstrapIdentityClientId string = bootstrapIdentity.properties.clientId
+output identityName string = ordersApiIdentity.name
+output identityResourceId string = ordersApiIdentity.id
+output identityClientId string = ordersApiIdentity.properties.clientId
+output identityPrincipalId string = ordersApiIdentity.properties.principalId
+output bootstrapIdentityResourceId string = ordersDatabaseBootstrapIdentity.id
+output bootstrapIdentityClientId string = ordersDatabaseBootstrapIdentity.properties.clientId
 output keyVaultName string = keyVault.name
 output keyVaultUri string = keyVault.properties.vaultUri
 output faultTokenSecretUri string = '${keyVault.properties.vaultUri}secrets/fault-token'

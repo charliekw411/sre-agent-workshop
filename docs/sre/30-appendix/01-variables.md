@@ -104,7 +104,7 @@ them. These wrappers call the common Python helper to start and wait for
 ./scripts/inject-fault.ps1 status
 ```
 
-The job's `id-fault-<suffix>` identity has only vault-scoped `Key Vault Secrets User`.
+The job's `id-fault-client-<suffix>` identity has only vault-scoped `Key Vault Secrets User`.
 It reads the token inside the VNet, calls the existing `/fault` route, and logs a
 non-secret JSON result. The attendee laptop never retrieves the credential and
 needs no VPN or private-vault data access. The helper caller needs permission to

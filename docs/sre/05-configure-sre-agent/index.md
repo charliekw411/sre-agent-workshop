@@ -41,11 +41,12 @@ of this workshop.
 | Attendee/configuration caller | `SRE Agent Administrator` at the agent resource, assigned by hooks | Synchronize version-controlled agent configuration. |
 | Attendee/fault-helper caller | Existing subscription role above, including Container Apps job start/read and workspace log queries | Start and wait for `workshop-fault-client` through ARM, then retrieve only its non-secret correlated JSON result. No laptop vault access or VPN is needed. |
 | Attendee/in-network secret reader | Legacy `Key Vault Secrets User` at the workshop vault, retained by deployment | Read secrets from an authorized in-network administration environment. Local fault helpers do not use this grant; it does not bypass private networking or permit secret writes. |
-| Token-initializer identity `id-token-<suffix>` | `Key Vault Secrets Officer` at the workshop vault | `workshop-token-init` creates only a missing `fault-token` inside the VNet and preserves existing tokens. |
-| Fault-client identity `id-fault-<suffix>` | `Key Vault Secrets User` at the workshop vault only | `workshop-fault-client` reads the credential inside the VNet and calls `/fault` routes. It has no secret-write permission. |
-| Orders identity `id-<suffix>` | `AcrPull` at the registry; `Key Vault Secrets User` at the vault; SQL object-level grants | Pull the image, resolve the private Key Vault secret reference, and serve requests without SQL schema-management rights. |
-| SQL-bootstrap identity `id-bootstrap-<suffix>` | `AcrPull` at the registry; SQL Microsoft Entra administrator | Initialize SQL schema and runtime grants through the private endpoint, preserving existing orders and ballast. |
-| SRE runtime managed identity | `Reader` and `Monitoring Reader` at the workshop resource group; `Log Analytics Reader` at the workspace | Read-only automated investigation, including network configuration and non-secret job logs. No job-start or secret privileges. |
+| Token-initializer identity `id-fault-token-init-<suffix>` | `Key Vault Secrets Officer` at the workshop vault | `workshop-token-init` creates only a missing `fault-token` inside the VNet and preserves existing tokens. |
+| Fault-client identity `id-fault-client-<suffix>` | `Key Vault Secrets User` at the workshop vault only | `workshop-fault-client` reads the credential inside the VNet and calls `/fault` routes. It has no secret-write permission. |
+| Orders API identity `id-orders-api-<suffix>` | `AcrPull` at the registry; `Key Vault Secrets User` at the vault; SQL object-level grants | Pull the image, resolve the private Key Vault secret reference, and serve requests without SQL schema-management rights. |
+| Catalog API identity `id-catalog-api-<suffix>` | `AcrPull` at the registry | Pull the Catalog image without inheriting Orders, vault, or SQL permissions. |
+| SQL-bootstrap identity `id-orders-db-bootstrap-<suffix>` | `AcrPull` at the registry; SQL Microsoft Entra administrator | Initialize SQL schema and runtime grants through the private endpoint, preserving existing orders and ballast. |
+| SRE runtime identity `id-sre-agent-runtime-<suffix>` | `Reader` and `Monitoring Reader` at the workshop resource group; `Log Analytics Reader` at the workspace | Read-only automated investigation, including network configuration and non-secret job logs. No job-start or secret privileges. |
 
 Deployment resolves the attendee identity through azd's built-in
 `AZURE_PRINCIPAL_ID` and `AZURE_PRINCIPAL_TYPE` values, supported in azd 1.18 or

@@ -97,8 +97,12 @@ participant's resource group.
 | SQL bootstrap job          | `orders-db-bootstrap`                    | `orders-db-bootstrap`                 |
 | Token-initializer job      | `workshop-token-init`                    | `workshop-token-init`                 |
 | Fault-client job           | `workshop-fault-client`                  | `workshop-fault-client`               |
-| Token-initializer identity | `id-token-<generated-suffix>`            | `id-token-ckworabc1234`               |
-| Fault-client identity      | `id-fault-<generated-suffix>`            | `id-fault-ckworabc1234`               |
+| Orders API identity        | `id-orders-api-<generated-suffix>`       | `id-orders-api-ckworabc1234`          |
+| Catalog API identity       | `id-catalog-api-<generated-suffix>`      | `id-catalog-api-ckworabc1234`         |
+| SQL-bootstrap identity     | `id-orders-db-bootstrap-<generated-suffix>` | `id-orders-db-bootstrap-ckworabc1234` |
+| Token-initializer identity | `id-fault-token-init-<generated-suffix>` | `id-fault-token-init-ckworabc1234`    |
+| Fault-client identity      | `id-fault-client-<generated-suffix>`     | `id-fault-client-ckworabc1234`        |
+| SRE Agent runtime identity | `id-sre-agent-runtime-<generated-suffix>` | `id-sre-agent-runtime-ckworabc1234`  |
 | Action group               | `ag-sre-workshop`                        | `ag-sre-workshop`                     |
 
 Container registry names cannot contain hyphens, which is why that one row looks different. Azure, not the workshop, made that decision.

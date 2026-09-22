@@ -96,6 +96,34 @@ has been removed. `Microsoft.Network` is now required for the VNet, private
 endpoints, and private DNS. The current provider list is in
 [Module 01](../01-prerequisites/index.md#task-4-prepare-tooling-extensions).
 
+### Deployment fails with SubscriptionNotRegisteredForFeature
+
+A VNet-integrated Container Apps managed environment can fail with
+`Microsoft.Network/AllowBringYourOwnPublicIpAddress` even though the
+`Microsoft.Network` provider itself reports `Registered`. This subscription
+feature has a separate registration state.
+
+The current pre-provision hook requests the feature, waits up to fifteen minutes,
+and refreshes `Microsoft.Network` before Bicep runs. Check its state without
+interrupting deployment:
+
+```bash
+az feature show \
+  --namespace Microsoft.Network \
+  --name AllowBringYourOwnPublicIpAddress \
+  --query "{Feature:name, State:properties.state}" \
+  --output table
+```
+
+If an older checkout reaches Bicep without this preflight, update the checkout
+where you run `azd up`. If the current hook times out in `Registering` or
+`Pending`, verify that the deployment caller can register subscription features
+and inspect **Subscription > Preview features** in the Azure portal. After the
+feature reaches `Registered`, rerun `azd up`; the hook refreshes the provider and
+reuses resources that completed successfully. Delete and recreate the resource
+group only when you intentionally need a clean timing run or clean names, not to
+fix feature registration.
+
 ### Container registry name is already taken
 
 Registry names are globally unique. Your suffix collided with someone else's.
@@ -163,7 +191,7 @@ networking process, rather than opening a public endpoint.
 `postprovision` must complete `workshop-token-init` before attaching the Orders
 Key Vault secret reference and enabling fault endpoints. Inspect the reported
 execution's logs and the private-connectivity checks above. The job uses
-`id-token-<suffix>` with vault-scoped `Key Vault Secrets Officer`; verify its
+`id-fault-token-init-<suffix>` with vault-scoped `Key Vault Secrets Officer`; verify its
 deployment-managed role assignment and allow for propagation, not a laptop
 Secrets User grant.
 
@@ -305,7 +333,7 @@ a secret into the app.
 Use `./scripts/inject-fault.sh status` or `./scripts/inject-fault.ps1 status`,
 which starts the private fault-client job rather than retrieving a token on your
 machine. Check the reported execution's logs, the selected environment, and the
-Orders managed-identity secret reference. The job's `id-fault-<suffix>` identity
+Orders managed-identity secret reference. The job's `id-fault-client-<suffix>` identity
 needs its deployment-assigned vault `Key Vault Secrets User` role and private
 connectivity; the local caller instead needs job-start and log-query permissions.
 Allow time for role propagation and secret-reference refresh, then reconcile with

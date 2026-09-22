@@ -78,7 +78,8 @@ class ExportTests(unittest.TestCase):
             responses = [{"accessToken": token}, ["East US 2"]]
             with patch.object(workshop, "ROOT", root), patch.object(workshop, "environment", return_value=values), \
                     patch.object(workshop, "az", side_effect=responses), patch.object(workshop, "cli", return_value=json.dumps({"token": token})) as cli, \
-                    patch.object(workshop, "register_providers"), patch.object(workshop, "check_network_migration"), patch.dict(os.environ):
+                    patch.object(workshop, "register_providers"), patch.object(workshop, "register_subscription_features"), \
+                    patch.object(workshop, "check_network_migration"), patch.dict(os.environ):
                 workshop.prepare()
             self.assertNotIn("obsolete-value", env_file.read_text())
             self.assertNotIn("obsolete-value", config_file.read_text())
@@ -308,6 +309,96 @@ class ProviderRegistrationTests(unittest.TestCase):
             with self.assertRaisesRegex(workshop.DeploymentError, "Registration denied"):
                 workshop.register_providers()
         sleep.assert_not_called()
+
+
+class SubscriptionFeatureRegistrationTests(unittest.TestCase):
+    def test_registered_feature_refreshes_its_provider(self):
+        feature = ("Microsoft.Network", "AllowBringYourOwnPublicIpAddress")
+        with patch.object(workshop, "SUBSCRIPTION_FEATURES", {feature}), \
+                patch.object(workshop, "az", side_effect=["Registered", None]) as cli, \
+                patch.object(workshop, "register_providers") as providers, \
+                patch.object(workshop.time, "sleep") as sleep, patch("builtins.print") as progress:
+            workshop.register_subscription_features()
+        self.assertEqual(cli.call_args_list, [
+            call("feature", "show", "--namespace", feature[0], "--name", feature[1],
+                 "--query", "properties.state"),
+            call("provider", "register", "--namespace", feature[0]),
+        ])
+        providers.assert_called_once_with({"Microsoft.Network"})
+        sleep.assert_not_called()
+        progress.assert_called_with("All required Azure subscription features are registered.", flush=True)
+
+    def test_feature_registration_waits_and_is_case_insensitive(self):
+        feature = ("Microsoft.Network", "AllowBringYourOwnPublicIpAddress")
+        with patch.object(workshop, "SUBSCRIPTION_FEATURES", {feature}), \
+                patch.object(workshop, "az", side_effect=["NotRegistered", None, "REGISTERING", "registered", None]) as cli, \
+                patch.object(workshop, "register_providers") as providers, \
+                patch.object(workshop.time, "sleep") as sleep, patch("builtins.print") as progress:
+            workshop.register_subscription_features()
+        self.assertEqual(
+            cli.call_args_list[1],
+            call("feature", "register", "--namespace", feature[0], "--name", feature[1]),
+        )
+        self.assertEqual(sleep.call_args_list, [call(10), call(10)])
+        providers.assert_called_once_with({"Microsoft.Network"})
+        progress.assert_has_calls([
+            call(f"Requesting registration for {feature[0]}/{feature[1]}...", flush=True),
+            call(
+                f"Waiting for subscription feature registration (1/90): "
+                f"{feature[0]}/{feature[1]} (NotRegistered)",
+                flush=True,
+            ),
+            call(
+                f"Waiting for subscription feature registration (2/90): "
+                f"{feature[0]}/{feature[1]} (REGISTERING)",
+                flush=True,
+            ),
+        ])
+
+    def test_feature_registration_timeout_reports_last_state(self):
+        feature = ("Microsoft.Network", "AllowBringYourOwnPublicIpAddress")
+        with patch.object(workshop, "SUBSCRIPTION_FEATURES", {feature}), \
+                patch.object(workshop, "az", side_effect=["Pending"] + ["Pending"] * 90), \
+                patch.object(workshop, "register_providers") as providers, \
+                patch.object(workshop.time, "sleep") as sleep, patch("builtins.print"):
+            with self.assertRaisesRegex(workshop.DeploymentError, "within fifteen minutes") as error:
+                workshop.register_subscription_features()
+        self.assertIn(f"{feature[0]}/{feature[1]} (Pending)", str(error.exception))
+        self.assertIn("Preview features", str(error.exception))
+        self.assertEqual(sleep.call_args_list, [call(10)] * 90)
+        providers.assert_not_called()
+
+    def test_feature_registration_rejects_invalid_state_response(self):
+        with patch.object(workshop, "az", return_value=None), \
+                patch.object(workshop.time, "sleep") as sleep:
+            with self.assertRaisesRegex(workshop.DeploymentError, "invalid registration state"):
+                workshop.register_subscription_features()
+        sleep.assert_not_called()
+
+
+class ManagedIdentityNamingTests(unittest.TestCase):
+    def test_identity_names_describe_their_workload_and_purpose(self):
+        main = (workshop.ROOT / "infra/main.bicep").read_text()
+        apps = (workshop.ROOT / "infra/apps.bicep").read_text()
+        sre_agent = (workshop.ROOT / "infra/sre-agent.bicep").read_text()
+        expected = {
+            "id-orders-api-${suffix}": (main, apps),
+            "id-catalog-api-${suffix}": (main, apps),
+            "id-orders-db-bootstrap-${suffix}": (main, apps),
+            "id-fault-token-init-${suffix}": (main,),
+            "id-fault-client-${suffix}": (main, apps),
+            "id-sre-agent-runtime-${suffix}": (sre_agent,),
+        }
+        for resource_name, files in expected.items():
+            with self.subTest(resource_name=resource_name):
+                for content in files:
+                    self.assertIn(f"name: '{resource_name}'", content)
+        for retired_name in (
+            "id-${suffix}", "id-catalog-${suffix}", "id-bootstrap-${suffix}",
+            "id-token-${suffix}", "id-fault-${suffix}", "id-sre-${suffix}",
+        ):
+            with self.subTest(retired_name=retired_name):
+                self.assertNotIn(f"name: '{retired_name}'", main + apps + sre_agent)
 
 
 class PrivateAccessTests(unittest.TestCase):

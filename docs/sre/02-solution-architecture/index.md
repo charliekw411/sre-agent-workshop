@@ -108,7 +108,7 @@ orders or storage ballast.
 ### Key Vault and private jobs
 
 The vault holds `fault-token`. The manual-trigger `workshop-token-init` job uses
-`id-token-<suffix>` with vault-scoped `Key Vault Secrets Officer`. During
+`id-fault-token-init-<suffix>` with vault-scoped `Key Vault Secrets Officer`. During
 `postprovision` it creates only a missing token and preserves an existing token.
 The hook waits for success, attaches the private Key Vault reference to Orders,
 and then enables fault endpoints. Initial app provisioning leaves faults disabled.
@@ -116,7 +116,7 @@ The previous `Microsoft.Resources/deploymentScripts` resource
 `generate-fault-token` is removed; there is no script-supporting storage account
 or Azure Container Instance.
 
-The separate `workshop-fault-client` job uses `id-fault-<suffix>` with only
+The separate `workshop-fault-client` job uses `id-fault-client-<suffix>` with only
 vault-scoped `Key Vault Secrets User`. It reads the credential inside the VNet and
 calls the existing Orders `/fault` routes. It cannot create or rotate the token.
 Neither job gives the SRE runtime permission to start jobs or retrieve secrets.

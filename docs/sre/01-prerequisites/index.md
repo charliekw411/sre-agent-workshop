@@ -141,19 +141,26 @@ az extension add --name log-analytics --upgrade
 The `log-analytics` extension is required for fault helpers as well as telemetry
 exercises: it retrieves the non-secret job result after log ingestion.
 
-The deployment caller must be allowed to register resource providers.
+The deployment caller must be allowed to register resource providers and
+subscription features.
 The pre-provision hook automatically registers required providers, including
 `Microsoft.App`, `Microsoft.ContainerRegistry`, `Microsoft.OperationalInsights`,
 `Microsoft.Insights`, `Microsoft.Sql`, `Microsoft.ManagedIdentity`,
 `Microsoft.KeyVault`, `Microsoft.AlertsManagement`, and `Microsoft.Network`.
+It also registers
+`Microsoft.Network/AllowBringYourOwnPublicIpAddress`, which Azure currently
+requires while creating the VNet-integrated Container Apps managed environment,
+and refreshes `Microsoft.Network` after the feature reaches `Registered`.
 The old token deployment script has been removed; no supporting storage account
 or Azure Container Instance is needed, so `Microsoft.ContainerInstance` and
 `Microsoft.Storage` are no longer required by these hooks. The hook waits up to
-fifteen minutes for registration; no manual registration step is required.
+fifteen minutes for each registration phase; no manual registration step is required.
 It matches provider namespaces
 case-insensitively and prints the pending providers and their last reported states
 before each ten-second polling delay. Azure CLI request time can extend the total
-wait. Already registered providers are skipped.
+wait. Already registered features are skipped. The explicit
+`Microsoft.Network` provider refresh after the feature check is safe and
+idempotent, and ensures Azure applies a newly registered feature.
 
 ### Task 5: Select the environment and supported region
 

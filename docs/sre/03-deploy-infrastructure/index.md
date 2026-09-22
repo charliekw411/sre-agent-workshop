@@ -96,9 +96,11 @@ agent indexing to complete before starting the incidents. Retry `azd up` after
 resolving any reported prerequisite, permission, regional availability, or
 propagation error, subject to the migration constraints below.
 
-Before provisioning, the common hook registers required resource providers,
-waits up to fifteen minutes, and checks the selected region against the advertised
-`Microsoft.App/agents` locations. Provider registration is automatic, not a
+Before provisioning, the common hook registers required resource providers and
+the `Microsoft.Network/AllowBringYourOwnPublicIpAddress` subscription feature,
+waits up to fifteen minutes for each phase, refreshes `Microsoft.Network`, and
+checks the selected region against the advertised
+`Microsoft.App/agents` locations. Registration is automatic, not a
 separate attendee setup task.
 
 #### Updating an earlier deployment
@@ -113,6 +115,15 @@ place. Updating your checkout alone does not change Azure resources.
   attempting a move or deletion. Choose a new azd environment name for a separate
   deployment, rather than deleting apps to force a migration. Existing data stays
   in the old environment; there is no automatic data migration.
+
+Current templates also replace the earlier generic managed-identity names with
+purpose-specific names such as `id-orders-api-<suffix>` and
+`id-orders-db-bootstrap-<suffix>`. An incremental deployment creates and attaches
+the new identities but does not delete retired identities or their role
+assignments. For a clean resource inventory or a fresh E2E timing run, follow the
+[cleanup procedure](../14-cleanup/index.md), choose **No** if asked to purge the
+protected vault, and deploy with a new azd environment name so the soft-deleted
+vault name is not reused.
 
 For the second case, after reviewing which environment you want to deploy:
 
@@ -155,7 +166,7 @@ control. See the [variable reference](../30-appendix/01-variables.md).
 
 ### Task 4: Understand repeatable initialization
 
-The `workshop-token-init` job uses `id-token-<suffix>` with vault-scoped
+The `workshop-token-init` job uses `id-fault-token-init-<suffix>` with vault-scoped
 `Key Vault Secrets Officer` and creates only a missing `fault-token`. An existing
 token is preserved. Initial app provisioning leaves faults disabled.
 `postprovision` waits for the job, attaches the managed-identity private Key Vault

@@ -94,7 +94,7 @@ These are real properties of the system. Treat them as candidate contributing fa
 
 * `azd up` runs `provision`, then `package`, then `deploy --all`. Bicep provisions networking, apps, monitoring, SRE Agent, Key Vault, and role assignments.
 * Initial app provisioning keeps fault endpoints disabled. `postprovision` starts `workshop-token-init`, waits for success, attaches the private Key Vault reference to Orders, then enables faults.
-* `workshop-token-init` uses `id-token-<suffix>` with vault-scoped `Key Vault Secrets Officer`. It creates only a missing `fault-token`, preserving an existing token on redeployment.
+* `workshop-token-init` uses `id-fault-token-init-<suffix>` with vault-scoped `Key Vault Secrets Officer`. It creates only a missing `fault-token`, preserving an existing token on redeployment.
 * The old ARM `Microsoft.Resources/deploymentScripts` resource `generate-fault-token` is removed. No script-supporting storage account or Azure Container Instance is needed; `Microsoft.Network` replaces `Microsoft.ContainerInstance` and `Microsoft.Storage` in required provider registration.
 * Application images are built remotely in public Basic ACR using Entra authentication and pulled using managed identity. Attendees need no local Docker daemon or .NET SDK.
 * `postdeploy` starts the manual-trigger SQL initialization job, waits for success, makes a smoke request, then synchronizes `agent/incident-filters.yaml` and `agent/knowledge.yaml` and waits for indexing.
@@ -117,7 +117,7 @@ Never suggest deleting apps or data to force an automatic migration.
 
 Attendees invoke the Bash or PowerShell fault helper with the existing commands
 and defaults. The helper starts and waits for `workshop-fault-client` through ARM.
-That job uses `id-fault-<suffix>` with only vault-scoped `Key Vault Secrets User`,
+That job uses `id-fault-client-<suffix>` with only vault-scoped `Key Vault Secrets User`,
 retrieves the credential inside the VNet, and calls the existing `/fault` routes.
 The laptop never retrieves the credential and needs no VPN or private-vault
 data access. The caller needs job-start/read and workspace-query permission,
