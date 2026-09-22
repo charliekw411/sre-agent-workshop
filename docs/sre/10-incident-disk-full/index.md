@@ -1,7 +1,7 @@
 ---
 title: Module 10 - Generate Disk Full Incident
 description: Exhaust the orders database storage to produce a partial write outage, and observe why capacity incidents behave differently from application failures.
-ms.date: 2026-09-08
+ms.date: 2026-09-21
 ms.topic: how-to
 keywords:
   - storage exhaustion
@@ -70,15 +70,22 @@ The gap between phase 2 and phase 3 is the most valuable property of this incide
 ```bash
 source .workshop/workshop.env
 
-curl --silent --header "X-Fault-Token: ${FAULT_TOKEN}" \
-  "https://${ORDERS_API_FQDN}/fault/status" | jq '{cpuLoadActive, errorInjectionActive, storagePhase}'
+./scripts/inject-fault.sh status
 
 curl --silent "https://${ORDERS_API_FQDN}/storage" | jq .
 ```
 
 Record the starting `usedPercent`. It should be small, typically under 10 percent.
 
+Fault status is a snapshot captured by the private job and delivered after log
+ingestion; `/storage` shows the application's storage reading when you request it.
+See [fault helper results](../30-appendix/01-variables.md#fault-helper-results-and-retry)
+for the status delay and read-only retry behavior.
+
 ### Task 2: Record the incident start time
+
+Record helper invocation time, then use the job execution and `FAULT INJECTED`
+logs to refine when filling actually began.
 
 ```bash
 export INCIDENT_3_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -87,7 +94,7 @@ echo "Incident 3 start (UTC): ${INCIDENT_3_START}"
 cat > .workshop/notes/incident-03-storage.md <<EOF
 # Incident 3: Storage exhaustion on the orders database
 
-* Injected at (UTC): ${INCIDENT_3_START}
+* Helper invoked at (UTC): ${INCIDENT_3_START}
 * Fault: fill the database to 95 percent of its 1 GB maximum size
 * Expected primary signal: saturation on the data tier
 * Expected secondary signal: errors on the write path only
@@ -113,6 +120,12 @@ EOF
 ```
 
 The fill runs as a background task inside `orders-api`, writing padded rows in batches until the database reaches 95 percent of its 1 GB ceiling. Expect five to twelve minutes depending on the database service objective and current load.
+
+The private job starts that task before the helper receives its result through
+Log Analytics. Start Task 4 in another terminal while the helper waits, which can
+take up to five minutes after job success. On a result timeout, use the reported
+request ID with `python scripts/workshop.py fault-result <request-id>` to retry
+only log retrieval. Do not start another fill to recover delayed logs.
 
 !!! warning "This one is not self-limiting in the same way"
     CPU load and error injection expire on a timer. Written rows do not disappear on their own. Task 9 removes them, and [Module 14](../14-cleanup/index.md) deletes the entire resource group. Do not leave a 1 GB ballast table sitting in a database you intend to keep.

@@ -1,4 +1,4 @@
-metadata description = 'Contoso Order Services container apps for the Azure SRE Agent workshop. Deploy after the foundation template and after the container images have been built.'
+metadata description = 'Contoso Order Services container apps and the manual, identity-based database bootstrap job.'
 
 targetScope = 'resourceGroup'
 
@@ -13,22 +13,11 @@ param environmentName string = 'workshop'
 @maxLength(12)
 param suffix string
 
-@description('Fully qualified image reference for orders-api, for example acrsre42.azurecr.io/orders-api:v1.')
+@description('Fully qualified image reference for orders-api.')
 param ordersImage string
 
-@description('Fully qualified image reference for catalog-api, for example acrsre42.azurecr.io/catalog-api:v1.')
+@description('Fully qualified image reference for catalog-api.')
 param catalogImage string
-
-@description('Administrator login for the Azure SQL logical server.')
-param sqlAdminLogin string = 'sreworkshopadmin'
-
-@description('Administrator password for the Azure SQL logical server.')
-@secure()
-param sqlAdminPassword string
-
-@description('Shared secret required in the X-Fault-Token header by every fault-injection endpoint.')
-@secure()
-param faultToken string
 
 @description('Tags applied to every resource.')
 param tags object = {
@@ -36,15 +25,28 @@ param tags object = {
   environment: 'workshop'
 }
 
-var acrName = 'acr${suffix}'
-var databaseName = 'sqldb-orders'
+resource ordersApiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: 'id-orders-api-${suffix}'
+}
 
-resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: 'id-${suffix}'
+resource catalogApiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: 'id-catalog-api-${suffix}'
+}
+
+resource ordersDatabaseBootstrapIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: 'id-orders-db-bootstrap-${suffix}'
+}
+
+resource faultClientIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: 'id-fault-client-${suffix}'
+}
+
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: 'kv-${suffix}'
 }
 
 resource registry 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' existing = {
-  name: acrName
+  name: 'acr${suffix}'
 }
 
 resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
@@ -52,14 +54,16 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
 }
 
 resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
-  name: 'cae-${suffix}'
+  name: 'cae-private-${suffix}'
 }
 
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' existing = {
   name: 'sql-${suffix}'
 }
 
-var sqlConnectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${databaseName};Persist Security Info=False;User ID=${sqlAdminLogin};Password=${sqlAdminPassword};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
+var databaseName = 'sqldb-orders'
+var sqlConnectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${databaseName};Authentication=Active Directory Managed Identity;User Id=${ordersApiIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
+var bootstrapConnectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${databaseName};Authentication=Active Directory Managed Identity;User Id=${ordersDatabaseBootstrapIdentity.properties.clientId};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
 
 resource catalogApi 'Microsoft.App/containerApps@2024-03-01' = {
   name: 'catalog-api'
@@ -72,7 +76,7 @@ resource catalogApi 'Microsoft.App/containerApps@2024-03-01' = {
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
-      '${identity.id}': {}
+      '${catalogApiIdentity.id}': {}
     }
   }
   properties: {
@@ -80,8 +84,7 @@ resource catalogApi 'Microsoft.App/containerApps@2024-03-01' = {
     configuration: {
       activeRevisionsMode: 'Single'
       ingress: {
-        // Internal only. The blast radius lesson in Module 08 depends on this service
-        // being unreachable from outside the environment.
+        // The dependency must not be reachable outside this environment.
         external: false
         targetPort: 8080
         transport: 'auto'
@@ -90,7 +93,7 @@ resource catalogApi 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: registry.properties.loginServer
-          identity: identity.id
+          identity: catalogApiIdentity.id
         }
       ]
       secrets: [
@@ -123,11 +126,12 @@ resource catalogApi 'Microsoft.App/containerApps@2024-03-01' = {
               value: 'catalog-api'
             }
           ]
+          // Both the initial ASP.NET sample and the deployed API expose process health at /.
           probes: [
             {
               type: 'Liveness'
               httpGet: {
-                path: '/health/live'
+                path: '/'
                 port: 8080
               }
               initialDelaySeconds: 10
@@ -136,7 +140,7 @@ resource catalogApi 'Microsoft.App/containerApps@2024-03-01' = {
             {
               type: 'Readiness'
               httpGet: {
-                path: '/health/ready'
+                path: '/'
                 port: 8080
               }
               initialDelaySeconds: 5
@@ -164,7 +168,7 @@ resource ordersApi 'Microsoft.App/containerApps@2024-03-01' = {
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
-      '${identity.id}': {}
+      '${ordersApiIdentity.id}': {}
     }
   }
   properties: {
@@ -180,21 +184,13 @@ resource ordersApi 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: registry.properties.loginServer
-          identity: identity.id
+          identity: ordersApiIdentity.id
         }
       ]
       secrets: [
         {
           name: 'appinsights-connection-string'
           value: appInsights.properties.ConnectionString
-        }
-        {
-          name: 'sql-connection-string'
-          value: sqlConnectionString
-        }
-        {
-          name: 'fault-token'
-          value: faultToken
         }
       ]
     }
@@ -204,8 +200,7 @@ resource ordersApi 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'orders-api'
           image: ordersImage
           resources: {
-            // Pinned small on purpose. A generous CPU allocation makes the Module 06
-            // saturation incident take far longer to become visible.
+            // Keep CPU small so the saturation lab completes promptly.
             cpu: json('0.5')
             memory: '1.0Gi'
           }
@@ -216,19 +211,16 @@ resource ordersApi 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'ConnectionStrings__OrdersDb'
-              secretRef: 'sql-connection-string'
-            }
-            {
-              name: 'Fault__Token'
-              secretRef: 'fault-token'
+              value: sqlConnectionString
             }
             {
               name: 'Fault__Enabled'
-              value: 'true'
+              // The postprovision hook initializes the private vault before enabling faults.
+              value: 'false'
             }
             {
               name: 'Catalog__BaseUrl'
-              value: 'http://catalog-api'
+              value: 'https://${catalogApi.properties.configuration.ingress.fqdn}'
             }
             {
               name: 'ASPNETCORE_URLS'
@@ -243,9 +235,8 @@ resource ordersApi 'Microsoft.App/containerApps@2024-03-01' = {
             {
               type: 'Liveness'
               httpGet: {
-                // Deliberately a process liveness check rather than a dependency check.
-                // Module 08 asks you to explain why that choice hides the real failure.
-                path: '/health/live'
+                // Deliberately process liveness, not a dependency check.
+                path: '/'
                 port: 8080
               }
               initialDelaySeconds: 15
@@ -255,7 +246,7 @@ resource ordersApi 'Microsoft.App/containerApps@2024-03-01' = {
             {
               type: 'Readiness'
               httpGet: {
-                path: '/health/ready'
+                path: '/'
                 port: 8080
               }
               initialDelaySeconds: 10
@@ -266,18 +257,86 @@ resource ordersApi 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        // Fixed at one replica so CPU saturation stays observable instead of being
-        // absorbed by autoscaling. Module 07 discusses what changes when it is not.
+        // Fixed replicas keep CPU saturation observable instead of autoscaling it away.
         minReplicas: 1
         maxReplicas: 1
       }
     }
   }
-  dependsOn: [
-    catalogApi
-  ]
 }
 
+resource bootstrapJob 'Microsoft.App/jobs@2024-03-01' = {
+  name: 'orders-db-bootstrap'
+  location: location
+  tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${ordersDatabaseBootstrapIdentity.id}': {}
+    }
+  }
+  properties: {
+    environmentId: containerAppsEnvironment.id
+    configuration: {
+      triggerType: 'Manual'
+      replicaTimeout: 900
+      replicaRetryLimit: 0
+      manualTriggerConfig: {
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      registries: [
+        {
+          server: registry.properties.loginServer
+          identity: ordersDatabaseBootstrapIdentity.id
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'orders-db-bootstrap'
+          image: ordersImage
+          args: [
+            '--bootstrap'
+          ]
+          resources: {
+            cpu: json('0.5')
+            memory: '1.0Gi'
+          }
+          env: [
+            {
+              name: 'ConnectionStrings__OrdersDb'
+              value: bootstrapConnectionString
+            }
+            {
+              name: 'ORDERS_IDENTITY_PRINCIPAL_ID'
+              value: ordersApiIdentity.properties.principalId
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+
+module faultClient './private-job.bicep' = {
+  name: 'fault-client'
+  params: {
+    location: location
+    resourceName: 'workshop-fault-client'
+    operation: 'fault'
+    environmentId: containerAppsEnvironment.id
+    identityResourceId: faultClientIdentity.id
+    identityClientId: faultClientIdentity.properties.clientId
+    keyVaultUri: keyVault.properties.vaultUri
+    ordersApiUrl: 'https://${ordersApi.properties.configuration.ingress.fqdn}'
+    tags: tags
+  }
+}
+
+output bootstrapJobName string = bootstrapJob.name
+output faultClientJobName string = faultClient.outputs.jobName
 output ordersApiName string = ordersApi.name
 output ordersApiFqdn string = ordersApi.properties.configuration.ingress.fqdn
 output ordersApiResourceId string = ordersApi.id

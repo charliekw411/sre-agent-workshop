@@ -1,7 +1,7 @@
 ---
 title: Module 05 - Configure Azure SRE Agent
-description: Create an Azure SRE Agent, scope it to the workshop resource group, grant least-privilege access to telemetry, and validate that it can see the deployed workload.
-ms.date: 2026-09-08
+description: Verify the automatically provisioned Azure SRE Agent, its least-privilege access, and version-controlled configuration.
+ms.date: 2026-09-21
 ms.topic: how-to
 keywords:
   - azure sre agent
@@ -17,16 +17,77 @@ estimated_reading_time: 14
 <li>Hands-on</li>
 </ul>
 
+## Deployment API contract and permission record
+
+The automation targets the preview ARM resource `Microsoft.App/agents@2025-05-01-preview`.
+Region availability is constrained; use the supported default `eastus2` and verify
+current availability before choosing another region. This contract is based on
+Microsoft's pinned first-party examples:
+[apply-extras.sh](https://github.com/microsoft/sre-agent/blob/3fa8db85bd72b407eacc0d9f6de0f865c82afdf4/sreagent-templates/bicep/apply-extras.sh)
+and [agent-core.bicep](https://github.com/microsoft/sre-agent/blob/3fa8db85bd72b407eacc0d9f6de0f865c82afdf4/sreagent-templates/bicep/agent-core.bicep).
+These sources document the integration contract, not a successful live deployment
+of this workshop.
+
+| Configuration | API contract |
+| --- | --- |
+| Endpoint and authentication | Read ARM `properties.agentEndpoint`; acquire a token for audience `https://azuresre.dev`. |
+| Incident filters | Use YAML `metadata.name` as the stable key in `PUT /api/v2/extendedAgent/incidentFilters/{name}`. Send `{name, type: "IncidentFilter", tags: [], properties: spec}`; the platform is selected by `spec.incidentPlatform: AzMonitor`. |
+| Common prompts | `PUT /api/v2/extendedAgent/commonprompts/{name}` with `{name, type: "CommonPrompt", tags: [], properties: {prompt: "<Markdown>"}}`. |
+| Knowledge | Resolve the local references in `agent/knowledge.yaml`; upload multipart field `files` to `POST /api/v1/AgentMemory/upload`. List with `GET /api/v1/AgentMemory/files` and delete with `DELETE /api/v1/AgentMemory/document/{name}`. Remove owned `workshop-*.md` filenames, including retired entries, before reuploading because duplicate-filename replacement semantics are uncertain. Trigger indexing and preserve files outside that reserved ownership namespace. |
+
+| Principal | Required role and scope | Purpose |
+| --- | --- | --- |
+| Attendee/deployer | Subscription `Owner`, or `Contributor` plus `User Access Administrator` | Create the resource group and all deployment role assignments. |
+| Attendee/configuration caller | `SRE Agent Administrator` at the agent resource, assigned by hooks | Synchronize version-controlled agent configuration. |
+| Attendee/fault-helper caller | Existing subscription role above, including Container Apps job start/read and workspace log queries | Start and wait for `workshop-fault-client` through ARM, then retrieve only its non-secret correlated JSON result. No laptop vault access or VPN is needed. |
+| Attendee/in-network secret reader | Legacy `Key Vault Secrets User` at the workshop vault, retained by deployment | Read secrets from an authorized in-network administration environment. Local fault helpers do not use this grant; it does not bypass private networking or permit secret writes. |
+| Token-initializer identity `id-fault-token-init-<suffix>` | `Key Vault Secrets Officer` at the workshop vault | `workshop-token-init` creates only a missing `fault-token` inside the VNet and preserves existing tokens. |
+| Fault-client identity `id-fault-client-<suffix>` | `Key Vault Secrets User` at the workshop vault only | `workshop-fault-client` reads the credential inside the VNet and calls `/fault` routes. It has no secret-write permission. |
+| Orders API identity `id-orders-api-<suffix>` | `AcrPull` at the registry; `Key Vault Secrets User` at the vault; SQL object-level grants | Pull the image, resolve the private Key Vault secret reference, and serve requests without SQL schema-management rights. |
+| Catalog API identity `id-catalog-api-<suffix>` | `AcrPull` at the registry | Pull the Catalog image without inheriting Orders, vault, or SQL permissions. |
+| SQL-bootstrap identity `id-orders-db-bootstrap-<suffix>` | `AcrPull` at the registry; SQL Microsoft Entra administrator | Initialize SQL schema and runtime grants through the private endpoint, preserving existing orders and ballast. |
+| SRE runtime identity `id-sre-agent-runtime-<suffix>` | `Reader` and `Monitoring Reader` at the workshop resource group; `Log Analytics Reader` at the workspace | Read-only automated investigation, including network configuration and non-secret job logs. No job-start or secret privileges. |
+
+Deployment resolves the attendee identity through azd's built-in
+`AZURE_PRINCIPAL_ID` and `AZURE_PRINCIPAL_TYPE` values, supported in azd 1.18 or
+later. There are no custom deployer identity variables to populate. Required
+parameters are initialized before the pre-provision hook, so that hook does not
+attempt to supply them afterward. It compares the Azure CLI and azd ARM token
+`oid` and `tid` claims in memory and refuses mismatched logins without printing
+or persisting either token.
+
+The workshop does **not** grant the runtime subscription-wide `Monitoring Contributor`.
+Full Azure Monitor alert lifecycle integration requires that broader permission;
+do not expect the agent to acknowledge or close alerts. Configuration access for
+the attendee is distinct from the runtime identity's read-only access. Neither
+the attendee's job-start permissions nor the private jobs' vault roles are
+assigned to the SRE runtime.
+
+Fault helpers use the Azure CLI `log-analytics` extension after the job succeeds.
+Log ingestion may delay the response by up to five minutes, and status is a
+snapshot captured by the job. A result timeout is recovered with the read-only
+`python scripts/workshop.py fault-result <request-id>` command, never by
+reinjecting. See [result retrieval](../30-appendix/01-variables.md#fault-helper-results-and-retry).
+
+The preview resource uses `accessLevel: Low` and action mode `Review`, not
+invented `Reader` or `ReadOnly` API enum values. Scoped Azure RBAC grants enforce
+the runtime's read-only boundary for both its operational user-assigned and
+system-assigned identities.
+
 ## Overview
 
-You now have a running workload and a detection layer. This module connects Azure SRE Agent to both, using the narrowest permission set that still lets it do useful work.
+`azd up` has provisioned Azure SRE Agent and its permissions, then synchronized
+`agent/incident-filters.yaml` and `agent/knowledge.yaml` after private-vault
+initialization, SQL initialization, and the smoke request.
+This module verifies that configuration and the read-only investigation boundary.
+There are no portal setup steps or manual role grants.
 
 Getting the scope right matters more than getting it working. An agent with subscription-wide Contributor will produce excellent demos and terrible audit reviews.
 
 ## Learning objectives
 
-* Create an Azure SRE Agent and attach it to the workshop resource group.
-* Grant the agent identity least-privilege access to resources and telemetry.
+* Verify the provisioned Azure SRE Agent and its workshop resource group scope.
+* Inspect the agent identity's least-privilege access to resources and telemetry.
 * Verify the agent can enumerate resources and query the workspace.
 * Establish the read-only operating posture used for the rest of the workshop.
 * Run a first conversational query to confirm the agent understands the topology.
@@ -39,7 +100,7 @@ The agent's view of your system is exactly the intersection of what it is scoped
 flowchart TB
     AGENT["Azure SRE Agent<br/>managed identity"]
 
-    subgraph Scope["Scope: rg-sre-agent-workshop-&lt;suffix&gt;"]
+    subgraph Scope["Scope: rg-sre-agent-workshop-&lt;environment&gt;"]
         R1[Reader on the resource group]
         R2[Monitoring Reader on the resource group]
         R3[Log Analytics Reader on the workspace]
@@ -58,6 +119,7 @@ flowchart TB
         B1[Modify any resource]
         B2[Read other resource groups]
         B3[Read secrets or connection strings]
+        B4[Start token or fault-client jobs]
     end
 
     AGENT --> R1 --> V1
@@ -70,95 +132,33 @@ flowchart TB
     AGENT -.blocked.-> B1
     AGENT -.blocked.-> B2
     AGENT -.blocked.-> B3
+    AGENT -.blocked.-> B4
 
     classDef blocked fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
-    class B1,B2,B3 blocked
+    class B1,B2,B3,B4 blocked
 ```
 
 ## Tasks
 
-### Task 1: Create the Azure SRE Agent
-
-Azure SRE Agent is created through the Azure portal.
-
-1. Sign in to the [Azure portal](https://portal.azure.com).
-2. Search for **SRE Agent** and select **Azure SRE Agent**.
-3. Select **Create**.
-4. On the **Basics** tab, provide:
-   * Subscription: the subscription you recorded in Module 01.
-   * Resource group: your workshop resource group, `rg-sre-agent-workshop-<suffix>`.
-   * Name: `sre-agent-workshop`.
-   * Region: the same region as your workload.
-5. On the **Resources** tab, set the management scope to the workshop resource group. Do not select the subscription.
-6. On the **Permissions** tab, choose the read-only or diagnostics-only posture. Do not enable autonomous actions.
-7. Review and create.
-
-<!-- SCREENSHOT: Azure SRE Agent creation blade with resource group scope selected -->
-
-!!! important "Scope to the resource group, every time"
-    Selecting the subscription is one extra click and permanently widens the blast radius of every prompt anyone types for the lifetime of the agent. Resource group scope is the correct default for a pilot, and it is what the rest of this workshop assumes.
-
-!!! note "If Azure SRE Agent is unavailable in your region or subscription"
-    The capability is rolling out progressively. Check the [Azure SRE Agent documentation](https://learn.microsoft.com/azure/sre-agent/) for current availability. You can still complete Modules 06 through 11 by performing the investigations manually with the KQL queries each module provides, and the analytical content of those modules is unchanged.
-
-### Task 2: Capture the agent identity
+### Task 1: Inspect the provisioned agent
 
 ```bash
 source .workshop/workshop.env
 
-export SRE_AGENT_NAME="sre-agent-workshop"
-
-# Locate the managed identity that the agent runs as.
-export SRE_AGENT_PRINCIPAL_ID="$(az resource list \
+az resource show \
   --resource-group "${RESOURCE_GROUP}" \
   --name "${SRE_AGENT_NAME}" \
-  --query "[0].identity.principalId" \
-  --output tsv)"
-
-cat >> .workshop/workshop.env <<EOF
-export SRE_AGENT_NAME="${SRE_AGENT_NAME}"
-export SRE_AGENT_PRINCIPAL_ID="${SRE_AGENT_PRINCIPAL_ID}"
-EOF
-
-echo "Agent principal: ${SRE_AGENT_PRINCIPAL_ID}"
+  --resource-type Microsoft.App/agents \
+  --api-version 2025-05-01-preview \
+  --query "{Name:name, State:properties.provisioningState, Endpoint:properties.agentEndpoint}" \
+  --output table
 ```
 
-If the value is empty, open the agent resource in the portal, select **Identity**, and copy the object ID from there.
+PowerShell users load `. ./.workshop/workshop.ps1` and use `$env:VARIABLE_NAME`
+for the same exported identifiers. If the resource or outputs are missing, finish
+`azd up`; do not create a separate agent in the portal.
 
-### Task 3: Grant least-privilege access
-
-The agent needs to read resources, read metrics and alerts, and query the workspace. Nothing else.
-
-```bash
-source .workshop/workshop.env
-
-RG_SCOPE="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}"
-
-az role assignment create \
-  --assignee-object-id "${SRE_AGENT_PRINCIPAL_ID}" \
-  --assignee-principal-type ServicePrincipal \
-  --role "Reader" \
-  --scope "${RG_SCOPE}" \
-  --output none
-
-az role assignment create \
-  --assignee-object-id "${SRE_AGENT_PRINCIPAL_ID}" \
-  --assignee-principal-type ServicePrincipal \
-  --role "Monitoring Reader" \
-  --scope "${RG_SCOPE}" \
-  --output none
-
-az role assignment create \
-  --assignee-object-id "${SRE_AGENT_PRINCIPAL_ID}" \
-  --assignee-principal-type ServicePrincipal \
-  --role "Log Analytics Reader" \
-  --scope "${LOG_ANALYTICS_ID}" \
-  --output none
-
-echo "Role assignments created."
-```
-
-Review what you granted.
+### Task 2: Review the deployed role assignments
 
 ```bash
 az role assignment list \
@@ -169,19 +169,43 @@ az role assignment list \
 ```
 
 !!! danger "Roles this workshop deliberately does not grant"
-    `Contributor`, `Owner`, `Key Vault Secrets User`, and `Azure Service Bus Data Owner` are all absent. The agent can read that a connection string secret exists on a container app; it cannot read the value. When you later widen permissions in your own environment, add one role at a time and write down why.
+    The SRE runtime has no `Contributor`, `Owner`, Key Vault secret role, job-start privilege, or subscription-wide `Monitoring Contributor` grant. It can investigate resources, private DNS and endpoint configuration, and telemetry, but cannot retrieve fault secrets, start private jobs, perform remediation, or acknowledge/close Azure Monitor alerts. Do not confuse the attendee's agent-scoped administration role with runtime privileges.
 
-### Task 4: Configure the operating posture
+### Task 3: Review version-controlled configuration
 
-In the agent resource, open **Settings** and confirm:
+Read `agent/incident-filters.yaml` and `agent/knowledge.yaml`. Incident filters
+select Azure Monitor incidents using `incidentPlatform: AzMonitor`; the knowledge manifest
+references checked-in Markdown instructions and runbooks. Both are applied by
+`azd up`, rather than entered in a portal blade.
 
-* Operating mode is read-only or diagnostics-only. Autonomous actions are off.
-* Alert sources include the action group `ag-sre-workshop` created in Module 04.
-* Notification target is set so investigation summaries reach you.
+Both manifests declare `version: 1`. The incident manifest has a `filters` list
+of `{metadata: {name}, spec}` entries. Workshop filters use `agentMode: Review`,
+`handlingAgent: default`, and priorities `Sev1` and `Sev2`. The knowledge manifest
+has `instructions` and `documents` lists of `{name, source}` entries; `source`
+paths are relative to `agent/`. All managed names use the `workshop-` prefix.
+Reserve `workshop-*.md` for this deployment's knowledge documents.
 
-<!-- SCREENSHOT: SRE Agent settings pane showing read-only mode and connected alert sources -->
+For an optional configuration-only refresh after editing those files:
 
-### Task 5: Ask the agent to describe your environment
+```bash
+python scripts/workshop.py configure-agent
+```
+
+The command uses the selected environment and your Azure CLI login. It updates
+named incident filters and common prompts, then verifies their exact configured
+field values through read-back. It deletes all owned `workshop-*.md` knowledge
+documents, including retired entries, uploads the desired files, and triggers
+indexing. Files outside that namespace are preserved.
+
+Knowledge verification polls `/api/v1/AgentMemory/files` for `isIndexed` or
+`indexStatus` for up to ten minutes. Uploaded source bytes are not remotely
+downloadable through this contract, so indexing verification is not a remote
+byte-for-byte content comparison. Wait for indexing before judging new answers.
+
+!!! important "Retire incident filters explicitly"
+    A stale `workshop-` incident filter that is absent from YAML causes synchronization to fail closed. Keep its entry in `agent/incident-filters.yaml` with `spec.isEnabled: false` instead of removing it. The hook does not guess an undocumented v2 DELETE route.
+
+### Task 4: Ask the agent to describe your environment
 
 Open the agent's chat experience in the portal and enter this prompt.
 
@@ -238,8 +262,8 @@ If the agent reports that it cannot see any resources, role assignment propagati
 ??? question "Why grant Log Analytics Reader at the workspace scope instead of including it in the resource group grant?"
     Scoping to the workspace resource makes the grant explicit and independently revocable. If you later move the workspace to a shared monitoring resource group, which is common in production, the assignment follows the workspace rather than silently breaking or silently widening. Explicit scope also makes access reviews readable: someone can see exactly which workspace the agent queries.
 
-??? question "The agent can see that `orders-api` has a secret named `sql-connection-string`. Can it read the value, and why does that distinction matter?"
-    It cannot. `Reader` grants visibility of resource configuration metadata, including the names of container app secrets, but retrieving values requires a separate list-secrets action that `Reader` does not include. The distinction matters because the agent can reason about the fact that a database connection is configured, which is all it needs for diagnosis, without ever holding a credential that could be leaked through a chat transcript.
+??? question "Can the SRE runtime retrieve the fault secret or SQL administrator credentials?"
+    No. It has no Key Vault data-plane secret permissions and cannot start the token or fault-client jobs. SQL is Entra-only: a separate bootstrap managed identity performs initialization, and the Orders managed identity receives narrow runtime grants. There are no SQL administrator passwords to retrieve.
 
 ??? question "Your security team asks what happens if someone prompts the agent to delete a resource. What is your answer?"
     In this configuration the action fails at the Azure Resource Manager authorization layer, because the identity holds no write permissions on any resource. The attempt is recorded in the Activity log with the agent identity as the caller. Prompt-level guardrails are useful defense in depth, but the permission boundary is the control you rely on, because it is enforced outside the model.

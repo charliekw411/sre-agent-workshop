@@ -1,7 +1,7 @@
 ---
 title: Module 08 - Generate HTTP 500 Incident
 description: Trigger a dependency failure that cascades into customer-facing HTTP 500 responses, and observe why the symptom appears on a service that is not broken.
-ms.date: 2026-09-08
+ms.date: 2026-09-21
 ms.topic: how-to
 keywords:
   - http 500
@@ -71,8 +71,7 @@ Only the first of these is the trigger. All three are findings.
 ```bash
 source .workshop/workshop.env
 
-curl --silent --header "X-Fault-Token: ${FAULT_TOKEN}" \
-  "https://${ORDERS_API_FQDN}/fault/status" | jq '{cpuLoadActive, errorInjectionActive, storagePhase}'
+./scripts/inject-fault.sh status
 
 az monitor log-analytics query \
   --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
@@ -87,10 +86,17 @@ AppRequests
 
 Success rate should be back at or near 100 percent. If it is not, wait a few minutes; the previous fault's queue drains gradually.
 
+Fault status is a snapshot from the private job, delivered through Log Analytics
+after ingestion, not a live view at print time. Use the telemetry above to confirm
+recovery. See [result timing and retry](../30-appendix/01-variables.md#fault-helper-results-and-retry).
+
 !!! warning "Do not stack incidents"
     Injecting a second fault while the first is still active produces overlapping signals and an investigation nobody can untangle, including the agent. That is realistic, and it is also a terrible way to learn. Confirm recovery first.
 
 ### Task 2: Record the incident start time
+
+Record helper invocation time, then refine the actual injection time using the
+job execution and `FAULT INJECTED` logs.
 
 ```bash
 export INCIDENT_2_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -99,7 +105,7 @@ echo "Incident 2 start (UTC): ${INCIDENT_2_START}"
 cat > .workshop/notes/incident-02-http-500.md <<EOF
 # Incident 2: HTTP 500 cascade from catalog dependency
 
-* Injected at (UTC): ${INCIDENT_2_START}
+* Helper invoked at (UTC): ${INCIDENT_2_START}
 * Fault: 100 percent catalog dependency failure for 900 seconds
 * Expected primary signal: errors
 * Expected secondary signal: latency from retries and timeouts
@@ -126,7 +132,12 @@ EOF
 ./scripts/inject-fault.sh errors 100 900
 ```
 
-Every `catalog-api` lookup now returns HTTP 503 for the next 15 minutes.
+Once the private job invokes the route, every `catalog-api` lookup returns HTTP
+503 for 900 seconds. That timer continues while the helper waits up to five
+minutes for result ingestion. Start Task 4 in another terminal during the wait.
+If result retrieval times out, use the reported request ID with
+`python scripts/workshop.py fault-result <request-id>`; do not repeat the injection
+to recover delayed logs.
 
 !!! tip "Try a partial failure afterwards"
     A 100 percent failure rate is easy to detect. Once you have finished the module, re-run with `./scripts/inject-fault.sh errors 15 600` and observe how much harder a 15 percent failure rate is to see on a dashboard that shows averages. Partial failures are the ones that stay undiagnosed for days.

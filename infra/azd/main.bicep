@@ -9,17 +9,17 @@ param environmentName string
 @description('Azure region for all workshop resources.')
 param location string
 
-@description('Administrator password for the workshop Azure SQL logical server.')
-@secure()
-@minLength(16)
-param sqlAdminPassword string
+@description('Object ID of the signed-in attendee or service principal.')
+param deployerPrincipalId string
 
-@description('Shared secret required by the workshop fault-injection endpoints.')
-@secure()
-param faultToken string
+@allowed([
+  'User'
+  'ServicePrincipal'
+])
+param deployerPrincipalType string = 'User'
 
-@description('Email address that receives workshop alert notifications.')
-param alertEmail string
+@description('Optional email address that receives workshop alert notifications.')
+param alertEmail string = ''
 
 var normalizedEnvironmentName = toLower(replace(environmentName, '-', ''))
 var suffix = '${take(normalizedEnvironmentName, 5)}${take(uniqueString(subscription().id, environmentName), 7)}'
@@ -41,7 +41,8 @@ module foundation '../main.bicep' = {
   params: {
     location: location
     suffix: suffix
-    sqlAdminPassword: sqlAdminPassword
+    deployerPrincipalId: deployerPrincipalId
+    deployerPrincipalType: deployerPrincipalType
     tags: tags
   }
 }
@@ -52,10 +53,8 @@ module applications '../apps.bicep' = {
     location: location
     environmentName: environmentName
     suffix: suffix
-    ordersImage: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-    catalogImage: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-    sqlAdminPassword: sqlAdminPassword
-    faultToken: faultToken
+    ordersImage: 'mcr.microsoft.com/dotnet/samples:aspnetapp'
+    catalogImage: 'mcr.microsoft.com/dotnet/samples:aspnetapp'
     tags: tags
   }
   dependsOn: [
@@ -76,6 +75,20 @@ module monitoring '../alerts.bicep' = {
   ]
 }
 
+module sreAgent '../sre-agent.bicep' = {
+  scope: workshopResourceGroup
+  params: {
+    location: location
+    suffix: suffix
+    deployerPrincipalId: deployerPrincipalId
+    deployerPrincipalType: deployerPrincipalType
+    tags: tags
+  }
+  dependsOn: [
+    foundation
+  ]
+}
+
 output AZURE_RESOURCE_GROUP string = workshopResourceGroup.name
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = foundation.outputs.registryLoginServer
 output AZURE_CONTAINER_REGISTRY_NAME string = foundation.outputs.registryName
@@ -84,7 +97,6 @@ output LOCATION string = location
 output RESOURCE_GROUP string = workshopResourceGroup.name
 output SUBSCRIPTION_ID string = subscription().subscriptionId
 output TENANT_ID string = tenant().tenantId
-output SQL_ADMIN_LOGIN string = 'sreworkshopadmin'
 output ACR_NAME string = foundation.outputs.registryName
 output ACR_LOGIN_SERVER string = foundation.outputs.registryLoginServer
 output LOG_ANALYTICS_NAME string = foundation.outputs.workspaceName
@@ -96,3 +108,21 @@ output SQL_DATABASE_NAME string = foundation.outputs.sqlDatabaseName
 output CONTAINER_ENV_NAME string = foundation.outputs.containerAppsEnvironmentName
 output ORDERS_API_FQDN string = applications.outputs.ordersApiFqdn
 output SERVICE_ORDERS_API_ENDPOINT_URL string = 'https://${applications.outputs.ordersApiFqdn}'
+output BOOTSTRAP_JOB_NAME string = applications.outputs.bootstrapJobName
+output TOKEN_INITIALIZER_JOB_NAME string = foundation.outputs.tokenInitializerJobName
+output FAULT_CLIENT_JOB_NAME string = applications.outputs.faultClientJobName
+output VIRTUAL_NETWORK_NAME string = foundation.outputs.virtualNetworkName
+output SQL_PRIVATE_ENDPOINT_NAME string = foundation.outputs.sqlPrivateEndpointName
+output KEY_VAULT_PRIVATE_ENDPOINT_NAME string = foundation.outputs.keyVaultPrivateEndpointName
+output KEY_VAULT_NAME string = foundation.outputs.keyVaultName
+output KEY_VAULT_URI string = foundation.outputs.keyVaultUri
+output FAULT_TOKEN_SECRET_URI string = foundation.outputs.faultTokenSecretUri
+output ORDERS_IDENTITY_PRINCIPAL_ID string = foundation.outputs.identityPrincipalId
+output ORDERS_IDENTITY_CLIENT_ID string = foundation.outputs.identityClientId
+output ORDERS_IDENTITY_RESOURCE_ID string = foundation.outputs.identityResourceId
+output SRE_AGENT_NAME string = sreAgent.outputs.agentName
+output SRE_AGENT_RESOURCE_ID string = sreAgent.outputs.agentResourceId
+output SRE_AGENT_ENDPOINT string = sreAgent.outputs.agentEndpoint
+output SRE_AGENT_PRINCIPAL_ID string = sreAgent.outputs.agentPrincipalId
+output SRE_AGENT_IDENTITY_RESOURCE_ID string = sreAgent.outputs.operationalIdentityResourceId
+output SRE_AGENT_IDENTITY_PRINCIPAL_ID string = sreAgent.outputs.operationalIdentityPrincipalId

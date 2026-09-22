@@ -7,6 +7,10 @@ on:
     paths:
       - "infra/**"
       - "src/**"
+      - "agent/**"
+      - "scripts/**"
+      - "azure.yaml"
+      - "requirements.txt"
       - ".github/workflows/validate-infra.yml"
   pull_request:
     branches:
@@ -14,6 +18,10 @@ on:
     paths:
       - "infra/**"
       - "src/**"
+      - "agent/**"
+      - "scripts/**"
+      - "azure.yaml"
+      - "requirements.txt"
       - ".github/workflows/validate-infra.yml"
   workflow_dispatch: {}
 
@@ -30,6 +38,7 @@ jobs:
           - infra/main.bicep
           - infra/apps.bicep
           - infra/alerts.bicep
+          - infra/azd/main.bicep
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install Bicep CLI
@@ -55,3 +64,24 @@ jobs:
           dotnet-version: "8.0.x"
       - name: Build ${{ matrix.project }}
         run: dotnet build ${{ matrix.project }} --configuration Release
+
+  deployment-hooks:
+    name: Deployment hooks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install YAML parser
+        run: python -m pip install PyYAML==6.0.2
+      - name: Validate manifests and hook regressions
+        run: |
+          python scripts/workshop.py validate
+          python -m unittest discover -s scripts -p "test_*.py" -v
+      - name: Validate PowerShell entrypoint
+        shell: pwsh
+        run: ./scripts/invoke-workshop.ps1 validate
+      - name: Validate Bash entrypoints
+        if: runner.os == 'Linux'
+        run: shellcheck scripts/prepare-azd-env.sh scripts/export-azd-env.sh scripts/postprovision.sh scripts/postdeploy.sh scripts/inject-fault.sh

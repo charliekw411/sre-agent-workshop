@@ -10,20 +10,14 @@ param location string = resourceGroup().location
 @maxLength(12)
 param suffix string
 
-@description('Administrator login for the Azure SQL logical server.')
-@minLength(4)
-param sqlAdminLogin string = 'sreworkshopadmin'
+@description('Object ID of the attendee or service principal deploying the workshop.')
+param deployerPrincipalId string
 
-@description('Administrator password for the Azure SQL logical server. Supply a value from a secure source; never commit it.')
-@secure()
-@minLength(16)
-param sqlAdminPassword string
-
-@description('Object ID of the Microsoft Entra principal that becomes the SQL server Entra administrator. Defaults to no Entra administrator.')
-param sqlEntraAdminObjectId string = ''
-
-@description('Display name of the Microsoft Entra principal that becomes the SQL server Entra administrator.')
-param sqlEntraAdminName string = ''
+@allowed([
+  'User'
+  'ServicePrincipal'
+])
+param deployerPrincipalType string = 'User'
 
 @description('Log Analytics retention in days.')
 @minValue(30)
@@ -42,8 +36,32 @@ param tags object = {
 var databaseName = 'sqldb-orders'
 var acrName = 'acr${suffix}'
 
-resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-${suffix}'
+resource ordersApiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-orders-api-${suffix}'
+  location: location
+  tags: tags
+}
+
+resource catalogApiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-catalog-api-${suffix}'
+  location: location
+  tags: tags
+}
+
+resource ordersDatabaseBootstrapIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-orders-db-bootstrap-${suffix}'
+  location: location
+  tags: tags
+}
+
+resource faultTokenInitializerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-fault-token-init-${suffix}'
+  location: location
+  tags: tags
+}
+
+resource faultClientIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-fault-client-${suffix}'
   location: location
   tags: tags
 }
@@ -65,13 +83,94 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = 
 
 var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 
-resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(registry.id, identity.id, acrPullRoleId)
+resource ordersApiAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(registry.id, ordersApiIdentity.id, acrPullRoleId)
   scope: registry
   properties: {
-    principalId: identity.properties.principalId
+    principalId: ordersApiIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
+  }
+}
+
+resource catalogApiAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(registry.id, catalogApiIdentity.id, acrPullRoleId)
+  scope: registry
+  properties: {
+    principalId: catalogApiIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
+  }
+}
+
+resource ordersDatabaseBootstrapAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(registry.id, ordersDatabaseBootstrapIdentity.id, acrPullRoleId)
+  scope: registry
+  properties: {
+    principalId: ordersDatabaseBootstrapIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
+  }
+}
+
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: 'kv-${suffix}'
+  location: location
+  tags: tags
+  properties: {
+    tenantId: subscription().tenantId
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    enableRbacAuthorization: true
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 7
+    enablePurgeProtection: true
+    publicNetworkAccess: 'Disabled'
+  }
+}
+
+var secretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
+var secretsOfficerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
+
+resource ordersApiSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, ordersApiIdentity.id, secretsUserRoleId)
+  scope: keyVault
+  properties: {
+    principalId: ordersApiIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsUserRoleId)
+  }
+}
+
+resource attendeeSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, deployerPrincipalId, secretsUserRoleId)
+  scope: keyVault
+  properties: {
+    principalId: deployerPrincipalId
+    principalType: deployerPrincipalType
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsUserRoleId)
+  }
+}
+
+resource faultClientSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, faultClientIdentity.id, secretsUserRoleId)
+  scope: keyVault
+  properties: {
+    principalId: faultClientIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsUserRoleId)
+  }
+}
+
+resource faultTokenInitializerSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, faultTokenInitializerIdentity.id, secretsOfficerRoleId)
+  scope: keyVault
+  properties: {
+    principalId: faultTokenInitializerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsOfficerRoleId)
   }
 }
 
@@ -115,31 +214,17 @@ resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
     type: 'SystemAssigned'
   }
   properties: {
-    administratorLogin: sqlAdminLogin
-    administratorLoginPassword: sqlAdminPassword
     minimalTlsVersion: '1.2'
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: 'Disabled'
     restrictOutboundNetworkAccess: 'Disabled'
-    administrators: empty(sqlEntraAdminObjectId)
-      ? null
-      : {
-          administratorType: 'ActiveDirectory'
-          principalType: 'User'
-          login: sqlEntraAdminName
-          sid: sqlEntraAdminObjectId
-          tenantId: subscription().tenantId
-          azureADOnlyAuthentication: false
-        }
-  }
-}
-
-// Allows Container Apps outbound traffic, which presents as an Azure service address.
-resource allowAzureServices 'Microsoft.Sql/servers/firewallRules@2023-08-01-preview' = {
-  parent: sqlServer
-  name: 'AllowAllWindowsAzureIps'
-  properties: {
-    startIpAddress: '0.0.0.0'
-    endIpAddress: '0.0.0.0'
+    administrators: {
+      administratorType: 'ActiveDirectory'
+      principalType: 'Application'
+      login: ordersDatabaseBootstrapIdentity.name
+      sid: ordersDatabaseBootstrapIdentity.properties.principalId
+      tenantId: subscription().tenantId
+      azureADOnlyAuthentication: true
+    }
   }
 }
 
@@ -199,11 +284,33 @@ resource databaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
   }
 }
 
+module privateNetwork './network.bicep' = {
+  name: 'private-network'
+  params: {
+    location: location
+    suffix: suffix
+    sqlServerId: sqlServer.id
+    keyVaultId: keyVault.id
+    tags: tags
+  }
+}
+
 resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: 'cae-${suffix}'
+  // An environment without a VNet cannot be converted in place after a partial deployment.
+  name: 'cae-private-${suffix}'
   location: location
   tags: tags
   properties: {
+    vnetConfiguration: {
+      infrastructureSubnetId: privateNetwork.outputs.infrastructureSubnetId
+      internal: false
+    }
+    workloadProfiles: [
+      {
+        name: 'Consumption'
+        workloadProfileType: 'Consumption'
+      }
+    ]
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
@@ -213,6 +320,23 @@ resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01'
     }
     zoneRedundant: false
   }
+}
+
+module faultTokenInitializer './private-job.bicep' = {
+  name: 'fault-token-initializer'
+  params: {
+    location: location
+    resourceName: 'workshop-token-init'
+    operation: 'initialize'
+    environmentId: containerAppsEnvironment.id
+    identityResourceId: faultTokenInitializerIdentity.id
+    identityClientId: faultTokenInitializerIdentity.properties.clientId
+    keyVaultUri: keyVault.properties.vaultUri
+    tags: tags
+  }
+  dependsOn: [
+    faultTokenInitializerSecretsOfficer
+  ]
 }
 
 resource environmentDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
@@ -229,10 +353,19 @@ resource environmentDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-0
   }
 }
 
-output identityName string = identity.name
-output identityResourceId string = identity.id
-output identityClientId string = identity.properties.clientId
-output identityPrincipalId string = identity.properties.principalId
+output identityName string = ordersApiIdentity.name
+output identityResourceId string = ordersApiIdentity.id
+output identityClientId string = ordersApiIdentity.properties.clientId
+output identityPrincipalId string = ordersApiIdentity.properties.principalId
+output bootstrapIdentityResourceId string = ordersDatabaseBootstrapIdentity.id
+output bootstrapIdentityClientId string = ordersDatabaseBootstrapIdentity.properties.clientId
+output keyVaultName string = keyVault.name
+output keyVaultUri string = keyVault.properties.vaultUri
+output faultTokenSecretUri string = '${keyVault.properties.vaultUri}secrets/fault-token'
+output tokenInitializerJobName string = faultTokenInitializer.outputs.jobName
+output virtualNetworkName string = privateNetwork.outputs.virtualNetworkName
+output sqlPrivateEndpointName string = privateNetwork.outputs.sqlPrivateEndpointName
+output keyVaultPrivateEndpointName string = privateNetwork.outputs.keyVaultPrivateEndpointName
 
 output registryName string = registry.name
 output registryLoginServer string = registry.properties.loginServer
@@ -243,8 +376,6 @@ output workspaceCustomerId string = workspace.properties.customerId
 
 output appInsightsName string = appInsights.name
 output appInsightsResourceId string = appInsights.id
-@description('Application Insights connection string. Treated as a configuration value, not a credential, but still avoid printing it in shared logs.')
-output appInsightsConnectionString string = appInsights.properties.ConnectionString
 
 output sqlServerName string = sqlServer.name
 output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName

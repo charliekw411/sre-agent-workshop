@@ -45,7 +45,8 @@ Controls that do apply to the fault endpoints:
 * Every request requires a matching `X-Fault-Token` header.
 * The token is compared using a fixed-time comparison.
 * Every fault is bounded by a duration or a target, and `POST /fault/reset` clears all state.
-* The token is generated at deployment time and stored as a Container Apps secret.
+* The token is generated during deployment and stored in Key Vault; Container Apps references it through managed identity.
+* Fault helpers retrieve the token just in time and do not write it to shell exports or print it. Use `scripts/inject-fault.sh` or `scripts/inject-fault.ps1`, not token-bearing manual HTTP commands.
 
 **Do not deploy this application, or any part of it, to an environment that serves real traffic.**
 
@@ -54,15 +55,20 @@ Controls that do apply to the fault endpoints:
 Where a secure option did not compromise the teaching goal, the workshop takes it.
 
 * Container images are pulled with a user-assigned managed identity holding `AcrPull`, not with registry admin credentials. Admin user is explicitly disabled.
-* Azure SRE Agent is granted `Reader`, `Monitoring Reader`, and `Log Analytics Reader` scoped to the workshop resource group and workspace. No write roles are granted anywhere.
+* Azure SRE Agent's runtime identity has `Reader` and `Monitoring Reader` on the workshop resource group and `Log Analytics Reader` on the workspace. It has no resource-write or Key Vault secret-read grants.
+* The deployment caller needs subscription `Owner`, or `Contributor` plus `User Access Administrator`. Hooks assign the attendee `SRE Agent Administrator` at the agent resource for configuration; that is not a runtime resource-write grant.
+* Deployment assigns the attendee `Key Vault Secrets User` on the workshop vault for just-in-time fault-helper authentication. Neither SRE runtime identity receives that grant.
+* Full Azure Monitor alert lifecycle operations require subscription `Monitoring Contributor`, which the runtime is not granted. Read-only investigation does not imply permission to acknowledge or close alerts.
 * Azure SQL Database enforces TLS 1.2 as a minimum and connections use `Encrypt=True`.
 * All SQL statements in the sample application are parameterized.
 * Containers run as the non-root user provided by the base image.
-* Credentials generated during the workshop are written to `.workshop/`, which is excluded from source control.
+* `.workshop/workshop.env` and `.workshop/workshop.ps1` are generated from an explicit allowlist of non-secret identifiers and endpoints. Secrets are not persisted in these exports or as azd environment values.
+* The hook scrubs legacy SQL/fault credential values from the selected azd environment's `.env`, cached `config.json` parameters, and workshop exports. Authentication tokens are compared in memory to detect mismatched Azure CLI/azd identities and are never printed or persisted.
+* Azure SQL is Entra-only. A manual-trigger bootstrap job uses a separate SQL administrator managed identity; the Orders API identity receives object-level grants, not `db_owner`. Storage release runs through a narrowly scoped privileged stored procedure.
+* Redeployment inserts only missing deterministic seed IDs and preserves existing orders and storage ballast.
 
 Known deliberate compromises, made for workshop reliability:
 
-* The SQL server uses SQL authentication rather than Microsoft Entra-only authentication, because the contained-user setup adds friction that causes more workshop failures than it prevents. Production should use managed identity.
 * Public network access is enabled on the SQL server and the container registry, because the workshop must be reachable from an attendee's laptop without a private endpoint and jump host.
 * The `AllowAllWindowsAzureIps` firewall rule is enabled so Container Apps outbound traffic can reach the database.
 

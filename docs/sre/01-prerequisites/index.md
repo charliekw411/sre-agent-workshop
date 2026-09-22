@@ -1,14 +1,13 @@
 ---
 title: Module 01 - Prerequisites
-description: Verify your Azure subscription, tooling, permissions, and resource provider registrations before deploying the Azure SRE Agent workshop environment.
-ms.date: 2026-09-09
+description: Verify tooling, both Azure logins, subscription permissions, and preview regional availability before azd up.
+ms.date: 2026-09-21
 ms.topic: how-to
 keywords:
   - prerequisites
   - azure cli
-  - resource providers
   - permissions
-estimated_reading_time: 12
+estimated_reading_time: 10
 ---
 
 <ul class="sre-meta">
@@ -19,249 +18,203 @@ estimated_reading_time: 12
 
 ## Overview
 
-Ninety percent of workshop failures happen here and surface three modules later as an inscrutable deployment error. Spending twenty minutes confirming your subscription, tooling, and permissions is the highest-value time you will spend today.
-
-Work through every task. Do not assume your environment is fine because you use Azure daily; the resource provider registrations in Task 4 in particular catch experienced engineers.
+Deployment is automated, but it still needs compatible tools and subscription
+permissions. Complete these checks before running `azd up`.
 
 ## Learning objectives
 
-* Confirm your Azure subscription meets the workshop requirements.
-* Install and verify the required command-line tooling.
-* Validate that your account holds sufficient permissions to deploy and to assign roles.
-* Register the resource providers the workshop depends on.
-* Confirm regional availability for Azure SRE Agent.
-
-## Architecture context
-
-Everything in this module is a gate. Passing all five gates means Module 03 will deploy cleanly.
-
-```mermaid
-flowchart TD
-    S[Start] --> G1{Subscription with<br/>Owner or equivalent}
-    G1 -- no --> F1[Request access or use a sandbox subscription]
-    G1 -- yes --> G2{azd 1.18+ and<br/>Azure CLI 2.60+}
-    G2 -- no --> F2[Install or upgrade tooling]
-    G2 -- yes --> G3{Docker or ACR<br/>build available}
-    G3 -- yes --> G4{Resource providers<br/>registered}
-    G4 -- yes --> G5{Region supports<br/>SRE Agent}
-    G5 -- yes --> R[Ready for Module 03]
-
-    classDef fail fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
-    class F1,F2 fail
-```
+* Authenticate Azure CLI and Azure Developer CLI separately.
+* Confirm subscription-level resource creation and role assignment permissions.
+* Prepare Python-based hooks on Bash or PowerShell.
+* Select a region that supports the SRE Agent preview.
 
 ## Tasks
 
-### Task 1: Confirm your Azure subscription
-
-You need an Azure subscription where you can create resources and assign roles.
-
-```bash
-az login
-az account show --output table
-```
-
-If you have more than one subscription, select the one you intend to use and record it.
-
-```bash
-az account list --query "[].{Name:name, SubscriptionId:id, State:state}" --output table
-az account set --subscription "<your-subscription-name-or-id>"
-
-export SUBSCRIPTION_ID=$(az account show --query id --output tsv)
-export TENANT_ID=$(az account show --query tenantId --output tsv)
-
-cat >> .workshop/workshop.env <<EOF
-export SUBSCRIPTION_ID="${SUBSCRIPTION_ID}"
-export TENANT_ID="${TENANT_ID}"
-EOF
-```
-
-!!! warning "Shared or corporate subscriptions"
-    Many enterprise subscriptions apply Azure Policy that blocks public network access, enforces private endpoints, or denies specific SKUs. The workshop deploys public endpoints intentionally so that fault injection is reachable. If your subscription blocks that, use a personal or sandbox subscription instead of fighting policy for an hour.
-
-### Task 2: Verify your permissions
-
-You need two distinct capabilities: creating resources, and assigning roles to a managed identity. Contributor alone is not enough, because Contributor cannot create role assignments.
-
-```bash
-export CURRENT_USER_ID=$(az ad signed-in-user show --query id --output tsv)
-
-az role assignment list \
-  --assignee "${CURRENT_USER_ID}" \
-  --scope "/subscriptions/${SUBSCRIPTION_ID}" \
-  --include-inherited \
-  --query "[].{Role:roleDefinitionName, Scope:scope}" \
-  --output table
-```
-
-You should see `Owner`, or the combination of `Contributor` plus `User Access Administrator` or `Role Based Access Control Administrator`.
-
-!!! important "Why role assignment rights are required"
-    [Module 05](../05-configure-sre-agent/index.md) grants the Azure SRE Agent managed identity `Reader` and `Monitoring Reader` on the workshop resource group. Without permission to create role assignments, the agent deploys but cannot see anything, and every investigation module fails.
-
-### Task 3: Install the required tooling
-
-=== "Linux and WSL"
-
-    ```bash
-    # Azure CLI
-    curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-
-    # Azure Developer CLI
-    curl -fsSL https://aka.ms/install-azd.sh | bash
-
-    # Docker Engine (optional; ACR build is used by default)
-    curl -fsSL https://get.docker.com | sudo sh
-
-    # jq for parsing command output
-    sudo apt-get update && sudo apt-get install -y jq
-    ```
-
-=== "macOS"
-
-    ```bash
-    brew update
-    brew tap azure/azd
-    brew install azd azure-cli jq
-    brew install --cask docker
-    ```
-
-=== "Windows (PowerShell)"
-
-    ```powershell
-    winget install --exact --id Microsoft.AzureCLI
-    winget install --exact --id Microsoft.Azd
-    winget install --exact --id jqlang.jq
-    winget install --exact --id Docker.DockerDesktop
-    ```
-
-    Then run the workshop commands from a WSL, Git Bash, or Azure Cloud Shell session.
-
-=== "Azure Cloud Shell"
-
-    Cloud Shell already includes `azd`, the Azure CLI, `jq`, and Bicep. Open [https://shell.azure.com](https://shell.azure.com) and select Bash. Container images are built remotely in Azure Container Registry, so Docker is not required.
-
-Now verify the versions.
-
-```bash
-az version --output table
-azd version
-az bicep version
-jq --version
-```
-
-The workshop is validated against Azure Developer CLI 1.18 or later, Azure CLI 2.60 or later, and Bicep 0.28 or later. Upgrade if you are behind.
-
-```bash
-az upgrade
-az bicep upgrade
-```
-
-### Task 4: Register resource providers
-
-Unregistered providers produce deployment errors that name the provider but not the fix. Register them now; registration is idempotent and takes a few minutes to propagate.
-
-```bash
-for provider in \
-  Microsoft.App \
-  Microsoft.ContainerRegistry \
-  Microsoft.OperationalInsights \
-  Microsoft.Insights \
-  Microsoft.Sql \
-  Microsoft.AlertsManagement \
-  Microsoft.ManagedIdentity \
-  Microsoft.Monitor
-do
-  echo "Registering ${provider}..."
-  az provider register --namespace "${provider}"
-done
-```
-
-Check progress until every provider reports `Registered`.
-
-```bash
-az provider list \
-  --query "[?namespace=='Microsoft.App' || namespace=='Microsoft.ContainerRegistry' || namespace=='Microsoft.OperationalInsights' || namespace=='Microsoft.Insights' || namespace=='Microsoft.Sql' || namespace=='Microsoft.AlertsManagement' || namespace=='Microsoft.ManagedIdentity' || namespace=='Microsoft.Monitor'].{Namespace:namespace, State:registrationState}" \
-  --output table
-```
-
-### Task 5: Install the Azure CLI extensions
-
-```bash
-az extension add --name containerapp --upgrade --only-show-errors
-az extension add --name application-insights --upgrade --only-show-errors
-az extension add --name log-analytics --upgrade --only-show-errors
-az extension list --query "[].{Name:name, Version:version}" --output table
-```
-
-### Task 6: Confirm regional availability and quota
-
-Azure SRE Agent is not available in every region. Confirm your chosen region before you deploy an entire environment into the wrong one.
-
-```bash
-# Confirm Container Apps availability in your chosen region
-az provider show --namespace Microsoft.App \
-  --query "resourceTypes[?resourceType=='managedEnvironments'].locations[]" \
-  --output tsv | grep -i "$(echo ${LOCATION} | sed 's/eastus/East US/I')" || echo "Check region name"
-
-# Confirm you have vCPU quota for Container Apps
-az vm list-usage --location "${LOCATION}" --query "[?contains(name.value, 'cores')].{Name:localName, Current:currentValue, Limit:limit}" --output table
-```
-
-!!! note "Region guidance"
-    `eastus`, `westus3`, `westeurope`, and `swedencentral` are safe defaults at the time of writing. Check the [Azure SRE Agent documentation](https://learn.microsoft.com/azure/sre-agent/) for the current list before committing to a region, and set `LOCATION` in `.workshop/workshop.env` accordingly.
-
-### Task 7: Clone the workshop repository
+### Task 1: Clone the repository and verify tools
 
 ```bash
 git clone https://github.com/charliekw411/sre-agent-workshop.git
 cd sre-agent-workshop
+az version
+azd version
+python --version
 ```
 
-If you created `.workshop/workshop.env` outside the repository in [How This Workshop Works](../00-workshop-intro/3-how-this-workshop-works.md), move it into the repository root now so that relative paths in later modules resolve.
+Required tools:
+
+| Tool | Requirement |
+| --- | --- |
+| Azure Developer CLI | Version 1.18 or later |
+| Azure CLI | Version 2.60 or later; accessible on the same PATH as the hooks |
+| Python | Python 3.10 or later with PyYAML; use `python3` instead of `python` where needed |
+| Shell | Bash or PowerShell |
+| Git | Clone the repository |
+| `jq` and `curl` | Bash investigation and validation examples |
+
+The hooks share `scripts/workshop.py` across platforms. Install the existing
+repository dependencies in an activated virtual environment:
+
+=== "Bash"
+
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate
+    python -m pip install -r requirements.txt
+    python -c "import yaml; print(yaml.__version__)"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python -m venv .venv
+    . ./.venv/Scripts/Activate.ps1
+    python -m pip install -r requirements.txt
+    python -c "import yaml; print(yaml.__version__)"
+    ```
+
+The PowerShell wrapper checks the Python version and prefers `python` on Windows
+to avoid the `python3` Windows Store alias; on Linux it prefers `python3`.
+
+Install missing Azure tools using the official
+[Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) and
+[Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd)
+instructions. No local Docker daemon or .NET SDK is required: Azure Container
+Registry builds the .NET 8 application images remotely. A local .NET 8 SDK is only
+needed if you choose to develop or build the sample services locally.
+
+### Task 2: Authenticate both CLIs
+
+```bash
+az login
+az account set --subscription "<your-subscription-id>"
+az account show --output table
+azd auth login
+```
+
+Azure CLI and `azd` maintain separate authentication contexts. Use the same tenant,
+account, and subscription for the deployment; the hooks use Azure CLI to resolve
+your identity and configure the SRE Agent. Signing in to only one CLI is not enough.
+
+azd supplies the built-in `AZURE_PRINCIPAL_ID` and `AZURE_PRINCIPAL_TYPE` values
+before pre-provision hooks run; do not create custom deployer identity variables.
+The hook compares both CLIs' ARM token `oid` and `tid` claims in memory and stops
+if the signed-in identities or tenants differ. Tokens are not printed or saved.
+
+### Task 3: Verify subscription permissions
+
+You need **subscription Owner**, or **subscription Contributor plus User Access
+Administrator**. Resource-group-only access is insufficient because deployment
+creates the resource group. Contributor alone cannot assign the managed identity
+and attendee roles required by the deployment.
+
+```bash
+az role assignment list \
+  --assignee "$(az ad signed-in-user show --query id --output tsv)" \
+  --scope "/subscriptions/$(az account show --query id --output tsv)" \
+  --include-inherited \
+  --query "[].{Role:roleDefinitionName, Scope:scope}" --output table
+```
+
+Have your subscription administrator provide the required access before you
+continue. Do not work around failed deployment by manually granting runtime roles.
+`azd up` owns those assignments, including the attendee's agent-scoped
+`SRE Agent Administrator` role. Runtime access is deliberately read-only; see the
+[permission record](../05-configure-sre-agent/index.md#deployment-api-contract-and-permission-record).
+
+Fault helpers also require permission to start and read Container Apps job
+executions through ARM and query the Log Analytics workspace. The subscription
+roles above include those operations. Helpers never retrieve the vault credential
+on your machine, so you need no VPN or private-vault data access. The attendee's
+legacy vault `Key Vault Secrets User` grant remains for authorized in-network
+administration, not local helper use. The SRE runtime has neither job-start nor
+secret permissions.
+
+### Task 4: Prepare tooling extensions
+
+```bash
+az bicep install
+az extension add --name containerapp --upgrade
+az extension add --name application-insights --upgrade
+az extension add --name log-analytics --upgrade
+```
+
+The `log-analytics` extension is required for fault helpers as well as telemetry
+exercises: it retrieves the non-secret job result after log ingestion.
+
+The deployment caller must be allowed to register resource providers and
+subscription features.
+The pre-provision hook automatically registers required providers, including
+`Microsoft.App`, `Microsoft.ContainerRegistry`, `Microsoft.OperationalInsights`,
+`Microsoft.Insights`, `Microsoft.Sql`, `Microsoft.ManagedIdentity`,
+`Microsoft.KeyVault`, `Microsoft.AlertsManagement`, and `Microsoft.Network`.
+It also registers
+`Microsoft.Network/AllowBringYourOwnPublicIpAddress`, which Azure currently
+requires while creating the VNet-integrated Container Apps managed environment,
+and refreshes `Microsoft.Network` after the feature reaches `Registered`.
+The old token deployment script has been removed; no supporting storage account
+or Azure Container Instance is needed, so `Microsoft.ContainerInstance` and
+`Microsoft.Storage` are no longer required by these hooks. The hook waits up to
+fifteen minutes for each registration phase; no manual registration step is required.
+It matches provider namespaces
+case-insensitively and prints the pending providers and their last reported states
+before each ten-second polling delay. Azure CLI request time can extend the total
+wait. Already registered features are skipped. The explicit
+`Microsoft.Network` provider refresh after the feature check is safe and
+idempotent, and ensures Azure applies a newly registered feature.
+
+### Task 5: Select the environment and supported region
+
+```bash
+azd env new "<your-alias>-workshop"
+azd env set AZURE_LOCATION eastus2
+```
+
+If you already created the environment in Module 00, select it with
+`azd env select "<your-alias>-workshop"` instead. The supported default is
+`eastus2`. SRE Agent uses `Microsoft.App/agents@2025-05-01-preview`, with constrained
+region and subscription availability. Check the
+[Azure SRE Agent documentation](https://learn.microsoft.com/azure/sre-agent/)
+before changing regions. Container Apps availability alone does not establish
+SRE Agent availability.
+
+Before provisioning, the hook validates `AZURE_LOCATION` against the advertised
+supported locations for `Microsoft.App/agents` and fails early for an unsupported
+selection. This check does not override subscription policy or preview access
+restrictions.
+
+!!! warning "Corporate subscription policies"
+    SQL and Key Vault have `publicNetworkAccess: Disabled`, private endpoints, and VNet-linked private DNS. The Consumption workload-profile Container Apps environment uses a delegated subnet. Removing the ARM token deployment script also removes its storage shared-key dependency. This accommodates the inherited policies that deny SQL/vault public access and storage shared keys, not every corporate policy. Basic ACR remains public with Entra authentication and admin/anonymous access off; Azure Monitor ingestion/query and Orders HTTPS ingress remain public. If policy also blocks those paths or preview resources, additional architecture work or an approved environment is required. Do not re-enable public SQL/vault access or shared keys, add bypass tags, or seek exemptions as a workshop workaround.
+
+If you are updating an earlier deployment, read the
+[migration guidance](../03-deploy-infrastructure/index.md#updating-an-earlier-deployment).
+Existing apps or jobs on a non-VNet environment cannot move in place.
 
 ## Validation
 
-Run the readiness check. Every line must print `PASS`.
-
 ```bash
-source .workshop/workshop.env
-
-check() { if eval "$2" >/dev/null 2>&1; then echo "PASS: $1"; else echo "FAIL: $1"; fi }
-
-check "Azure CLI installed"        "az version"
-check "Azure Developer CLI installed" "azd version"
-check "Bicep installed"            "az bicep version"
-check "jq installed"               "jq --version"
-check "Logged in to Azure"         "az account show"
-check "Subscription variable set"  "test -n \"${SUBSCRIPTION_ID}\""
-check "Location variable set"      "test -n \"${LOCATION}\""
-check "Resource group name set"    "test -n \"${RESOURCE_GROUP}\""
-check "containerapp extension"     "az extension show --name containerapp"
-check "Microsoft.App registered"   "az provider show --namespace Microsoft.App --query registrationState -o tsv | grep -q Registered"
-check "Microsoft.Sql registered"   "az provider show --namespace Microsoft.Sql --query registrationState -o tsv | grep -q Registered"
+az account show --output table
+azd version
+python -c "import sys, yaml; print(sys.version); print(yaml.__version__)"
+azd env get-value AZURE_ENV_NAME
+azd env get-value AZURE_LOCATION
 ```
 
 ## Expected results
 
-Eleven `PASS` lines and no `FAIL` lines. Your named `azd` environment contains `AZURE_ENV_NAME` and `AZURE_LOCATION`; Module 03 adds deployment outputs.
-
-If any check fails, resolve it now. The deployment in Module 03 takes 12 to 15 minutes, and discovering a missing provider registration at minute 11 is a poor use of your afternoon.
+Both CLIs are authenticated, tools are available, subscription permissions have
+been checked, and your named environment selects a supported region. The
+`.workshop/` shell exports are generated after deployment; they are not a
+prerequisite to these checks.
 
 ## Knowledge check
 
-??? question "Your account has Contributor on the subscription. Will Module 05 succeed?"
-    No. Contributor can create resources but cannot create role assignments. The agent would deploy without the `Reader` and `Monitoring Reader` grants it needs, and every investigation would return no data. You need Owner, or Contributor plus User Access Administrator.
+??? question "Is Contributor alone sufficient?"
+    No. The deployment creates role assignments as well as resources. Use subscription Owner or Contributor plus User Access Administrator.
 
-??? question "Why does the workshop register `Microsoft.AlertsManagement` separately from `Microsoft.Insights`?"
-    `Microsoft.Insights` provides metric alert rules, action groups, and diagnostic settings. `Microsoft.AlertsManagement` provides the alert processing rules and the unified alerts experience that surfaces fired alerts to Azure SRE Agent. Module 04 uses both.
-
-??? question "You are on a corporate subscription where Azure Policy denies public IP addresses. What is the pragmatic option?"
-    Use a different subscription. The workshop deliberately exposes an ingress endpoint so you can trigger faults over HTTP. Reworking the environment for private endpoints, a jump host, and private DNS is a valid production pattern but it is a different exercise and will consume more time than the workshop itself.
+??? question "Do remote builds require Docker or .NET on the attendee machine?"
+    No. Those build tools run in Azure Container Registry. The attendee needs the CLIs and Python hook dependencies.
 
 ## Next steps
-
-Your environment is ready. Next you study the architecture you are about to deploy, so that the deployment output means something.
 
 [Next: Module 02 - Solution Architecture :material-arrow-right:](../02-solution-architecture/index.md){ .md-button .md-button--primary }
 

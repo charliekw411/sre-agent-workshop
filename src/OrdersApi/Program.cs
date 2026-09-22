@@ -5,6 +5,13 @@ using Microsoft.ApplicationInsights.Extensibility;
 using Microsoft.Data.SqlClient;
 using OrdersApi;
 
+if (args.Contains("--bootstrap", StringComparer.Ordinal))
+{
+    Environment.ExitCode = await DatabaseBootstrap.RunAsync(
+        args.Where(arg => arg != "--bootstrap").ToArray());
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 var serviceName = builder.Configuration["SERVICE_NAME"] ?? "orders-api";
@@ -13,7 +20,6 @@ builder.Services.AddApplicationInsightsTelemetry();
 builder.Services.AddSingleton<ITelemetryInitializer>(new CloudRoleNameInitializer(serviceName));
 builder.Services.AddSingleton<FaultState>();
 builder.Services.AddSingleton<OrdersRepository>();
-builder.Services.AddHostedService<SchemaInitializer>();
 builder.Services.AddProblemDetails();
 
 builder.Services.AddHttpClient("catalog", client =>
@@ -41,7 +47,7 @@ app.MapGet("/", () => Results.Ok(new
 {
     service = serviceName,
     description = "Contoso Order Services - orders API",
-    endpoints = new[] { "/orders", "/health/live", "/health/ready", "/fault/status" }
+    endpoints = new[] { "/orders", "/orders/{orderId}/quantity", "/health/live", "/health/ready", "/fault/status" }
 }));
 
 // ---------------------------------------------------------------------------
@@ -108,6 +114,37 @@ app.MapGet("/orders", async (OrdersRepository repository, CancellationToken canc
 {
     var orders = await repository.GetRecentOrdersAsync(25, cancellationToken);
     return Results.Ok(orders);
+});
+
+app.MapPut("/orders/{orderId:long}/quantity", async (
+    long orderId,
+    OrderQuantityRequest request,
+    OrdersRepository repository,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (request.Quantity is < 1 or > 1000)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["quantity"] = ["quantity must be between 1 and 1000."]
+        });
+    }
+
+    try
+    {
+        return await repository.UpdateQuantityAsync(orderId, request.Quantity, cancellationToken)
+            ? Results.NoContent()
+            : Results.NotFound();
+    }
+    catch (SqlException ex)
+    {
+        logger.LogError(ex, "Order quantity update failed with SQL error {Number}.", ex.Number);
+        return Results.Problem(
+            title: "Order could not be updated",
+            detail: $"The orders database rejected the update (SQL error {ex.Number}).",
+            statusCode: (int)HttpStatusCode.InternalServerError);
+    }
 });
 
 app.MapGet("/storage", async (OrdersRepository repository, CancellationToken cancellationToken) =>
@@ -296,30 +333,4 @@ internal sealed record StorageFaultRequest(int? TargetPercent);
 
 internal sealed record CatalogProduct(string ProductId, string Name, decimal Price);
 
-/// <summary>Creates the orders schema at startup without blocking the health probes.</summary>
-internal sealed class SchemaInitializer(OrdersRepository repository, ILogger<SchemaInitializer> logger)
-    : IHostedService
-{
-    public async Task StartAsync(CancellationToken cancellationToken)
-    {
-        for (var attempt = 1; attempt <= 5; attempt++)
-        {
-            try
-            {
-                await repository.EnsureSchemaAsync(cancellationToken);
-                return;
-            }
-            catch (Exception ex) when (attempt < 5)
-            {
-                logger.LogWarning(ex, "Schema initialization attempt {Attempt} failed. Retrying.", attempt);
-                await Task.Delay(TimeSpan.FromSeconds(5 * attempt), cancellationToken);
-            }
-        }
-
-        // The service still starts. A database that is unreachable is an incident to
-        // investigate, not a reason to crash-loop before telemetry is even emitted.
-        logger.LogError("Schema initialization failed after 5 attempts. Order writes will fail.");
-    }
-
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-}
+internal sealed record OrderQuantityRequest(int Quantity);

@@ -1,7 +1,7 @@
 ---
 title: Contributing
 description: How to contribute to the Azure SRE Agent workshop, including documentation standards, local validation, and pull request expectations.
-ms.date: 2026-09-08
+ms.date: 2026-09-21
 ms.topic: how-to
 keywords:
   - contributing
@@ -37,6 +37,15 @@ make build-docs-website
 
 The build fails on broken internal links and missing assets, which is the same check continuous integration runs.
 
+Deployment hooks also require Python 3.10 or later and PyYAML from `requirements.txt`. Keep
+deployment and agent refresh logic cross-platform in `scripts/workshop.py`; the
+Bash and PowerShell entry points should share that implementation.
+
+Run `python scripts/workshop.py validate` for local manifest validation. The
+shared CLI also exposes `prepare`, `postprovision`, `postdeploy`, `configure-agent`,
+`export`, `fault`, and `fault-result`; `azd` invokes the deployment lifecycle
+commands through its hooks.
+
 Preview your changes while editing:
 
 ```bash
@@ -54,10 +63,28 @@ az bicep lint --file infra/main.bicep
 
 For application changes:
 
+Local application validation needs the .NET 8 SDK. Attendee deployments use ACR
+remote builds and do not need a local .NET SDK or Docker daemon.
+
 ```bash
 dotnet build src/OrdersApi/OrdersApi.csproj --configuration Release
 dotnet build src/CatalogApi/CatalogApi.csproj --configuration Release
 ```
+
+For deployment documentation, retain the single `azd up` path after `az login`
+and `azd auth login`: `provision`, `package`, then `deploy --all`. The
+`postprovision` hook runs private-vault token initialization before attaching the
+Orders secret reference and enabling faults; `postdeploy` runs SQL bootstrap,
+a smoke request, then version-controlled agent synchronization and indexing.
+Keep SQL and Key Vault public access disabled, with private endpoints and
+VNet-linked DNS. Fault helpers start a managed-identity job through ARM and
+retrieve only its non-secret result through Log Analytics, never the credential
+on the attendee machine. Document delayed-result retries with `fault-result`,
+not reinjection. Do not introduce manual portal configuration, runtime role
+grants, SQL credentials, token-bearing shell examples, or policy exemptions and
+public-access/shared-key workarounds. Keep the API and permission record in
+[Module 05](docs/sre/05-configure-sre-agent/index.md) aligned with the implementation.
+Report local validation separately from live Azure validation.
 
 ## Documentation standards
 

@@ -1,0 +1,17 @@
+version: 1
+instructions:
+  - name: workshop-architecture
+    source: instructions/architecture.md
+  - name: workshop-investigation-principles
+    source: instructions/investigation-principles.md
+documents:
+  - name: workshop-architecture.md
+    source: instructions/architecture.md
+  - name: workshop-investigation-principles.md
+    source: instructions/investigation-principles.md
+  - name: workshop-saturation.md
+    source: runbooks/saturation.md
+  - name: workshop-dependency-failure.md
+    source: runbooks/dependency-failure.md
+  - name: workshop-capacity-exhaustion.md
+    source: runbooks/capacity-exhaustion.md
