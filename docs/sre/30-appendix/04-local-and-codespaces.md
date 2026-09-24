@@ -1,22 +1,15 @@
 ---
 title: Running Locally or in Codespaces
-description: Preview documentation, develop the sample services, and deploy the workshop from a local or browser-hosted terminal.
-ms.date: 2026-09-21
+description: Preview the documentation, run the SQLite Orders API locally, or deploy the VM workshop from local, Codespaces, or Cloud Shell terminals.
+ms.date: 2026-09-24
 ms.topic: how-to
 keywords:
   - local development
-  - codespaces
-  - cloud shell
+  - github codespaces
+  - azure cloud shell
   - mkdocs
-estimated_reading_time: 7
+estimated_reading_time: 9
 ---
-
-## Overview
-
-Local terminals, Codespaces, and Azure Cloud Shell all use the same `azd up`
-deployment. None needs a local Docker daemon or .NET SDK for deployment: images
-build remotely in Azure Container Registry. All need Azure CLI, `azd` 1.18 or
-later, Python 3.10 or later, and PyYAML.
 
 ## Preview the documentation site
 
@@ -40,109 +33,128 @@ The site uses MkDocs and Material for MkDocs.
     python -m mkdocs serve
     ```
 
-Open [http://localhost:8000](http://localhost:8000). Changes under `docs/` reload
-automatically. Validate documentation using the existing strict build:
+Open [http://localhost:8000](http://localhost:8000). Validate navigation, links,
+Markdown, and snippets with:
 
 ```bash
 python -m mkdocs build --strict --site-dir dist
 ```
 
-The Makefile's `make build-docs-website` target installs the same requirements
-and runs this build. `make serve` installs them and starts the preview.
+`make serve` and `make build-docs-website` run equivalent commands on systems
+with GNU Make.
 
-## Local application development
+## Run the Orders API locally
 
-Local source development, unlike attendee deployment, requires the .NET 8 SDK.
-The catalog service can run independently:
+Local application development requires the .NET 8 SDK. It does not reproduce
+the Azure VM, managed disk, `systemd`, Run Command, Azure Monitor, or SRE Agent.
+
+Create a local SQLite database outside the source project:
+
+=== "Bash"
+
+    ```bash
+    mkdir -p .local
+    export ConnectionStrings__OrdersDb="Data Source=$(pwd)/.local/orders.db"
+    dotnet run --project src/OrdersApi -- --bootstrap
+    dotnet run --project src/OrdersApi --urls http://localhost:8080
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    New-Item -ItemType Directory -Force .local | Out-Null
+    $database = Join-Path (Resolve-Path .) '.local\orders.db'
+    $env:ConnectionStrings__OrdersDb = "Data Source=$database"
+    dotnet run --project src/OrdersApi -- --bootstrap
+    dotnet run --project src/OrdersApi --urls http://localhost:8080
+    ```
+
+In another terminal:
 
 ```bash
-cd src/CatalogApi
-dotnet run --urls http://localhost:8081
+curl --silent --fail http://localhost:8080/orders
+curl --silent --fail \
+  --request POST http://localhost:8080/orders \
+  --header 'Content-Type: application/json' \
+  --data '{"customerId":"local","productId":"SKU-1001","quantity":1}'
 ```
 
-The full Orders API path depends on an Entra-only Azure SQL database, its contained
-runtime user, and object-level grants initialized by the separate managed identity
-job. SQL public network access is disabled; the deployed apps and bootstrap job
-reach it through a private endpoint and VNet-linked DNS. A standalone local Orders
-process does not gain that private network access from an Azure CLI login.
-Use `azd up` for the integrated workshop rather than a local SQL administrator
-connection string or public firewall workaround. Do not reuse the bootstrap
-identity as an application identity.
+Do not run `scripts/vm/faults.py` locally. It is designed for root execution
+through authenticated Run Command and refuses unexpected mounts.
 
-Fault operations against the deployed app use `./scripts/inject-fault.sh` or
-`./scripts/inject-fault.ps1` with the same commands and defaults. The common Python
-helper starts and waits for `workshop-fault-client` through ARM. The job retrieves
-the credential inside the VNet; your laptop, Codespace, or Cloud Shell never
-retrieves it and needs no VPN or private-vault data access. The helper uses the
-Azure CLI `log-analytics` extension to retrieve only the non-secret correlated
-JSON result. Do not save credentials in local development settings.
+## Deploy from GitHub Codespaces
 
-Results can take up to five minutes to arrive after job success, and status is
-a job-captured snapshot rather than live state at log arrival. If retrieval
-times out, use `python scripts/workshop.py fault-result <request-id>` with the
-reported 32-character ID to retry only read-only log retrieval. Do not reinject.
-Queries cover the last hour (`PT1H`), subject to log availability policies.
-See [fault helper results](01-variables.md#fault-helper-results-and-retry).
+Codespaces provides a browser-hosted terminal. Verify rather than assume that the
+chosen image contains every prerequisite:
 
-## GitHub Codespaces
+```bash
+az version
+azd version
+python --version
+ssh-keygen -V 2>&1 | head -1 || true
+python -m pip install -r requirements.txt
+```
 
-Codespaces provides a browser-hosted terminal. Verify tool availability rather
-than assuming the selected image includes all prerequisites.
-
-1. Open the repository on GitHub.
-2. Select **Code**, **Codespaces**, then **Create codespace on main**.
-3. Complete [Module 01](../01-prerequisites/index.md), including dependencies and
-   both authentication contexts:
+Authenticate using the device flow when prompted:
 
 ```bash
 az login --use-device-code
+az account set --subscription "<subscription-id>"
 azd auth login
-azd version
-python -c "import yaml"
 ```
 
-Then select your named environment and run `azd up`. When running the MkDocs
-preview, forward port 8000 through Codespaces.
+Then follow Module 01. Forward port 8000 only when previewing MkDocs. The Azure
+Orders API remains on its own public Azure DNS endpoint.
 
-## Azure Cloud Shell
+Codespaces can suspend an inactive terminal. Do not rely on it to keep the
+load-generator process alive while you leave the browser. The guest faults
+remain bounded even if the client disconnects.
 
-Open [Azure Cloud Shell](https://shell.azure.com), select Bash, and clone the
-repository. Check tool versions and install the existing Python dependencies in
-a virtual environment as shown above.
+## Deploy from Azure Cloud Shell
+
+Open [Azure Cloud Shell](https://shell.azure.com), choose Bash, and clone the
+repository:
 
 ```bash
 git clone https://github.com/charliekw411/sre-agent-workshop.git
 cd sre-agent-workshop
-az login
-azd auth login
+az account show --output table
 azd version
+python -m pip install -r requirements.txt
 ```
 
-Cloud Shell authentication does not remove the need to check both CLIs. Use the
-same tenant and subscription and complete the permissions checks in Module 01.
-Cloud Shell sessions can time out and interrupt the long-running load generator,
-so keep its terminal active or run the generator from a local terminal.
+Install or update azd if the reported version is earlier than 1.18. Cloud Shell
+already has an Azure CLI login, but `azd auth login` is still required.
 
-## Bash and PowerShell exports
+Cloud Shell storage is persistent only when configured for your session. Copy
+workshop notes somewhere durable before cleanup or session reset.
+
+## Bash and PowerShell helper parity
 
 After deployment:
 
-```bash
-source .workshop/workshop.env
-./scripts/inject-fault.sh status
-```
+=== "Bash"
 
-```powershell
-. ./.workshop/workshop.ps1
-./scripts/inject-fault.ps1 status
-```
+    ```bash
+    source .workshop/workshop.env
+    ./scripts/inject-fault.sh status
+    ```
 
-The generated files contain allowlisted non-secret identifiers and endpoints.
-PowerShell accesses these as `$env:RESOURCE_GROUP`, for example. Agent content
-refresh uses the same cross-platform command:
-`python scripts/workshop.py configure-agent`.
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+    ./scripts/inject-fault.ps1 status
+    ```
+
+Both wrappers call `scripts/workshop.py` and use authenticated Azure VM Run
+Command. The API URL is available as `SERVICE_ORDERS_API_ENDPOINT_URL` in both
+shells.
+
+The provided sustained load generator is Bash. PowerShell alternatives are
+included in the modules where traffic is required.
 
 <div class="sre-nav" markdown>
 [:material-arrow-left: Cost Management](03-cost-management.md)
-[Homepage :material-arrow-right:](../../index.md)
+[Workshop home :material-arrow-right:](../../index.md)
 </div>

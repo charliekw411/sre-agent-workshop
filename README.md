@@ -14,7 +14,9 @@ keywords:
 
 [![Deploy Workshop Site](https://github.com/charliekw411/sre-agent-workshop/actions/workflows/deploy-docs.yml/badge.svg)](https://github.com/charliekw411/sre-agent-workshop/actions/workflows/deploy-docs.yml)
 
-Deploy a realistic Azure workload, break it three different ways on purpose, and use Azure SRE Agent to detect, investigate, and explain each failure. Fifteen modules, roughly five hours, no instructor required.
+Deploy a realistic single-VM Azure workload, visualize its telemetry, trigger two
+safe incidents, and use Azure SRE Agent to investigate the resulting alerts.
+Seven modules, roughly four hours, no instructor required.
 
 **[Start the workshop](https://charliekw411.github.io/sre-agent-workshop/)**
 
@@ -23,28 +25,20 @@ Deploy a realistic Azure workload, break it three different ways on purpose, and
 * Configure native Azure monitoring so incidents are detectable without third-party tooling.
 * Drive an Azure SRE Agent investigation from alert to diagnosis to mitigation proposal.
 * Read and critique an AI-generated root cause analysis instead of accepting it.
-* Improve agent accuracy with architectural context and investigation runbooks.
-* Design agent topologies for systems owned by more than one team.
+* Connect endpoint activity to visual VM, Application Insights, and Log Analytics charts.
+* Turn verified incident evidence into specific monitoring and response improvements.
 
 ## Learning path
 
-| Module | Title                                | Duration |
-|--------|--------------------------------------|----------|
-| 00     | Workshop Introduction                | 40 min   |
-| 01     | Prerequisites                        | 20 min   |
-| 02     | Solution Architecture                | 25 min   |
-| 03     | Deploy Azure Infrastructure          | 30 min   |
-| 04     | Enable Native Azure Monitoring       | 30 min   |
-| 05     | Configure Azure SRE Agent            | 25 min   |
-| 06     | Generate High CPU Incident           | 20 min   |
-| 07     | Investigate the High CPU Incident    | 30 min   |
-| 08     | Generate HTTP 500 Incident           | 20 min   |
-| 09     | Investigate the HTTP 500 Incident    | 35 min   |
-| 10     | Generate Disk Full Incident          | 25 min   |
-| 11     | Perform Root Cause Analysis          | 35 min   |
-| 12     | Improve Agent Instructions           | 35 min   |
-| 13     | Multi-Agent Investigation Patterns   | 30 min   |
-| 14     | Cleanup                              | 10 min   |
+| Module | Title                                  | Duration |
+|--------|----------------------------------------|----------|
+| 01     | Deploy and Validate the Workshop       | 45 min   |
+| 02     | Observe a Healthy Baseline             | 30 min   |
+| 03     | Operate the SRE Agent Response Plan    | 25 min   |
+| 04     | Respond to High CPU                    | 40 min   |
+| 05     | Respond to Data-Disk Pressure          | 40 min   |
+| 06     | Review and Improve the Response        | 40 min   |
+| 07     | Preserve Evidence and Clean Up         | 20 min   |
 
 ## What gets deployed
 
@@ -57,26 +51,26 @@ A single-VM deployment of the Orders API:
 * Log Analytics, Application Insights, Azure Monitor Agent, a Data Collection Rule, and CPU, disk, and request-error alerts
 * A read-only Azure SRE Agent with Application Insights and Log Analytics connectors
 
-Catalog API, Container Apps, ACR, Azure SQL, Key Vault, private endpoints, private
-DNS zones, and container jobs are no longer deployed. VM administration and
-bounded CPU/disk faults use authenticated Azure VM Run Command.
+Earlier workshop environments use an incompatible architecture and are not
+migrated. VM administration and bounded CPU/disk faults use authenticated Azure
+VM Run Command.
 
 This is a disposable workshop workload, not a production architecture: the public
 API is unauthenticated HTTP, there is no high availability or database backup,
 and only synthetic data should be used. Azure policy must permit the VM public
 endpoint and outbound access to Ubuntu packages, NuGet, and Azure monitoring.
 No policy exemptions are created. The VM, disks, public IP, monitoring, and SRE
-Agent incur charges until removed; old Container Apps cost estimates do not apply.
+Agent incur charges until removed; estimates from earlier workshop versions do
+not apply.
 
-The curriculum in `docs/sre/` and instructional content in `agent/` have not yet
-been migrated. Deployment does not upload those legacy instructions to the new
-SRE Agent. Use the deployment and validation commands below for this architecture.
+The curriculum in `docs/sre/` follows this architecture and uses the deployed
+Azure Monitor response plan. Deployment does not upload the legacy instructional
+content under `agent/`.
 
 ## Repository layout
 
 ```text
 .
-├── agent/              Agent instructions and investigation runbooks
 ├── azure.yaml          Azure Developer CLI project definition
 ├── docs/               Workshop content published to GitHub Pages
 ├── infra/              Bicep templates and the azd deployment entry point
@@ -101,7 +95,7 @@ Open [http://localhost:8000](http://localhost:8000).
 * Subscription `Owner`, or `Contributor` plus `User Access Administrator`, to create the resource group and all role assignments.
 * Azure Developer CLI 1.18 or later.
 * Azure CLI 2.60 or later. Deployment does not require Azure CLI extensions.
-* Bash or PowerShell 7, plus OpenSSH `ssh-keygen`.
+* Bash with `curl` and `jq`, or PowerShell 7, plus OpenSSH `ssh-keygen`.
 * Python 3.10 or later with PyYAML (`python -m pip install -r requirements.txt`).
 * Permission to execute VM Run Command and query workspace logs for live validation.
 
@@ -124,7 +118,7 @@ azd env set AZURE_LOCATION australiaeast
 azd up
 ```
 
-Start with a new environment, not a prior Container Apps deployment. `preup`
+Start with a new environment, not a deployment from an earlier workshop version. `preup`
 checks identity, registers required providers, and generates the provisioning
 public key; its unused private key is discarded. The `up` workflow provisions
 Bicep resources, then `postprovision` mounts the managed disk, publishes the API,
@@ -235,10 +229,6 @@ space. Run them only against this disposable environment. The public API exposes
 sample order operations, never destructive fault operations.
 
 Do not copy this code into anything that serves real traffic.
-
-## Related
-
-This workshop is a sister project to the [Azure Container Apps .NET Workshop](https://azure.github.io/aca-dotnet-workshop/), which teaches you to build the platform. This one teaches you what to do when it misbehaves.
 
 ## Contributing
 

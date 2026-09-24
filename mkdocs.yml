@@ -8,25 +8,13 @@ edit_uri: edit/main/docs
 
 nav:
   - Homepage: index.md
-  - Workshop Introduction:
-      - sre/00-workshop-intro/index.md
-      - What Is Azure SRE Agent: sre/00-workshop-intro/1-what-is-sre-agent.md
-      - Incident Response Concepts: sre/00-workshop-intro/2-incident-response-concepts.md
-      - How This Workshop Works: sre/00-workshop-intro/3-how-this-workshop-works.md
-  - Module 01 - Prerequisites: sre/01-prerequisites/index.md
-  - Module 02 - Solution Architecture: sre/02-solution-architecture/index.md
-  - Module 03 - Deploy Azure Infrastructure: sre/03-deploy-infrastructure/index.md
-  - Module 04 - Enable Native Azure Monitoring: sre/04-enable-monitoring/index.md
-  - Module 05 - Configure Azure SRE Agent: sre/05-configure-sre-agent/index.md
-  - Module 06 - Generate High CPU Incident: sre/06-incident-high-cpu/index.md
-  - Module 07 - Investigate the High CPU Incident: sre/07-investigate-high-cpu/index.md
-  - Module 08 - Generate HTTP 500 Incident: sre/08-incident-http-500/index.md
-  - Module 09 - Investigate the HTTP 500 Incident: sre/09-investigate-http-500/index.md
-  - Module 10 - Generate Disk Full Incident: sre/10-incident-disk-full/index.md
-  - Module 11 - Perform Root Cause Analysis: sre/11-root-cause-analysis/index.md
-  - Module 12 - Improve Agent Instructions: sre/12-agent-instructions/index.md
-  - Module 13 - Multi-Agent Investigation Patterns: sre/13-multi-agent-patterns/index.md
-  - Module 14 - Cleanup: sre/14-cleanup/index.md
+  - Module 01 - Deploy and Validate: sre/01-deploy-and-validate/index.md
+  - Module 02 - Observe a Healthy Baseline: sre/02-observe-healthy-baseline/index.md
+  - Module 03 - Operate the Response Plan: sre/03-operate-response-plan/index.md
+  - Module 04 - Respond to High CPU: sre/04-incident-high-cpu/index.md
+  - Module 05 - Respond to Data-Disk Pressure: sre/05-incident-data-disk/index.md
+  - Module 06 - Review and Improve: sre/06-review-and-improve/index.md
+  - Module 07 - Preserve Evidence and Clean Up: sre/07-cleanup/index.md
   - About The Authors: sre/29-about-the-authors/index.md
   - Appendix:
       - Workshop Variables: sre/30-appendix/01-variables.md

@@ -1,132 +1,131 @@
 ---
 title: Cost Management
-description: Estimated cost of the Azure SRE Agent workshop environment, the main cost drivers, and how to pause the environment between sessions.
-ms.date: 2026-09-21
-ms.topic: how-to
+description: Understand, monitor, reduce, and stop the costs of the single-VM Azure SRE Agent workshop.
+ms.date: 2026-09-24
+ms.topic: concept
 keywords:
-  - cost management
-  - azure pricing
-  - budget
-estimated_reading_time: 6
+  - azure cost management
+  - virtual machine costs
+  - azure monitor costs
+estimated_reading_time: 8
 ---
 
 ## Overview
 
-The workshop environment is deliberately small, but it is not free. Private
-endpoint hours continue to accrue while you are away, and Log Analytics ingestion
-from a load generator left running overnight can dominate the bill.
+The workshop is disposable but not free. Charges continue until resources are
+deleted. Prices vary by subscription, region, currency, negotiated agreement,
+and Azure SRE Agent offer, so use the Azure pricing calculator and Cost
+Management rather than treating a workshop estimate as a quote.
 
-The original application estimates below are approximate planning figures, not
-current regional quotes. The new private-endpoint figure uses an illustrative
-rate, not a verified price for your region. Taxes are excluded. Use the
-[Azure pricing calculator](https://azure.microsoft.com/pricing/calculator/) for
-your region and agreement.
+## Cost drivers
 
-## Estimated cost
+| Resource | Cost characteristic |
+| --- | --- |
+| Ubuntu VM | Compute billed while allocated; default is `Standard_D2as_v5` |
+| OS and data disks | Storage billed while disks exist, including while VM is deallocated |
+| Standard public IP | Can incur hourly charges while retained |
+| Log Analytics | Ingestion and retention; workshop daily cap is 1 GB |
+| Application Insights | Workspace-based telemetry contributes to Log Analytics ingestion |
+| Azure Monitor alerts | Scheduled-query alert rules can incur evaluation charges |
+| Azure SRE Agent | Current agent and model pricing; always-on charges can apply |
+| Network egress | Usually small for the workshop but not guaranteed to be zero |
 
-| Resource                       | Configuration                        | Approximate cost per day |
-|--------------------------------|--------------------------------------|--------------------------|
-| Azure SQL Database             | Standard S0, 1 GB max size           | 0.50 USD                 |
-| Container Apps                 | Two apps, 0.75 vCPU total, always on | 0.80 USD                 |
-| Log Analytics                  | Ingestion and 30-day retention       | 0.30 to 2.00 USD         |
-| Application Insights           | Workspace-based, included above      | Included                 |
-| Container registry             | Basic tier                           | 0.17 USD                 |
-| Private Endpoints              | Two, one for SQL and one for Key Vault | About 0.48 USD for endpoint hours at an illustrative 0.01 USD/hour per endpoint, plus data processing |
-| Private DNS                    | Two VNet-linked zones and DNS queries | Region- and usage-dependent |
-| Container Apps jobs            | Short on-demand SQL bootstrap, token initialization, and fault-client executions | Execution- and duration-dependent |
-| Key Vault                      | Standard tier, managed-identity secret operations | Usage-dependent |
-| Azure Monitor alert rules      | Five metric, two log                 | 0.20 USD                 |
-| Managed identity               | User-assigned                        | Free                     |
-| Azure SRE Agent                | See current product pricing          | Varies                   |
+The 8 GiB data-disk pressure exercise allocates a temporary local file; it does
+not change the provisioned managed-disk size or storage tier.
 
-The original 2 to 4 US dollars per day estimate excluded Azure SRE Agent and
-predated private networking and the token/fault jobs. It is not a complete
-estimate for this design. Budget above that baseline for two billable Private
-Endpoints, data processing, private DNS, and short on-demand job executions;
-regional rates and actual usage vary. The illustrative endpoint-hours subtotal
-alone adds about 0.48 US dollars per full day, even if the apps scale to zero.
-Check current SRE Agent pricing separately.
+## Free Account considerations
 
-This scope retains public Basic ACR remote builds and public Azure Monitor
-ingestion/query and Orders ingress. It adds no Premium ACR, dedicated build pool,
-NAT gateway, or VPN. If policy also requires those public paths to become private,
-the extra architecture and costs need separate planning.
+The initial Free Account credit can pay for eligible paid services during its
+validity period. It does not make `Standard_D2as_v5` a monthly-free VM.
+One-GiB monthly-free VM sizes are not validated for the on-VM .NET build plus
+Azure Monitor Agent, and ARM64 sizes are incompatible with this x64 deployment.
 
-!!! warning "Log ingestion is the variable that surprises people"
-    The load generator in Module 04 sends five requests per second. Each produces request telemetry, dependency telemetry, and console log lines across two services. Left running for a week that is several gigabytes of ingestion. Stop the generator when you stop working.
+Preflight reports quota and SKU constraints. It never upgrades a subscription,
+removes a spending limit, requests quota, or silently substitutes a region or VM
+size.
 
-## Reducing cost between sessions
+The 1 GB/day Log Analytics setting and 500 active-agent-unit SRE Agent setting are
+service safeguards, not total monetary caps. Review current Azure documentation
+before running the workshop in a constrained subscription.
 
-If you are running the workshop across multiple sessions, scaling the apps down
-can reduce compute charges without deleting data. It does not pause SQL, registry,
-Private Endpoint, or private DNS charges. Jobs run on demand rather than
-continuously, but starting them and ingesting their logs still adds usage.
+## Monitor actual cost
 
-```bash
-source .workshop/workshop.env
+In the Azure portal:
 
-# Stop the load generator first (Ctrl+C in its terminal), then scale the apps to zero.
-az containerapp update --name orders-api  --resource-group "${RESOURCE_GROUP}" --min-replicas 0 --max-replicas 1 --output none
-az containerapp update --name catalog-api --resource-group "${RESOURCE_GROUP}" --min-replicas 0 --max-replicas 1 --output none
+1. Open **Cost Management + Billing**.
+2. Select **Cost analysis**.
+3. Filter to the workshop subscription and resource group.
+4. Group by **Resource type** or **Resource**.
+5. Use a date range that includes the workshop.
 
-echo "Container apps will scale to zero when idle."
-```
+Cost data can lag by 8 to 24 hours.
 
-Restore before your next session.
-
-```bash
-az containerapp update --name orders-api  --resource-group "${RESOURCE_GROUP}" --min-replicas 1 --max-replicas 1 --output none
-az containerapp update --name catalog-api --resource-group "${RESOURCE_GROUP}" --min-replicas 1 --max-replicas 1 --output none
-```
-
-!!! important "Restore the replica settings before Module 06"
-    A scale range of 0 to 1 changes the behavior of the CPU incident. Set both apps back to a fixed single replica before continuing, or the saturation signal will be intermittent and the investigation will not match the documentation.
-
-Reduce Log Analytics retention if you are pausing for more than a few days.
-
-```bash
-az monitor log-analytics workspace update \
-  --resource-group "${RESOURCE_GROUP}" \
-  --workspace-name "${LOG_ANALYTICS_NAME}" \
-  --retention-time 30 \
-  --output none
-```
-
-Thirty days is the minimum billed retention, and it is already the default in this workshop.
-
-## Setting a budget
-
-Create a budget with an alert so a forgotten environment cannot quietly accumulate cost.
+If your subscription exposes consumption data through the CLI:
 
 ```bash
 source .workshop/workshop.env
-
-az consumption budget create \
-  --budget-name "budget-sre-workshop-${WORKSHOP_SUFFIX}" \
-  --amount 25 \
-  --category Cost \
-  --time-grain Monthly \
-  --start-date "$(date -u +%Y-%m-01)" \
-  --end-date "$(date -u -d '+3 months' +%Y-%m-01 2>/dev/null || date -u -v+3m +%Y-%m-01)" \
-  --resource-group "${RESOURCE_GROUP}" \
-  --output none 2>/dev/null || echo "Budget creation is not supported on this subscription type. Use Cost Management in the portal."
-```
-
-## Checking actual spend
-
-```bash
 az consumption usage list \
-  --start-date "$(date -u -d '7 days ago' +%Y-%m-%d 2>/dev/null || date -u -v-7d +%Y-%m-%d)" \
-  --end-date "$(date -u +%Y-%m-%d)" \
-  --query "[?contains(instanceName, '${WORKSHOP_SUFFIX}')].{Resource:instanceName, Cost:pretaxCost, Currency:currency}" \
+  --start-date "<yyyy-mm-dd>" \
+  --end-date "<yyyy-mm-dd>" \
+  --query "[?resourceGroup=='${RESOURCE_GROUP}'].{Resource:instanceName, Cost:pretaxCost, Currency:currency}" \
   --output table
 ```
 
-Billing data lags by up to 24 hours. An empty result the same day is normal.
+Some sponsored, enterprise, or lab subscriptions do not expose this command to
+the attendee.
 
-## The cheapest option
+## Reduce cost between sessions
 
-Finish the workshop, then run [Module 14](../14-cleanup/index.md). A deleted resource group costs nothing, and the artifacts worth keeping are text files.
+The only complete cost stop is Module 07 deletion. For a short pause, deallocate
+the VM:
+
+```bash
+source .workshop/workshop.env
+az vm deallocate --resource-group "${RESOURCE_GROUP}" --name "${VM_NAME}"
+```
+
+Deallocation stops VM compute charges but does not remove disk, public-IP,
+monitoring, alert, or SRE Agent costs. The public API and telemetry are
+unavailable while the VM is stopped.
+
+Restart and revalidate before continuing:
+
+```bash
+az vm start --resource-group "${RESOURCE_GROUP}" --name "${VM_NAME}"
+python scripts/workshop.py smoke
+python scripts/workshop.py inspect
+python scripts/workshop.py telemetry
+```
+
+Do not deallocate during a fault exercise or while waiting for its alert.
+
+## Configure a budget
+
+Create a subscription or resource-group budget before a class:
+
+1. Open **Cost Management** > **Budgets**.
+2. Choose the workshop subscription or resource-group scope.
+3. Set a realistic amount and end date.
+4. Add notifications below, at, and above the expected spend.
+
+A budget notifies; it does not automatically stop or delete resources.
+
+## Stop all workshop costs
+
+```bash
+source .workshop/workshop.env
+python scripts/workshop.py fault reset
+azd down --purge
+```
+
+Verify the group is gone:
+
+```bash
+az group exists --name "${RESOURCE_GROUP}"
+```
+
+The expected result is `false`. Charges incurred before deletion can appear in
+Cost Management later because billing records are delayed.
 
 <div class="sre-nav" markdown>
 [:material-arrow-left: Troubleshooting](02-troubleshooting.md)
