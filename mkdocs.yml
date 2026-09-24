@@ -9,12 +9,11 @@ edit_uri: edit/main/docs
 nav:
   - Homepage: index.md
   - Module 01 - Deploy and Validate: sre/01-deploy-and-validate/index.md
-  - Module 02 - Observe a Healthy Baseline: sre/02-observe-healthy-baseline/index.md
-  - Module 03 - Operate the Response Plan: sre/03-operate-response-plan/index.md
-  - Module 04 - Respond to High CPU: sre/04-incident-high-cpu/index.md
-  - Module 05 - Respond to Data-Disk Pressure: sre/05-incident-data-disk/index.md
-  - Module 06 - Review and Improve: sre/06-review-and-improve/index.md
-  - Module 07 - Preserve Evidence and Clean Up: sre/07-cleanup/index.md
+  - Module 02 - Operate the Response Plan: sre/02-operate-response-plan/index.md
+  - Module 03 - Respond to High CPU: sre/03-incident-high-cpu/index.md
+  - Module 04 - Respond to Data-Disk Pressure: sre/04-incident-data-disk/index.md
+  - Module 05 - Review and Improve: sre/05-review-and-improve/index.md
+  - Module 06 - Preserve Evidence and Clean Up: sre/06-cleanup/index.md
   - About The Authors: sre/29-about-the-authors/index.md
   - Appendix:
       - Workshop Variables: sre/30-appendix/01-variables.md

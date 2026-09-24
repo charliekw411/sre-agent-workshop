@@ -1,5 +1,5 @@
 ---
-title: Module 03 - Operate the SRE Agent Response Plan
+title: Module 02 - Operate the SRE Agent Response Plan
 description: Verify the read-only Azure SRE Agent, inspect its Azure Monitor response plan, and rehearse the human review workflow before an alert fires.
 ms.date: 2026-09-24
 ms.topic: how-to
@@ -13,7 +13,7 @@ estimated_reading_time: 16
 
 <ul class="sre-meta">
 <li class="duration">Estimated time: 25 minutes</li>
-<li>Module 03</li>
+<li>Module 02</li>
 <li>Hands-on</li>
 </ul>
 
@@ -42,7 +42,7 @@ fault commands, restart the VM, change the API, or delete resources.
 * Verify the enabled Sev1/Sev2 response plan and Review mode.
 * Explain the identities and least-privilege boundary.
 * Inspect the alert rules that feed the response plan.
-* Rehearse a baseline agent investigation and verify it visually.
+* Rehearse a healthy-state agent assessment and verify it visually.
 
 ## Response workflow
 
@@ -200,7 +200,7 @@ endpoint that fabricates errors.
 ### Task 5: Tie a healthy request to visual evidence
 
 Open the workshop VM's **Monitoring** > **Metrics** blade and configure the
-**Percentage CPU** chart exactly as in Module 02. Then call:
+**Percentage CPU** chart exactly as in Module 01. Then call:
 
 === "Bash"
 
@@ -229,7 +229,7 @@ operations are visible for the same time range.
 The purpose is not to create an alert. It is to rehearse the evidence path you
 will use after the response plan opens an investigation.
 
-### Task 6: Ask the agent for a baseline assessment
+### Task 6: Ask the agent for a healthy-state assessment
 
 Open the agent's chat experience and enter:
 
@@ -244,19 +244,20 @@ Then ask:
 
 ```text
 For the last 30 minutes, summarize Orders API request volume, success rate, P95
-duration, VM CPU, and /var/lib/orders free space. Cite the metric or table behind
-each value. Do not propose a change unless you first identify an active incident.
+duration, and VM CPU. State the current Azure Monitor alert state. Cite the
+metric or table behind each value. Do not propose a change unless you first
+identify an active incident.
 ```
 
 Compare the answer with:
 
 * The VM **Percentage CPU** chart.
 * Application Insights **Performance**.
-* The Log Analytics disk-free-space chart from Module 02.
 * Azure Monitor **Alerts**.
 
-Save the response to `.workshop/notes/agent-baseline.md`. Mark unsupported or
-incorrect claims now; the same verification discipline applies during incidents.
+Save the response to `.workshop/notes/agent-healthy-state.md`. Mark unsupported
+or incorrect claims now; the same verification discipline applies during
+incidents.
 
 ## Validation
 
@@ -265,7 +266,7 @@ incorrect claims now; the same verification discipline applies during incidents.
 * [x] The three alert rules are enabled.
 * [x] The agent identities have no workload write role.
 * [x] A healthy endpoint call appears in the VM and Application Insights views.
-* [x] The agent baseline agrees with independently viewed evidence.
+* [x] The agent's healthy-state assessment agrees with independently viewed evidence.
 
 ## Knowledge check
 
@@ -280,9 +281,9 @@ incorrect claims now; the same verification discipline applies during incidents.
 
 ## Next steps
 
-[Next: Module 04 - Respond to High CPU :material-arrow-right:](../04-incident-high-cpu/index.md){ .md-button .md-button--primary }
+[Next: Module 03 - Respond to High CPU :material-arrow-right:](../03-incident-high-cpu/index.md){ .md-button .md-button--primary }
 
 <div class="sre-nav" markdown>
-[:material-arrow-left: Module 02 - Observe a Healthy Baseline](../02-observe-healthy-baseline/index.md)
-[Module 04 - Respond to High CPU :material-arrow-right:](../04-incident-high-cpu/index.md)
+[:material-arrow-left: Module 01 - Deploy and Validate](../01-deploy-and-validate/index.md)
+[Module 03 - Respond to High CPU :material-arrow-right:](../03-incident-high-cpu/index.md)
 </div>

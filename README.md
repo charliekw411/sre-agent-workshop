@@ -16,7 +16,7 @@ keywords:
 
 Deploy a realistic single-VM Azure workload, visualize its telemetry, trigger two
 safe incidents, and use Azure SRE Agent to investigate the resulting alerts.
-Seven modules, roughly four hours, no instructor required.
+Six modules, roughly three and a half hours, no instructor required.
 
 **[Start the workshop](https://charliekw411.github.io/sre-agent-workshop/)**
 
@@ -33,12 +33,11 @@ Seven modules, roughly four hours, no instructor required.
 | Module | Title                                  | Duration |
 |--------|----------------------------------------|----------|
 | 01     | Deploy and Validate the Workshop       | 45 min   |
-| 02     | Observe a Healthy Baseline             | 30 min   |
-| 03     | Operate the SRE Agent Response Plan    | 25 min   |
-| 04     | Respond to High CPU                    | 40 min   |
-| 05     | Respond to Data-Disk Pressure          | 40 min   |
-| 06     | Review and Improve the Response        | 40 min   |
-| 07     | Preserve Evidence and Clean Up         | 20 min   |
+| 02     | Operate the SRE Agent Response Plan    | 25 min   |
+| 03     | Respond to High CPU                    | 40 min   |
+| 04     | Respond to Data-Disk Pressure          | 40 min   |
+| 05     | Review and Improve the Response        | 40 min   |
+| 06     | Preserve Evidence and Clean Up         | 20 min   |
 
 ## What gets deployed
 

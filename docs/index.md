@@ -40,8 +40,8 @@ Run Command.
 
 * Prove that the application runs under systemd and persists SQLite data across
   a VM restart.
-* Generate endpoint traffic and view the result in the VM Metrics blade,
-  Application Insights, and Log Analytics.
+* Confirm that healthy endpoint activity reaches VM Metrics and Application
+  Insights before investigating incidents.
 * Follow Azure Monitor alerts into an SRE Agent response-plan investigation.
 * Verify agent findings instead of accepting plausible prose.
 * Distinguish customer impact from a leading capacity warning.
@@ -49,46 +49,45 @@ Run Command.
 
 ## Learning path
 
-The seven modules follow one operator journey. Every module includes a portal
+The six modules follow one operator journey. Every module includes a portal
 checkpoint that ties an action against the API or VM to a visual telemetry view.
 
 ```mermaid
 flowchart LR
-    M1[01 Deploy and validate] --> M2[02 Observe healthy baseline]
-    M2 --> M3[03 Operate response plan]
-    M3 --> M4[04 Respond to high CPU]
-    M4 --> M5[05 Respond to data-disk pressure]
-    M5 --> M6[06 Review and improve]
-    M6 --> M7[07 Preserve evidence and clean up]
+    M1[01 Deploy, validate, and confirm telemetry]
+    M1 --> M2[02 Operate response plan]
+    M2 --> M3[03 Respond to high CPU]
+    M3 --> M4[04 Respond to data-disk pressure]
+    M4 --> M5[05 Review and improve]
+    M5 --> M6[06 Preserve evidence and clean up]
 
     classDef setup fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a
     classDef incident fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
     classDef learn fill:#dcfce7,stroke:#15803d,color:#14532d
 
-    class M1,M2,M3 setup
-    class M4,M5 incident
-    class M6,M7 learn
+    class M1,M2 setup
+    class M3,M4 incident
+    class M5,M6 learn
 ```
 
 | Module | Outcome | Portal evidence |
 | --- | --- | --- |
-| 01 | Deploy and prove service, disk, API, and restart recovery | VM Percentage CPU baseline |
-| 02 | Establish healthy resource and application behavior | VM Metrics, Live Metrics, Performance, and Log Analytics charts |
-| 03 | Verify the Sev1/Sev2 Review response plan | Response plan, alert rules, VM CPU, and API operations |
-| 04 | Detect, investigate, and recover from CPU saturation | VM CPU spike, API duration, alert, and agent investigation |
-| 05 | Detect and safely remove managed-disk pressure | Data-disk free-space chart, VM CPU comparison, alert, and agent investigation |
-| 06 | Produce an evidence-backed incident review | Baseline, incident, recovery, and alert timelines |
-| 07 | Preserve evidence and delete the environment | Final healthy CPU, API, alert, and investigation views |
+| 01 | Deploy, prove persistence, and confirm investigation telemetry | Healthy VM CPU and API operations |
+| 02 | Verify and rehearse the Sev1/Sev2 Review response plan | Response plan, alert rules, and agent assessment |
+| 03 | Detect, investigate, and recover from CPU saturation | VM CPU spike, API duration, alert, and agent investigation |
+| 04 | Detect and safely remove managed-disk pressure | Data-disk free-space chart, VM CPU comparison, alert, and agent investigation |
+| 05 | Produce an evidence-backed incident review | Incident, recovery, and alert timelines |
+| 06 | Preserve evidence and delete the environment | Final healthy CPU, API, alert, and investigation views |
 
-Allow approximately four hours for the full path, including Azure ingestion and
-alert evaluation waits.
+Allow approximately three and a half hours for the full path, including Azure
+ingestion and alert evaluation waits.
 
 ## Operating model
 
 The same loop is repeated for both incidents:
 
 ```text
-baseline -> authenticated fault -> portal chart -> Azure Monitor alert
+healthy signal -> authenticated fault -> portal chart -> Azure Monitor alert
          -> SRE Agent investigation -> human verification
          -> human mitigation -> visual recovery -> learning
 ```
@@ -107,7 +106,7 @@ architecture:
 * SQLite has no workshop backup workflow.
 * The availability probe runs inside the VM rather than from an external region.
 * Only synthetic data belongs in the API.
-* Azure resources incur charges until Module 07 deletes them.
+* Azure resources incur charges until Module 06 deletes them.
 
 Azure Policy must permit the public VM endpoint and outbound package and
 monitoring access. The deployment creates no policy exemptions.
@@ -119,4 +118,4 @@ monitoring access. The deployment creates no policy exemptions.
 
 !!! warning "Delete the environment when finished"
     Closing the terminal does not stop VM, disk, public-IP, monitoring, alert, or
-    SRE Agent charges. Complete [Module 07](sre/07-cleanup/index.md).
+    SRE Agent charges. Complete [Module 06](sre/06-cleanup/index.md).

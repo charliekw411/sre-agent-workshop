@@ -1,5 +1,5 @@
 ---
-title: Module 04 - Respond to High CPU
+title: Module 03 - Respond to High CPU
 description: Trigger bounded CPU pressure through authenticated VM Run Command, follow the alert into an SRE Agent investigation, verify the diagnosis, and recover.
 ms.date: 2026-09-24
 ms.topic: how-to
@@ -13,7 +13,7 @@ estimated_reading_time: 20
 
 <ul class="sre-meta">
 <li class="duration">Estimated time: 40 minutes</li>
-<li>Module 04</li>
+<li>Module 03</li>
 <li class="incident">Incident 1 of 2</li>
 </ul>
 
@@ -31,7 +31,7 @@ also be stopped with `fault reset`.
 ## Learning objectives
 
 * Inject CPU pressure through the authenticated control plane.
-* Compare baseline and incident CPU visually on the VM Metrics blade.
+* Compare healthy and incident CPU visually on the VM Metrics blade.
 * Correlate VM saturation with public API latency.
 * Follow a fired Azure Monitor alert into the SRE Agent response-plan workflow.
 * Verify the agent's causal claims with raw telemetry and Activity Log evidence.
@@ -41,19 +41,19 @@ also be stopped with `fault reset`.
 
 ```mermaid
 flowchart LR
-    B[Healthy baseline] --> F[Run Command starts bounded CPU fault]
+    B[Healthy traffic] --> F[Run Command starts bounded CPU fault]
     F --> M[VM Percentage CPU rises]
     M --> I[API latency changes]
     M --> A[Sev2 CPU alert fires]
     A --> R[Response plan starts investigation]
     R --> V[Human verifies evidence]
     V --> X[Human resets fault]
-    X --> H[Charts and API return to baseline]
+    X --> H[Charts and API return to healthy levels]
 ```
 
 ## Tasks
 
-### Task 1: Prepare the baseline and notes
+### Task 1: Prepare healthy traffic and notes
 
 === "Bash"
 
@@ -211,8 +211,8 @@ appears. Hover over the line and record:
 * The time the line returns below the threshold.
 
 Add a horizontal threshold line at 80 percent if the Metrics blade offers that
-chart option. Keep the time range wide enough to show both the Module 02
-baseline and the incident.
+chart option. Keep the time range wide enough to show both the healthy traffic
+from Module 01 and the incident.
 
 <!-- SCREENSHOT: VM Monitoring Metrics blade showing Percentage CPU rising above 80 percent -->
 
@@ -376,7 +376,7 @@ evidence:
     ```
 
 Keep the load generator running for another five minutes. In the VM Metrics
-blade, watch **Percentage CPU** return toward the Module 02 baseline. In
+blade, watch **Percentage CPU** return toward its healthy range. In
 Application Insights, confirm request duration also recovers. The Azure Monitor
 alert auto-resolves after the evaluation window is healthy.
 
@@ -406,9 +406,9 @@ time, and alert resolution in `.workshop/notes/incident-01-cpu.md`.
 
 ## Next steps
 
-[Next: Module 05 - Respond to Data-Disk Pressure :material-arrow-right:](../05-incident-data-disk/index.md){ .md-button .md-button--primary }
+[Next: Module 04 - Respond to Data-Disk Pressure :material-arrow-right:](../04-incident-data-disk/index.md){ .md-button .md-button--primary }
 
 <div class="sre-nav" markdown>
-[:material-arrow-left: Module 03 - Operate the Response Plan](../03-operate-response-plan/index.md)
-[Module 05 - Respond to Data-Disk Pressure :material-arrow-right:](../05-incident-data-disk/index.md)
+[:material-arrow-left: Module 02 - Operate the Response Plan](../02-operate-response-plan/index.md)
+[Module 04 - Respond to Data-Disk Pressure :material-arrow-right:](../04-incident-data-disk/index.md)
 </div>

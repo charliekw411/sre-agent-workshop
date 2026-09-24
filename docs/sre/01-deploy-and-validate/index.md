@@ -37,7 +37,7 @@ a VM is not enough: the live smoke check must pass.
 * Verify the public API and the absence of destructive HTTP fault routes.
 * Prove that `orders-api` runs under `systemd` and SQLite uses the managed disk.
 * Restart the VM and prove that the service and persisted orders recover.
-* Connect endpoint activity to the VM's CPU chart in the Azure portal.
+* Confirm healthy endpoint activity in VM Metrics and Application Insights.
 
 ## Architecture
 
@@ -327,7 +327,7 @@ workshop VM, waits for readiness, and verifies:
 * `systemd` restarted the API automatically.
 * The witness order is unchanged and readable through the public endpoint.
 
-### Task 8: View endpoint activity on the VM CPU chart
+### Task 8: Confirm healthy telemetry before the incidents
 
 Open the Azure portal and select:
 
@@ -337,12 +337,13 @@ Open the Azure portal and select:
 4. Metric **Percentage CPU**, aggregation **Average**, time granularity
    **1 minute**, and time range **Last 30 minutes**.
 
-Generate a short burst of endpoint activity while the chart is open:
+Generate two minutes of healthy endpoint activity in another terminal while the
+chart is open:
 
 === "Bash"
 
     ```bash
-    for i in $(seq 1 60); do
+    for i in $(seq 1 120); do
       curl --silent --fail \
         "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
       sleep 1
@@ -352,20 +353,41 @@ Generate a short burst of endpoint activity while the chart is open:
 === "PowerShell"
 
     ```powershell
-    1..60 | ForEach-Object {
+    1..120 | ForEach-Object {
       Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" | Out-Null
       Start-Sleep -Seconds 1
     }
     ```
 
-Refresh the chart after one or two minutes. The small movement is your first
-visual baseline; it is not expected to resemble the saturation incident in
-Module 04.
+Refresh the chart after one or two minutes. Confirm that **Percentage CPU** is
+healthy before the saturation incident in Module 03. You do not need to record
+an extended baseline or create a worksheet.
 
-<!-- SCREENSHOT: VM Monitoring Metrics blade showing baseline Percentage CPU while /orders is called -->
+<!-- SCREENSHOT: VM Monitoring Metrics blade showing healthy Percentage CPU while /orders is called -->
 
-Record the approximate idle and active CPU percentages. Every later module asks
-you to return to this chart and compare a deliberate action with this baseline.
+From the workshop resource group, open `appi-<suffix>` and select
+**Investigate** > **Performance**. Use **Last 30 minutes** and confirm that
+`GET /orders` appears. Application Insights ingestion can lag by several
+minutes.
+
+Finally, verify that the required VM and application signals have arrived:
+
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py telemetry
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py telemetry
+    ```
+
+The helper waits for VM heartbeat, guest CPU, data-disk free space, API
+requests, SQLite dependencies, and the SQLite availability result. This short
+check proves that the SRE Agent will have evidence to investigate; deeper
+analysis happens inside the incident modules.
 
 ## Validation
 
@@ -373,7 +395,8 @@ you to return to this chart and compare a deliberate action with this baseline.
 * [x] The public `/health/ready`, `/orders`, and `/storage` endpoints return 200.
 * [x] VM inspection reports an active non-root service and valid SQLite WAL database.
 * [x] Restart validation preserves the disk UUID and witness order.
-* [x] You viewed endpoint activity in the VM's **Percentage CPU** chart.
+* [x] You viewed healthy activity in VM Metrics and Application Insights.
+* [x] `python scripts/workshop.py telemetry` confirmed the investigation signals.
 
 ## Knowledge check
 
@@ -388,9 +411,9 @@ you to return to this chart and compare a deliberate action with this baseline.
 
 ## Next steps
 
-[Next: Module 02 - Observe a Healthy Baseline :material-arrow-right:](../02-observe-healthy-baseline/index.md){ .md-button .md-button--primary }
+[Next: Module 02 - Operate the SRE Agent Response Plan :material-arrow-right:](../02-operate-response-plan/index.md){ .md-button .md-button--primary }
 
 <div class="sre-nav" markdown>
 [Workshop home](../../index.md)
-[Module 02 - Observe a Healthy Baseline :material-arrow-right:](../02-observe-healthy-baseline/index.md)
+[Module 02 - Operate the SRE Agent Response Plan :material-arrow-right:](../02-operate-response-plan/index.md)
 </div>

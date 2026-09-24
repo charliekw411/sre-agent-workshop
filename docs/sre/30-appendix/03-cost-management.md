@@ -89,7 +89,7 @@ the attendee.
 
 ## Reduce cost between sessions
 
-The only complete cost stop is Module 07 deletion. For a short pause, deallocate
+The only complete cost stop is Module 06 deletion. For a short pause, deallocate
 the VM:
 
 === "Bash"
