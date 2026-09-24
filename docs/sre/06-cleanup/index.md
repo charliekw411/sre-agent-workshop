@@ -1,5 +1,5 @@
 ---
-title: Module 07 - Preserve Evidence and Clean Up
+title: Module 06 - Preserve Evidence and Clean Up
 description: Capture final portal evidence, stop all workshop activity, preserve investigation artifacts, delete the Azure environment, and verify removal.
 ms.date: 2026-09-24
 ms.topic: how-to
@@ -13,7 +13,7 @@ estimated_reading_time: 12
 
 <ul class="sre-meta">
 <li class="duration">Estimated time: 20 minutes</li>
-<li>Module 07</li>
+<li>Module 06</li>
 <li>Hands-on</li>
 </ul>
 
@@ -302,8 +302,8 @@ Do not delete the repository or your copied review artifacts.
 
 ## Workshop complete
 
-You deployed and validated a persistent single-VM workload, established a visual
-baseline, operated an SRE Agent response plan, handled CPU and disk-capacity
+You deployed and validated a persistent single-VM workload, confirmed healthy
+telemetry, operated an SRE Agent response plan, handled CPU and disk-capacity
 incidents, verified automated findings, and converted the evidence into an
 improvement backlog.
 
@@ -311,6 +311,6 @@ improvement backlog.
 [Troubleshooting](../30-appendix/02-troubleshooting.md){ .md-button }
 
 <div class="sre-nav" markdown>
-[:material-arrow-left: Module 06 - Review and Improve](../06-review-and-improve/index.md)
+[:material-arrow-left: Module 05 - Review and Improve](../05-review-and-improve/index.md)
 [About the authors :material-arrow-right:](../29-about-the-authors/index.md)
 </div>

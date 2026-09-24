@@ -143,7 +143,7 @@ These files are ignored by Git. They can contain Azure resource IDs and
 operational timestamps, so handle them according to your organization's policy.
 
 Workshop notes belong under `.workshop/notes/` while you work. Copy them outside
-deployment state before Module 07 cleanup.
+deployment state before Module 06 cleanup.
 
 ## Authentication is not exported
 

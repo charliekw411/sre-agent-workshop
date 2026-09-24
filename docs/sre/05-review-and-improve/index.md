@@ -1,5 +1,5 @@
 ---
-title: Module 06 - Review and Improve the Response
+title: Module 05 - Review and Improve the Response
 description: Compare the CPU and data-disk investigations, build an evidence-backed root cause analysis, and turn response gaps into specific monitoring and workflow improvements.
 ms.date: 2026-09-24
 ms.topic: how-to
@@ -13,7 +13,7 @@ estimated_reading_time: 20
 
 <ul class="sre-meta">
 <li class="duration">Estimated time: 40 minutes</li>
-<li>Module 06</li>
+<li>Module 05</li>
 <li>Hands-on</li>
 </ul>
 
@@ -95,7 +95,7 @@ Generate a short healthy segment:
     ```
 
 Open the VM's **Monitoring** > **Metrics** blade, select **Percentage CPU**, and
-set the time range wide enough to show the Module 04 spike and the current
+set the time range wide enough to show the Module 03 spike and the current
 healthy segment. Record the contrast between incident and recovery.
 
 <!-- SCREENSHOT: VM Percentage CPU chart showing the incident spike and healthy recovered traffic -->
@@ -114,7 +114,7 @@ For CPU:
 For disk:
 
 1. Open Log Analytics **Logs**.
-2. Run the `/var/lib/orders` free-space timechart from Module 05.
+2. Run the `/var/lib/orders` free-space timechart from Module 04.
 3. Note baseline, first value below 15 percent, minimum, reset, and recovery.
 4. Open Application Insights **Failures** and determine whether customer errors
    occurred in the same interval.
@@ -361,9 +361,9 @@ the proposed change, its risk, and how you would test it before production use.
 
 ## Next steps
 
-[Next: Module 07 - Preserve Evidence and Clean Up :material-arrow-right:](../07-cleanup/index.md){ .md-button .md-button--primary }
+[Next: Module 06 - Preserve Evidence and Clean Up :material-arrow-right:](../06-cleanup/index.md){ .md-button .md-button--primary }
 
 <div class="sre-nav" markdown>
-[:material-arrow-left: Module 05 - Respond to Data-Disk Pressure](../05-incident-data-disk/index.md)
-[Module 07 - Preserve Evidence and Clean Up :material-arrow-right:](../07-cleanup/index.md)
+[:material-arrow-left: Module 04 - Respond to Data-Disk Pressure](../04-incident-data-disk/index.md)
+[Module 06 - Preserve Evidence and Clean Up :material-arrow-right:](../06-cleanup/index.md)
 </div>

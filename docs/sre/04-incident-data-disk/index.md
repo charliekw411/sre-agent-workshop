@@ -1,5 +1,5 @@
 ---
-title: Module 05 - Respond to Data-Disk Pressure
+title: Module 04 - Respond to Data-Disk Pressure
 description: Fill only the managed SQLite data disk with a bounded ballast file, visualize the leading capacity signal, review the SRE Agent investigation, and recover without deleting orders.
 ms.date: 2026-09-24
 ms.topic: how-to
@@ -13,7 +13,7 @@ estimated_reading_time: 21
 
 <ul class="sre-meta">
 <li class="duration">Estimated time: 40 minutes</li>
-<li>Module 05</li>
+<li>Module 04</li>
 <li class="incident">Incident 2 of 2</li>
 </ul>
 
@@ -243,7 +243,7 @@ should fall from its baseline to approximately 10 percent free. Record:
 <!-- SCREENSHOT: Log Analytics timechart showing /var/lib/orders free space falling below 15 percent -->
 
 Return to the VM's **Percentage CPU** chart. The endpoint traffic can create
-minor movement, but CPU should not resemble the saturation shape from Module 04.
+minor movement, but CPU should not resemble the saturation shape from Module 03.
 This visual comparison helps rule out CPU as the cause of the capacity alert.
 
 In Application Insights **Performance**, inspect `GET /storage`, `GET /orders`,
@@ -461,9 +461,9 @@ mitigation, recovery, and resolution times.
 
 ## Next steps
 
-[Next: Module 06 - Review and Improve the Response :material-arrow-right:](../06-review-and-improve/index.md){ .md-button .md-button--primary }
+[Next: Module 05 - Review and Improve the Response :material-arrow-right:](../05-review-and-improve/index.md){ .md-button .md-button--primary }
 
 <div class="sre-nav" markdown>
-[:material-arrow-left: Module 04 - Respond to High CPU](../04-incident-high-cpu/index.md)
-[Module 06 - Review and Improve the Response :material-arrow-right:](../06-review-and-improve/index.md)
+[:material-arrow-left: Module 03 - Respond to High CPU](../03-incident-high-cpu/index.md)
+[Module 05 - Review and Improve the Response :material-arrow-right:](../05-review-and-improve/index.md)
 </div>

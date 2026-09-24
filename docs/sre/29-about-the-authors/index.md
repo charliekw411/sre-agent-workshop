@@ -44,6 +44,6 @@ See [CONTRIBUTING.md](https://github.com/charliekw411/sre-agent-workshop/blob/ma
 * A question about Azure SRE Agent itself: use the [official documentation](https://learn.microsoft.com/azure/sre-agent/) and Azure support channels.
 
 <div class="sre-nav" markdown>
-[:material-arrow-left: Module 07 - Preserve Evidence and Clean Up](../07-cleanup/index.md)
+[:material-arrow-left: Module 06 - Preserve Evidence and Clean Up](../06-cleanup/index.md)
 [Workshop Variables :material-arrow-right:](../30-appendix/01-variables.md)
 </div>

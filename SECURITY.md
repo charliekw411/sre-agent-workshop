@@ -34,8 +34,8 @@ availability margin of the disposable workshop VM.
 
 | Action | Behavior | Workshop use |
 | --- | --- | --- |
-| `fault cpu` | Runs a limited number of CPU-bound workers in a transient systemd unit | Module 04 saturation incident |
-| `fault disk` | Allocates a temporary ballast file on the managed SQLite filesystem | Module 05 capacity incident |
+| `fault cpu` | Runs a limited number of CPU-bound workers in a transient systemd unit | Module 03 saturation incident |
+| `fault disk` | Allocates a temporary ballast file on the managed SQLite filesystem | Module 04 capacity incident |
 
 These are control-plane operations, not public application endpoints. The
 public API exposes order and health operations only. Deployment smoke tests

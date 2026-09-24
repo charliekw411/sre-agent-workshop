@@ -95,7 +95,7 @@ Every markdown file under `docs/` requires YAML frontmatter with `title` and `de
 
 ```yaml
 ---
-title: Module 07 - Investigate the High CPU Incident
+title: Module 03 - Respond to High CPU
 description: One sentence describing what the page covers.
 ms.date: 2026-09-08
 ms.topic: how-to
@@ -136,7 +136,7 @@ Module pages follow a fixed structure so readers always know where to look:
 Use relative links with the `.md` extension so MkDocs validates them.
 
 ```markdown
-[Module 04](../04-enable-monitoring/index.md)
+[Module 03](docs/sre/03-incident-high-cpu/index.md)
 [Troubleshooting](../30-appendix/02-troubleshooting.md)
 ```
 
