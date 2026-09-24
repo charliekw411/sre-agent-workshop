@@ -69,15 +69,29 @@ sequenceDiagram
 
 ### Task 1: Verify the agent resource
 
-```bash
-source .workshop/workshop.env
+=== "Bash"
 
-az resource show \
-  --ids "${SRE_AGENT_RESOURCE_ID}" \
-  --api-version 2025-05-01-preview \
-  --query "{Name:name, State:properties.provisioningState, Endpoint:properties.agentEndpoint, Access:properties.actionConfiguration.accessLevel, Mode:properties.actionConfiguration.mode}" \
-  --output table
-```
+    ```bash
+    source .workshop/workshop.env
+
+    az resource show \
+      --ids "${SRE_AGENT_RESOURCE_ID}" \
+      --api-version 2025-05-01-preview \
+      --query "{Name:name, State:properties.provisioningState, Endpoint:properties.agentEndpoint, Access:properties.actionConfiguration.accessLevel, Mode:properties.actionConfiguration.mode}" \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+
+    az resource show `
+      --ids $env:SRE_AGENT_RESOURCE_ID `
+      --api-version 2025-05-01-preview `
+      --query "{Name:name, State:properties.provisioningState, Endpoint:properties.agentEndpoint, Access:properties.actionConfiguration.accessLevel, Mode:properties.actionConfiguration.mode}" `
+      --output table
+    ```
 
 Expect `Succeeded`, access level `Low`, and action mode `Review`.
 
@@ -104,9 +118,17 @@ In the SRE Agent experience, open **Response plans** and select
 The post-provision hook read the configuration back after creating it. Its local
 evidence is stored in:
 
-```bash
-cat ".workshop/${AZURE_ENV_NAME}/sre-agent-configuration.json"
-```
+=== "Bash"
+
+    ```bash
+    cat ".workshop/${AZURE_ENV_NAME}/sre-agent-configuration.json"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    Get-Content ".workshop/$env:AZURE_ENV_NAME/sre-agent-configuration.json"
+    ```
 
 Do not create a second catch-all response plan. Two overlapping enabled plans
 make alert routing and investigation ownership ambiguous.
@@ -118,19 +140,37 @@ make alert routing and investigation ownership ambiguous.
 The agent uses both system-assigned and operational user-assigned identities for
 resource and connector access. Review the assignments:
 
-```bash
-az role assignment list \
-  --assignee "${SRE_AGENT_PRINCIPAL_ID}" \
-  --all \
-  --query "[].{Role:roleDefinitionName, Scope:scope}" \
-  --output table
+=== "Bash"
 
-az role assignment list \
-  --assignee "${SRE_AGENT_IDENTITY_PRINCIPAL_ID}" \
-  --all \
-  --query "[].{Role:roleDefinitionName, Scope:scope}" \
-  --output table
-```
+    ```bash
+    az role assignment list \
+      --assignee "${SRE_AGENT_PRINCIPAL_ID}" \
+      --all \
+      --query "[].{Role:roleDefinitionName, Scope:scope}" \
+      --output table
+
+    az role assignment list \
+      --assignee "${SRE_AGENT_IDENTITY_PRINCIPAL_ID}" \
+      --all \
+      --query "[].{Role:roleDefinitionName, Scope:scope}" \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az role assignment list `
+      --assignee $env:SRE_AGENT_PRINCIPAL_ID `
+      --all `
+      --query "[].{Role:roleDefinitionName, Scope:scope}" `
+      --output table
+
+    az role assignment list `
+      --assignee $env:SRE_AGENT_IDENTITY_PRINCIPAL_ID `
+      --all `
+      --query "[].{Role:roleDefinitionName, Scope:scope}" `
+      --output table
+    ```
 
 The intended grants are resource read access and Log Analytics read access.
 Neither identity should have `Owner`, `Contributor`, VM administration, or fault
@@ -162,12 +202,25 @@ endpoint that fabricates errors.
 Open the workshop VM's **Monitoring** > **Metrics** blade and configure the
 **Percentage CPU** chart exactly as in Module 02. Then call:
 
-```bash
-for i in $(seq 1 30); do
-  curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/health/ready" > /dev/null
-  curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
-done
-```
+=== "Bash"
+
+    ```bash
+    for i in $(seq 1 30); do
+      curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/health/ready" > /dev/null
+      curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
+    done
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    1..30 | ForEach-Object {
+      Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/health/ready" |
+        Out-Null
+      Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" |
+        Out-Null
+    }
+    ```
 
 Refresh the VM chart after one or two minutes. Also open Application Insights
 **Performance** and verify that the `GET /health/ready` and `GET /orders`

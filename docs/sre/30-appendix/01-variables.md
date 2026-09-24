@@ -39,9 +39,17 @@ contain a VM private key, API credential, SRE Agent token, or fault secret.
 
 Regenerate the allowlisted files without redeploying:
 
-```bash
-python scripts/workshop.py export
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py export
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py export
+    ```
 
 The helper sets the Azure CLI subscription from the selected azd environment
 before issuing Azure operations.
@@ -93,13 +101,17 @@ allowlist with a dump of every azd or process environment variable.
 
 The wrapper scripts call the same fault implementation:
 
-```bash
-./scripts/inject-fault.sh status
-```
+=== "Bash"
 
-```powershell
-./scripts/inject-fault.ps1 status
-```
+    ```bash
+    ./scripts/inject-fault.sh status
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    ./scripts/inject-fault.ps1 status
+    ```
 
 Fault actions use Azure VM Run Command and therefore require Azure CLI
 authentication and RBAC. They do not call a public HTTP control endpoint.

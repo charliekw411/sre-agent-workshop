@@ -20,12 +20,17 @@ permissions.
 
 Load the selected environment before using the examples:
 
-```bash
-source .workshop/workshop.env
-```
+=== "Bash"
 
-PowerShell users load `. ./.workshop/workshop.ps1` and replace `${NAME}` with
-`$env:NAME`.
+    ```bash
+    source .workshop/workshop.env
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+    ```
 
 ## Deployment problems
 
@@ -34,13 +39,25 @@ PowerShell users load `. ./.workshop/workshop.ps1` and replace `${NAME}` with
 The preflight check compares the identity and tenant used by both tools. Sign in
 again and select the same subscription:
 
-```bash
-az login
-az account set --subscription "<subscription-id>"
-azd auth login
-az account show --output table
-azd env get-value AZURE_SUBSCRIPTION_ID
-```
+=== "Bash"
+
+    ```bash
+    az login
+    az account set --subscription "<subscription-id>"
+    azd auth login
+    az account show --output table
+    azd env get-value AZURE_SUBSCRIPTION_ID
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az login
+    az account set --subscription "<subscription-id>"
+    azd auth login
+    az account show --output table
+    azd env get-value AZURE_SUBSCRIPTION_ID
+    ```
 
 Do not bypass the check. A mismatched deployment can create resources under one
 identity and then fail role assignment or post-provision operations under another.
@@ -51,11 +68,21 @@ The current workshop requires the resource-group tag
 `workshop-architecture=single-vm`. It does not migrate an earlier architecture.
 Create a fresh azd environment:
 
-```bash
-azd env new "<your-alias>-sre-vm-aue"
-azd env set AZURE_LOCATION australiaeast
-azd up
-```
+=== "Bash"
+
+    ```bash
+    azd env new "<your-alias>-sre-vm-aue"
+    azd env set AZURE_LOCATION australiaeast
+    azd up
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    azd env new "<your-alias>-sre-vm-aue"
+    azd env set AZURE_LOCATION australiaeast
+    azd up
+    ```
 
 Review and remove the old environment separately. Do not delete individual
 resources to trick preflight into treating an old group as compatible.
@@ -67,10 +94,19 @@ quota. It never requests more quota or silently changes size.
 
 Choose an available, non-burstable x64 size with at least 4 GiB RAM:
 
-```bash
-azd env set VM_SIZE "<available-size>"
-azd up
-```
+=== "Bash"
+
+    ```bash
+    azd env set VM_SIZE "<available-size>"
+    azd up
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    azd env set VM_SIZE "<available-size>"
+    azd up
+    ```
 
 One-GiB and ARM64 free-tier sizes are not validated. Burstable B-series credit
 behavior can make the CPU incident misleading.
@@ -98,15 +134,17 @@ also vary by subscription.
 
 Read the stage named in the error and inspect:
 
-```bash
-Get-ChildItem ".workshop/${AZURE_ENV_NAME}"  # PowerShell
-```
+=== "Bash"
 
-or:
+    ```bash
+    find ".workshop/${AZURE_ENV_NAME}" -maxdepth 1 -type f -print
+    ```
 
-```bash
-find ".workshop/${AZURE_ENV_NAME}" -maxdepth 1 -type f -print
-```
+=== "PowerShell"
+
+    ```powershell
+    Get-ChildItem ".workshop/$env:AZURE_ENV_NAME"
+    ```
 
 Correct the cause and rerun `azd up`. The workflow preserves the existing data
 disk and orders. Do not delete the disk as a generic retry step.
@@ -117,34 +155,69 @@ disk and orders. Do not delete the disk as a generic retry step.
 
 Check the URL, public IP, VM power state, and NSG:
 
-```bash
-echo "${SERVICE_ORDERS_API_ENDPOINT_URL}"
-az vm get-instance-view \
-  --resource-group "${RESOURCE_GROUP}" \
-  --name "${VM_NAME}" \
-  --query "instanceView.statuses[].displayStatus" \
-  --output table
-az network nsg list --resource-group "${RESOURCE_GROUP}" --output table
-```
+=== "Bash"
+
+    ```bash
+    echo "${SERVICE_ORDERS_API_ENDPOINT_URL}"
+    az vm get-instance-view \
+      --resource-group "${RESOURCE_GROUP}" \
+      --name "${VM_NAME}" \
+      --query "instanceView.statuses[].displayStatus" \
+      --output table
+    az network nsg list --resource-group "${RESOURCE_GROUP}" --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    $env:SERVICE_ORDERS_API_ENDPOINT_URL
+    az vm get-instance-view `
+      --resource-group $env:RESOURCE_GROUP `
+      --name $env:VM_NAME `
+      --query "instanceView.statuses[].displayStatus" `
+      --output table
+    az network nsg list --resource-group $env:RESOURCE_GROUP --output table
+    ```
 
 Only TCP 8080 is allowed inbound. Port 22 is intentionally blocked.
 
 Run the supported inspection:
 
-```bash
-python scripts/workshop.py inspect
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py inspect
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py inspect
+    ```
 
 If the service itself needs inspection, use authenticated Run Command:
 
-```bash
-az vm run-command invoke \
-  --resource-group "${RESOURCE_GROUP}" \
-  --name "${VM_NAME}" \
-  --command-id RunShellScript \
-  --scripts "systemctl status orders-api --no-pager; journalctl -u orders-api -n 100 --no-pager" \
-  --output json
-```
+=== "Bash"
+
+    ```bash
+    az vm run-command invoke \
+      --resource-group "${RESOURCE_GROUP}" \
+      --name "${VM_NAME}" \
+      --command-id RunShellScript \
+      --scripts "systemctl status orders-api --no-pager; journalctl -u orders-api -n 100 --no-pager" \
+      --output json
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az vm run-command invoke `
+      --resource-group $env:RESOURCE_GROUP `
+      --name $env:VM_NAME `
+      --command-id RunShellScript `
+      --scripts "systemctl status orders-api --no-pager; journalctl -u orders-api -n 100 --no-pager" `
+      --output json
+    ```
 
 Do not expose SSH as a troubleshooting shortcut.
 
@@ -152,14 +225,27 @@ Do not expose SSH as a troubleshooting shortcut.
 
 `orders-api.service` requires `/var/lib/orders`. Check the mount and disk:
 
-```bash
-az vm run-command invoke \
-  --resource-group "${RESOURCE_GROUP}" \
-  --name "${VM_NAME}" \
-  --command-id RunShellScript \
-  --scripts "findmnt /var/lib/orders; lsblk -f; systemctl status orders-api --no-pager" \
-  --output json
-```
+=== "Bash"
+
+    ```bash
+    az vm run-command invoke \
+      --resource-group "${RESOURCE_GROUP}" \
+      --name "${VM_NAME}" \
+      --command-id RunShellScript \
+      --scripts "findmnt /var/lib/orders; lsblk -f; systemctl status orders-api --no-pager" \
+      --output json
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az vm run-command invoke `
+      --resource-group $env:RESOURCE_GROUP `
+      --name $env:VM_NAME `
+      --command-id RunShellScript `
+      --scripts "findmnt /var/lib/orders; lsblk -f; systemctl status orders-api --no-pager" `
+      --output json
+    ```
 
 The filesystem must be ext4 on the Azure data disk at LUN 0. Do not point the
 connection string at the OS disk. Rerun `azd up` after correcting an actual
@@ -170,17 +256,35 @@ deployment failure.
 The API maps `SqliteException` to HTTP 503 and records dependency and exception
 telemetry. Check:
 
-```bash
-curl --silent "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" | jq .
-python scripts/workshop.py fault status
-python scripts/workshop.py inspect
-```
+=== "Bash"
+
+    ```bash
+    curl --silent "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" | jq .
+    python scripts/workshop.py fault status
+    python scripts/workshop.py inspect
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/storage"
+    python scripts/workshop.py fault status
+    python scripts/workshop.py inspect
+    ```
 
 If a disk fault is active, reset it:
 
-```bash
-python scripts/workshop.py fault reset
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py fault reset
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py fault reset
+    ```
 
 Then use Application Insights **Failures** and query `AppExceptions` for the
 SQLite error code. Do not delete `orders.db` or its WAL files.
@@ -190,11 +294,21 @@ SQLite error code. Do not delete `orders.db` or its WAL files.
 That is expected. Public destructive fault endpoints do not exist in the
 single-VM architecture. Use:
 
-```bash
-python scripts/workshop.py fault cpu 600 2
-python scripts/workshop.py fault disk 90 600
-python scripts/workshop.py fault reset
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py fault cpu 600 2
+    python scripts/workshop.py fault disk 90 600
+    python scripts/workshop.py fault reset
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py fault cpu 600 2
+    python scripts/workshop.py fault disk 90 600
+    python scripts/workshop.py fault reset
+    ```
 
 ## Fault problems
 
@@ -202,9 +316,17 @@ python scripts/workshop.py fault reset
 
 A client timeout does not prove the guest action failed. Inspect before retrying:
 
-```bash
-python scripts/workshop.py fault status
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py fault status
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py fault status
+    ```
 
 If the requested fault is active, continue the exercise. If state is ambiguous,
 inspect Azure VM Run Command operation history and the saved fault JSON. Do not
@@ -214,10 +336,19 @@ submit duplicate pressure blindly.
 
 Reset the current transient units:
 
-```bash
-python scripts/workshop.py fault reset
-python scripts/workshop.py fault status
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py fault status
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py fault status
+    ```
 
 The fault implementation rejects overlapping units so the resulting chart has
 one bounded cause.
@@ -227,10 +358,19 @@ one bounded cause.
 The safety checks reject an unexpected mount, wrong device, existing ballast,
 invalid target, or allocation that would violate the recovery reserve. Run:
 
-```bash
-python scripts/workshop.py inspect
-python scripts/workshop.py fault status
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py inspect
+    python scripts/workshop.py fault status
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py inspect
+    python scripts/workshop.py fault status
+    ```
 
 Resolve the stated condition. Never edit `faults.py` to remove mount or reserve
 checks on a deployed environment.
@@ -255,29 +395,56 @@ refresh. Verify the selected portal subscription and resource group.
 The command reports missing signals. Check Azure Monitor Agent and the data
 collection rule association:
 
-```bash
-az vm extension list \
-  --resource-group "${RESOURCE_GROUP}" \
-  --vm-name "${VM_NAME}" \
-  --query "[].{Name:name, State:provisioningState}" \
-  --output table
+=== "Bash"
 
-az rest \
-  --method get \
-  --uri "https://management.azure.com${VM_RESOURCE_ID}/providers/Microsoft.Insights/dataCollectionRuleAssociations?api-version=2023-03-11" \
-  --query "value[].{Name:name, Rule:properties.dataCollectionRuleId}" \
-  --output table
-```
+    ```bash
+    az vm extension list \
+      --resource-group "${RESOURCE_GROUP}" \
+      --vm-name "${VM_NAME}" \
+      --query "[].{Name:name, State:provisioningState}" \
+      --output table
+
+    az rest \
+      --method get \
+      --uri "https://management.azure.com${VM_RESOURCE_ID}/providers/Microsoft.Insights/dataCollectionRuleAssociations?api-version=2023-03-11" \
+      --query "value[].{Name:name, Rule:properties.dataCollectionRuleId}" \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az vm extension list `
+      --resource-group $env:RESOURCE_GROUP `
+      --vm-name $env:VM_NAME `
+      --query "[].{Name:name, State:provisioningState}" `
+      --output table
+
+    az rest `
+      --method get `
+      --uri "https://management.azure.com$($env:VM_RESOURCE_ID)/providers/Microsoft.Insights/dataCollectionRuleAssociations?api-version=2023-03-11" `
+      --query "value[].{Name:name, Rule:properties.dataCollectionRuleId}" `
+      --output table
+    ```
 
 Call `/orders` and `/storage`, wait for ingestion, and retry. Application
 Insights and guest `Perf` commonly arrive later than the VM platform metric.
 
 ### Application Insights has no requests
 
-```bash
-curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
-curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" > /dev/null
-```
+=== "Bash"
+
+    ```bash
+    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
+    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" > /dev/null
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" | Out-Null
+    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/storage" | Out-Null
+    ```
 
 Wait several minutes, then query:
 
@@ -320,9 +487,17 @@ documented ten-minute fault and enough workers for the selected VM size.
 
 Check the local configuration evidence:
 
-```bash
-cat ".workshop/${AZURE_ENV_NAME}/sre-agent-configuration.json"
-```
+=== "Bash"
+
+    ```bash
+    cat ".workshop/${AZURE_ENV_NAME}/sre-agent-configuration.json"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    Get-Content ".workshop/$env:AZURE_ENV_NAME/sre-agent-configuration.json"
+    ```
 
 Rerun `azd up` to reconcile deployment-managed configuration. Do not create a
 second broad response plan manually.
@@ -350,9 +525,17 @@ Role propagation can take several minutes.
 That is expected. The workshop uses Review mode and read-only Azure RBAC.
 Execute an approved reset through your own authenticated session:
 
-```bash
-python scripts/workshop.py fault reset
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py fault reset
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py fault reset
+    ```
 
 Do not grant write access merely to make the demonstration automatic.
 
@@ -362,10 +545,19 @@ Do not grant write access merely to make the demonstration automatic.
 
 Check resource-group state and locks:
 
-```bash
-az group show --name "${RESOURCE_GROUP}" --query properties.provisioningState
-az lock list --resource-group "${RESOURCE_GROUP}" --output table
-```
+=== "Bash"
+
+    ```bash
+    az group show --name "${RESOURCE_GROUP}" --query properties.provisioningState
+    az lock list --resource-group "${RESOURCE_GROUP}" --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az group show --name $env:RESOURCE_GROUP --query properties.provisioningState
+    az lock list --resource-group $env:RESOURCE_GROUP --output table
+    ```
 
 Review policy errors in the Activity Log. Delete only the confirmed workshop
 scope; do not use broad or wildcard deletion commands.

@@ -62,14 +62,27 @@ Cost data can lag by 8 to 24 hours.
 
 If your subscription exposes consumption data through the CLI:
 
-```bash
-source .workshop/workshop.env
-az consumption usage list \
-  --start-date "<yyyy-mm-dd>" \
-  --end-date "<yyyy-mm-dd>" \
-  --query "[?resourceGroup=='${RESOURCE_GROUP}'].{Resource:instanceName, Cost:pretaxCost, Currency:currency}" \
-  --output table
-```
+=== "Bash"
+
+    ```bash
+    source .workshop/workshop.env
+    az consumption usage list \
+      --start-date "<yyyy-mm-dd>" \
+      --end-date "<yyyy-mm-dd>" \
+      --query "[?resourceGroup=='${RESOURCE_GROUP}'].{Resource:instanceName, Cost:pretaxCost, Currency:currency}" \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+    az consumption usage list `
+      --start-date "<yyyy-mm-dd>" `
+      --end-date "<yyyy-mm-dd>" `
+      --query "[?resourceGroup=='$env:RESOURCE_GROUP'].{Resource:instanceName, Cost:pretaxCost, Currency:currency}" `
+      --output table
+    ```
 
 Some sponsored, enterprise, or lab subscriptions do not expose this command to
 the attendee.
@@ -79,10 +92,19 @@ the attendee.
 The only complete cost stop is Module 07 deletion. For a short pause, deallocate
 the VM:
 
-```bash
-source .workshop/workshop.env
-az vm deallocate --resource-group "${RESOURCE_GROUP}" --name "${VM_NAME}"
-```
+=== "Bash"
+
+    ```bash
+    source .workshop/workshop.env
+    az vm deallocate --resource-group "${RESOURCE_GROUP}" --name "${VM_NAME}"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+    az vm deallocate --resource-group $env:RESOURCE_GROUP --name $env:VM_NAME
+    ```
 
 Deallocation stops VM compute charges but does not remove disk, public-IP,
 monitoring, alert, or SRE Agent costs. The public API and telemetry are
@@ -90,12 +112,23 @@ unavailable while the VM is stopped.
 
 Restart and revalidate before continuing:
 
-```bash
-az vm start --resource-group "${RESOURCE_GROUP}" --name "${VM_NAME}"
-python scripts/workshop.py smoke
-python scripts/workshop.py inspect
-python scripts/workshop.py telemetry
-```
+=== "Bash"
+
+    ```bash
+    az vm start --resource-group "${RESOURCE_GROUP}" --name "${VM_NAME}"
+    python scripts/workshop.py smoke
+    python scripts/workshop.py inspect
+    python scripts/workshop.py telemetry
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az vm start --resource-group $env:RESOURCE_GROUP --name $env:VM_NAME
+    python scripts/workshop.py smoke
+    python scripts/workshop.py inspect
+    python scripts/workshop.py telemetry
+    ```
 
 Do not deallocate during a fault exercise or while waiting for its alert.
 
@@ -112,17 +145,35 @@ A budget notifies; it does not automatically stop or delete resources.
 
 ## Stop all workshop costs
 
-```bash
-source .workshop/workshop.env
-python scripts/workshop.py fault reset
-azd down --purge
-```
+=== "Bash"
+
+    ```bash
+    source .workshop/workshop.env
+    python scripts/workshop.py fault reset
+    azd down --purge
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+    python scripts/workshop.py fault reset
+    azd down --purge
+    ```
 
 Verify the group is gone:
 
-```bash
-az group exists --name "${RESOURCE_GROUP}"
-```
+=== "Bash"
+
+    ```bash
+    az group exists --name "${RESOURCE_GROUP}"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az group exists --name $env:RESOURCE_GROUP
+    ```
 
 The expected result is `false`. Charges incurred before deletion can appear in
 Cost Management later because billing records are delayed.

@@ -36,9 +36,17 @@ The site uses MkDocs and Material for MkDocs.
 Open [http://localhost:8000](http://localhost:8000). Validate navigation, links,
 Markdown, and snippets with:
 
-```bash
-python -m mkdocs build --strict --site-dir dist
-```
+=== "Bash"
+
+    ```bash
+    python -m mkdocs build --strict --site-dir dist
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python -m mkdocs build --strict --site-dir dist
+    ```
 
 `make serve` and `make build-docs-website` run equivalent commands on systems
 with GNU Make.
@@ -71,13 +79,33 @@ Create a local SQLite database outside the source project:
 
 In another terminal:
 
-```bash
-curl --silent --fail http://localhost:8080/orders
-curl --silent --fail \
-  --request POST http://localhost:8080/orders \
-  --header 'Content-Type: application/json' \
-  --data '{"customerId":"local","productId":"SKU-1001","quantity":1}'
-```
+=== "Bash"
+
+    ```bash
+    curl --silent --fail http://localhost:8080/orders
+    curl --silent --fail \
+      --request POST http://localhost:8080/orders \
+      --header 'Content-Type: application/json' \
+      --data '{"customerId":"local","productId":"SKU-1001","quantity":1}'
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    Invoke-RestMethod http://localhost:8080/orders
+
+    $body = @{
+      customerId = 'local'
+      productId  = 'SKU-1001'
+      quantity   = 1
+    } | ConvertTo-Json
+
+    Invoke-RestMethod `
+      -Method Post `
+      -Uri http://localhost:8080/orders `
+      -ContentType 'application/json' `
+      -Body $body
+    ```
 
 Do not run `scripts/vm/faults.py` locally. It is designed for root execution
 through authenticated Run Command and refuses unexpected mounts.
@@ -87,21 +115,43 @@ through authenticated Run Command and refuses unexpected mounts.
 Codespaces provides a browser-hosted terminal. Verify rather than assume that the
 chosen image contains every prerequisite:
 
-```bash
-az version
-azd version
-python --version
-ssh-keygen -V 2>&1 | head -1 || true
-python -m pip install -r requirements.txt
-```
+=== "Bash"
+
+    ```bash
+    az version
+    azd version
+    python --version
+    ssh-keygen -V 2>&1 | head -1 || true
+    python -m pip install -r requirements.txt
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az version
+    azd version
+    python --version
+    Get-Command ssh-keygen | Select-Object -ExpandProperty Source
+    python -m pip install -r requirements.txt
+    ```
 
 Authenticate using the device flow when prompted:
 
-```bash
-az login --use-device-code
-az account set --subscription "<subscription-id>"
-azd auth login
-```
+=== "Bash"
+
+    ```bash
+    az login --use-device-code
+    az account set --subscription "<subscription-id>"
+    azd auth login
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az login --use-device-code
+    az account set --subscription "<subscription-id>"
+    azd auth login
+    ```
 
 Then follow Module 01. Forward port 8000 only when previewing MkDocs. The Azure
 Orders API remains on its own public Azure DNS endpoint.
@@ -112,16 +162,28 @@ remain bounded even if the client disconnects.
 
 ## Deploy from Azure Cloud Shell
 
-Open [Azure Cloud Shell](https://shell.azure.com), choose Bash, and clone the
-repository:
+Open [Azure Cloud Shell](https://shell.azure.com), choose Bash or PowerShell,
+and clone the repository:
 
-```bash
-git clone https://github.com/charliekw411/sre-agent-workshop.git
-cd sre-agent-workshop
-az account show --output table
-azd version
-python -m pip install -r requirements.txt
-```
+=== "Bash"
+
+    ```bash
+    git clone https://github.com/charliekw411/sre-agent-workshop.git
+    cd sre-agent-workshop
+    az account show --output table
+    azd version
+    python -m pip install -r requirements.txt
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    git clone https://github.com/charliekw411/sre-agent-workshop.git
+    Set-Location sre-agent-workshop
+    az account show --output table
+    azd version
+    python -m pip install -r requirements.txt
+    ```
 
 Install or update azd if the reported version is earlier than 1.18. Cloud Shell
 already has an Azure CLI login, but `azd auth login` is still required.

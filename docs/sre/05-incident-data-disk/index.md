@@ -59,22 +59,57 @@ window, not evidence that the alert was false.
 
 ### Task 1: Confirm recovery from the CPU incident
 
-```bash
-source .workshop/workshop.env
-python scripts/workshop.py fault reset
-python scripts/workshop.py inspect
-python scripts/workshop.py smoke
-curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" | jq .
-```
+=== "Bash"
+
+    ```bash
+    source .workshop/workshop.env
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py inspect
+    python scripts/workshop.py smoke
+    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" | jq .
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py inspect
+    python scripts/workshop.py smoke
+    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/storage"
+    ```
 
 Record the starting `usedPercent`, `availableBytes`, and `databaseBytes`.
 
 Start low-rate traffic in another terminal:
 
-```bash
-source .workshop/workshop.env
-./scripts/generate-load.sh "${SERVICE_ORDERS_API_ENDPOINT_URL}" 2 900
-```
+=== "Bash"
+
+    ```bash
+    source .workshop/workshop.env
+    ./scripts/generate-load.sh "${SERVICE_ORDERS_API_ENDPOINT_URL}" 2 900
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+    $until = (Get-Date).AddMinutes(15)
+    $products = 'SKU-1001','SKU-1002','SKU-1003','SKU-1004','SKU-1005'
+    while ((Get-Date) -lt $until) {
+      $body = @{
+        customerId = "disk-load-$((Get-Random -Maximum 500))"
+        productId  = $products | Get-Random
+        quantity   = Get-Random -Minimum 1 -Maximum 6
+      } | ConvertTo-Json
+      Invoke-RestMethod `
+        -Method Post `
+        -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" `
+        -ContentType 'application/json' `
+        -Body $body | Out-Null
+      Start-Sleep -Milliseconds 500
+    }
+    ```
 
 ### Task 2: Prepare both visual comparisons
 
@@ -98,15 +133,31 @@ The last point is the pre-incident storage baseline. Leave both views open.
 
 ### Task 3: Record the incident start and inject disk pressure
 
-```bash
-mkdir -p .workshop/notes
-INCIDENT_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-printf '# Data-disk incident\n\nFault requested at UTC: %s\n\n' "${INCIDENT_START}" \
-  > .workshop/notes/incident-02-data-disk.md
-echo "${INCIDENT_START}"
+=== "Bash"
 
-python scripts/workshop.py fault disk 90 600
-```
+    ```bash
+    mkdir -p .workshop/notes
+    INCIDENT_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '# Data-disk incident\n\nFault requested at UTC: %s\n\n' "${INCIDENT_START}" \
+      > .workshop/notes/incident-02-data-disk.md
+    echo "${INCIDENT_START}"
+
+    python scripts/workshop.py fault disk 90 600
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    New-Item -ItemType Directory -Force .workshop/notes | Out-Null
+    $INCIDENT_START = (Get-Date).ToUniversalTime().ToString(
+      'yyyy-MM-ddTHH:mm:ssZ'
+    )
+    "# Data-disk incident`n`nFault requested at UTC: $INCIDENT_START`n" |
+      Set-Content .workshop/notes/incident-02-data-disk.md
+    $INCIDENT_START
+
+    python scripts/workshop.py fault disk 90 600
+    ```
 
 The arguments are target used percent and duration in seconds. Valid targets are
 50 through 97 percent and durations are 30 through 1800 seconds.
@@ -122,22 +173,58 @@ Safety checks refuse to run when:
 
 Poll application storage and both customer paths:
 
-```bash
-for i in $(seq 1 30); do
-  STORAGE=$(curl --silent --fail \
-    "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" \
-    | jq -r '"used=\(.usedPercent)% available=\(.availableBytes) database=\(.databaseBytes)"')
-  READ=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-    "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders")
-  WRITE=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-    --request POST "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" \
-    --header 'Content-Type: application/json' \
-    --data '{"customerId":"disk-incident","productId":"SKU-1001","quantity":1}')
-  printf '%s %s read=%s write=%s\n' \
-    "$(date -u +%H:%M:%S)" "${STORAGE}" "${READ}" "${WRITE}"
-  sleep 20
-done
-```
+=== "Bash"
+
+    ```bash
+    for i in $(seq 1 30); do
+      STORAGE=$(curl --silent --fail \
+        "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" \
+        | jq -r '"used=\(.usedPercent)% available=\(.availableBytes) database=\(.databaseBytes)"')
+      READ=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+        "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders")
+      WRITE=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+        --request POST "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" \
+        --header 'Content-Type: application/json' \
+        --data '{"customerId":"disk-incident","productId":"SKU-1001","quantity":1}')
+      printf '%s %s read=%s write=%s\n' \
+        "$(date -u +%H:%M:%S)" "${STORAGE}" "${READ}" "${WRITE}"
+      sleep 20
+    done
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    $writeBody = @{
+      customerId = 'disk-incident'
+      productId  = 'SKU-1001'
+      quantity   = 1
+    } | ConvertTo-Json
+
+    1..30 | ForEach-Object {
+      $storage = Invoke-RestMethod `
+        "$env:SERVICE_ORDERS_API_ENDPOINT_URL/storage"
+      $read = Invoke-WebRequest `
+        -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" `
+        -SkipHttpErrorCheck
+      $write = Invoke-WebRequest `
+        -Method Post `
+        -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" `
+        -ContentType 'application/json' `
+        -Body $writeBody `
+        -SkipHttpErrorCheck
+
+      '{0} used={1}% available={2} database={3} read={4} write={5}' -f @(
+        (Get-Date).ToUniversalTime().ToString('HH:mm:ss')
+        $storage.usedPercent
+        $storage.availableBytes
+        $storage.databaseBytes
+        [int]$read.StatusCode
+        [int]$write.StatusCode
+      )
+      Start-Sleep -Seconds 20
+    }
+    ```
 
 The expected response is HTTP 200 for reads and HTTP 201 for writes. If a real
 SQLite failure occurs, the API returns HTTP 503 and records dependency and
@@ -189,73 +276,154 @@ until their times and affected operations align.
 
 Query the storage samples:
 
-```bash
-az monitor log-analytics query \
-  --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
-  --analytics-query "
-Perf
-| where TimeGenerated > ago(45m)
-| where ObjectName == 'Logical Disk'
-| where CounterName == '% Free Space'
-| where InstanceName == '/var/lib/orders'
-| summarize AverageFreeSpace = round(avg(CounterValue), 2) by bin(TimeGenerated, 1m)
-| order by TimeGenerated asc
-" \
-  --output table
-```
+=== "Bash"
+
+    ```bash
+    az monitor log-analytics query \
+      --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
+      --analytics-query "
+    Perf
+    | where TimeGenerated > ago(45m)
+    | where ObjectName == 'Logical Disk'
+    | where CounterName == '% Free Space'
+    | where InstanceName == '/var/lib/orders'
+    | summarize AverageFreeSpace = round(avg(CounterValue), 2) by bin(TimeGenerated, 1m)
+    | order by TimeGenerated asc
+    " \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    $query = @'
+    Perf
+    | where TimeGenerated > ago(45m)
+    | where ObjectName == 'Logical Disk'
+    | where CounterName == '% Free Space'
+    | where InstanceName == '/var/lib/orders'
+    | summarize AverageFreeSpace = round(avg(CounterValue), 2) by bin(TimeGenerated, 1m)
+    | order by TimeGenerated asc
+    '@
+
+    az monitor log-analytics query `
+      --workspace $env:LOG_ANALYTICS_CUSTOMER_ID `
+      --analytics-query $query `
+      --output table
+    ```
 
 Verify customer impact by operation:
 
-```bash
-az monitor log-analytics query \
-  --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
-  --analytics-query "
-AppRequests
-| where TimeGenerated > ago(45m)
-| where AppRoleName == 'orders-api'
-| summarize
-    Requests = sum(ItemCount),
-    Failures = sumif(ItemCount, Success == false),
-    P95Ms = round(percentile(DurationMs, 95), 1)
-  by Name, ResultCode, bin(TimeGenerated, 5m)
-| order by TimeGenerated asc, Name asc
-" \
-  --output table
-```
+=== "Bash"
+
+    ```bash
+    az monitor log-analytics query \
+      --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
+      --analytics-query "
+    AppRequests
+    | where TimeGenerated > ago(45m)
+    | where AppRoleName == 'orders-api'
+    | summarize
+        Requests = sum(ItemCount),
+        Failures = sumif(ItemCount, Success == false),
+        P95Ms = round(percentile(DurationMs, 95), 1)
+      by Name, ResultCode, bin(TimeGenerated, 5m)
+    | order by TimeGenerated asc, Name asc
+    " \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    $query = @'
+    AppRequests
+    | where TimeGenerated > ago(45m)
+    | where AppRoleName == 'orders-api'
+    | summarize
+        Requests = sum(ItemCount),
+        Failures = sumif(ItemCount, Success == false),
+        P95Ms = round(percentile(DurationMs, 95), 1)
+      by Name, ResultCode, bin(TimeGenerated, 5m)
+    | order by TimeGenerated asc, Name asc
+    '@
+
+    az monitor log-analytics query `
+      --workspace $env:LOG_ANALYTICS_CUSTOMER_ID `
+      --analytics-query $query `
+      --output table
+    ```
 
 Check SQLite telemetry:
 
-```bash
-az monitor log-analytics query \
-  --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
-  --analytics-query "
-union
-  (AppDependencies
-   | where AppRoleName == 'orders-api' and DependencyType == 'SQLite'
-   | summarize Samples=sum(ItemCount), Failures=sumif(ItemCount, Success == false)
-     by Signal='SQLite dependencies', bin(TimeGenerated, 5m)),
-  (AppAvailabilityResults
-   | where AppRoleName == 'orders-api'
-   | summarize Samples=sum(ItemCount), Failures=sumif(ItemCount, Success == false)
-     by Signal='SQLite availability', bin(TimeGenerated, 5m))
-| where TimeGenerated > ago(45m)
-| order by TimeGenerated asc
-" \
-  --output table
-```
+=== "Bash"
+
+    ```bash
+    az monitor log-analytics query \
+      --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
+      --analytics-query "
+    union
+      (AppDependencies
+       | where AppRoleName == 'orders-api' and DependencyType == 'SQLite'
+       | summarize Samples=sum(ItemCount), Failures=sumif(ItemCount, Success == false)
+         by Signal='SQLite dependencies', bin(TimeGenerated, 5m)),
+      (AppAvailabilityResults
+       | where AppRoleName == 'orders-api'
+       | summarize Samples=sum(ItemCount), Failures=sumif(ItemCount, Success == false)
+         by Signal='SQLite availability', bin(TimeGenerated, 5m))
+    | where TimeGenerated > ago(45m)
+    | order by TimeGenerated asc
+    " \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    $query = @'
+    union
+      (AppDependencies
+       | where AppRoleName == 'orders-api' and DependencyType == 'SQLite'
+       | summarize Samples=sum(ItemCount), Failures=sumif(ItemCount, Success == false)
+         by Signal='SQLite dependencies', bin(TimeGenerated, 5m)),
+      (AppAvailabilityResults
+       | where AppRoleName == 'orders-api'
+       | summarize Samples=sum(ItemCount), Failures=sumif(ItemCount, Success == false)
+         by Signal='SQLite availability', bin(TimeGenerated, 5m))
+    | where TimeGenerated > ago(45m)
+    | order by TimeGenerated asc
+    '@
+
+    az monitor log-analytics query `
+      --workspace $env:LOG_ANALYTICS_CUSTOMER_ID `
+      --analytics-query $query `
+      --output table
+    ```
 
 A correct investigation reports critical remaining capacity and, when requests
 remain successful, explicitly states that no customer outage is observed.
 
 ### Task 8: Reset and prove data safety
 
-```bash
-python scripts/workshop.py fault reset
-python scripts/workshop.py fault status
-python scripts/workshop.py inspect
-python scripts/workshop.py smoke
-curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" | jq .
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py fault status
+    python scripts/workshop.py inspect
+    python scripts/workshop.py smoke
+    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" | jq .
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py fault status
+    python scripts/workshop.py inspect
+    python scripts/workshop.py smoke
+    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/storage"
+    ```
 
 Refresh the Log Analytics timechart after several collection and evaluation
 intervals. Free space should return near its baseline and the alert should

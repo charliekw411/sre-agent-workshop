@@ -40,20 +40,42 @@ organization's data-handling policy.
 
 ### Task 1: Capture the final healthy visual state
 
-```bash
-source .workshop/workshop.env
-python scripts/workshop.py fault reset
-python scripts/workshop.py smoke
-```
+=== "Bash"
+
+    ```bash
+    source .workshop/workshop.env
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py smoke
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py smoke
+    ```
 
 Send one final minute of healthy traffic:
 
-```bash
-for i in $(seq 1 60); do
-  curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
-  sleep 1
-done
-```
+=== "Bash"
+
+    ```bash
+    for i in $(seq 1 60); do
+      curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
+      sleep 1
+    done
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    1..60 | ForEach-Object {
+      Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" |
+        Out-Null
+      Start-Sleep -Seconds 1
+    }
+    ```
 
 Before deleting anything:
 
@@ -77,10 +99,19 @@ blades and their retained telemetry are no longer available.
 Stop `generate-load.sh` with ++ctrl+c++ in any terminal where it is running.
 Then verify the guest fault state:
 
-```bash
-python scripts/workshop.py fault reset
-python scripts/workshop.py fault status
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py fault status
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py fault status
+    ```
 
 Both `cpu` and `disk` should report inactive and `ballastBytes` should be zero.
 The reset is safe to repeat and does not delete SQLite data.
@@ -121,16 +152,31 @@ evidence. Copy them only if they are useful and permitted by your organization.
 
 ### Task 4: Review the deletion scope
 
-```bash
-echo "Environment:    ${AZURE_ENV_NAME}"
-echo "Resource group: ${RESOURCE_GROUP}"
-echo "Subscription:   ${SUBSCRIPTION_ID}"
+=== "Bash"
 
-az resource list \
-  --resource-group "${RESOURCE_GROUP}" \
-  --query "[].{Name:name, Type:type}" \
-  --output table
-```
+    ```bash
+    echo "Environment:    ${AZURE_ENV_NAME}"
+    echo "Resource group: ${RESOURCE_GROUP}"
+    echo "Subscription:   ${SUBSCRIPTION_ID}"
+
+    az resource list \
+      --resource-group "${RESOURCE_GROUP}" \
+      --query "[].{Name:name, Type:type}" \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    "Environment:    $env:AZURE_ENV_NAME"
+    "Resource group: $env:RESOURCE_GROUP"
+    "Subscription:   $env:SUBSCRIPTION_ID"
+
+    az resource list `
+      --resource-group $env:RESOURCE_GROUP `
+      --query "[].{Name:name, Type:type}" `
+      --output table
+    ```
 
 Expect resources for:
 
@@ -145,9 +191,17 @@ delete.
 
 ### Task 5: Delete the environment
 
-```bash
-azd down --purge
-```
+=== "Bash"
+
+    ```bash
+    azd down --purge
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    azd down --purge
+    ```
 
 Read the interactive confirmation carefully. This removes the resource group,
 VM, both disks, public endpoint, telemetry, alert history, response plan, and
@@ -157,18 +211,36 @@ Allow Azure several minutes to finish deletion.
 
 ### Task 6: Verify removal
 
-```bash
-az group exists --name "${RESOURCE_GROUP}"
-```
+=== "Bash"
+
+    ```bash
+    az group exists --name "${RESOURCE_GROUP}"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az group exists --name $env:RESOURCE_GROUP
+    ```
 
 The expected result is `false`. Also check for any remaining resource that uses
 the deterministic workshop suffix:
 
-```bash
-az resource list \
-  --query "[?contains(name, '${WORKSHOP_SUFFIX}')].{Name:name, Type:type, Group:resourceGroup}" \
-  --output table
-```
+=== "Bash"
+
+    ```bash
+    az resource list \
+      --query "[?contains(name, '${WORKSHOP_SUFFIX}')].{Name:name, Type:type, Group:resourceGroup}" \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az resource list `
+      --query "[?contains(name, '$env:WORKSHOP_SUFFIX')].{Name:name, Type:type, Group:resourceGroup}" `
+      --output table
+    ```
 
 An empty table is expected. If deletion is still in progress, wait and repeat
 the checks. Resource locks or policy deny assignments are common reasons for a
@@ -180,9 +252,17 @@ The local azd environment and generated exports contain no secrets, but they
 refer to resources that no longer exist. Remove them if you do not intend to
 redeploy:
 
-```bash
-azd env remove "${AZURE_ENV_NAME}"
-```
+=== "Bash"
+
+    ```bash
+    azd env remove "${AZURE_ENV_NAME}"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    azd env remove $env:AZURE_ENV_NAME
+    ```
 
 You can also remove the generated top-level export files after preserving notes:
 

@@ -55,21 +55,44 @@ flowchart LR
 
 ### Task 1: Confirm the environment is healthy now
 
-```bash
-source .workshop/workshop.env
-python scripts/workshop.py fault reset
-python scripts/workshop.py smoke
-python scripts/workshop.py inspect
-```
+=== "Bash"
+
+    ```bash
+    source .workshop/workshop.env
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py smoke
+    python scripts/workshop.py inspect
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py smoke
+    python scripts/workshop.py inspect
+    ```
 
 Generate a short healthy segment:
 
-```bash
-for i in $(seq 1 60); do
-  curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
-  sleep 1
-done
-```
+=== "Bash"
+
+    ```bash
+    for i in $(seq 1 60); do
+      curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
+      sleep 1
+    done
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    1..60 | ForEach-Object {
+      Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" |
+        Out-Null
+      Start-Sleep -Seconds 1
+    }
+    ```
 
 Open the VM's **Monitoring** > **Metrics** blade, select **Percentage CPU**, and
 set the time range wide enough to show the Module 04 spike and the current
@@ -151,38 +174,81 @@ result back into the investigation and asking the agent to revise it.
 
 View request behavior across the full period:
 
-```bash
-az monitor log-analytics query \
-  --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
-  --analytics-query "
-AppRequests
-| where TimeGenerated > ago(6h)
-| where AppRoleName == 'orders-api'
-| summarize
-    Requests = sum(ItemCount),
-    Failures = sumif(ItemCount, Success == false),
-    P95Ms = round(percentile(DurationMs, 95), 1)
-  by Name, bin(TimeGenerated, 5m)
-| order by TimeGenerated asc, Name asc
-" \
-  --output table
-```
+=== "Bash"
+
+    ```bash
+    az monitor log-analytics query \
+      --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
+      --analytics-query "
+    AppRequests
+    | where TimeGenerated > ago(6h)
+    | where AppRoleName == 'orders-api'
+    | summarize
+        Requests = sum(ItemCount),
+        Failures = sumif(ItemCount, Success == false),
+        P95Ms = round(percentile(DurationMs, 95), 1)
+      by Name, bin(TimeGenerated, 5m)
+    | order by TimeGenerated asc, Name asc
+    " \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    $query = @'
+    AppRequests
+    | where TimeGenerated > ago(6h)
+    | where AppRoleName == 'orders-api'
+    | summarize
+        Requests = sum(ItemCount),
+        Failures = sumif(ItemCount, Success == false),
+        P95Ms = round(percentile(DurationMs, 95), 1)
+      by Name, bin(TimeGenerated, 5m)
+    | order by TimeGenerated asc, Name asc
+    '@
+
+    az monitor log-analytics query `
+      --workspace $env:LOG_ANALYTICS_CUSTOMER_ID `
+      --analytics-query $query `
+      --output table
+    ```
 
 Check whether SQLite actually failed:
 
-```bash
-az monitor log-analytics query \
-  --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
-  --analytics-query "
-union AppExceptions, AppDependencies
-| where TimeGenerated > ago(6h)
-| where AppRoleName == 'orders-api'
-| where (DependencyType == 'SQLite' and Success == false) or Type == 'AppExceptions'
-| project TimeGenerated, Type, DependencyType, Name, Success, ResultCode, ProblemId, OuterMessage
-| order by TimeGenerated asc
-" \
-  --output table
-```
+=== "Bash"
+
+    ```bash
+    az monitor log-analytics query \
+      --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
+      --analytics-query "
+    union AppExceptions, AppDependencies
+    | where TimeGenerated > ago(6h)
+    | where AppRoleName == 'orders-api'
+    | where (DependencyType == 'SQLite' and Success == false) or Type == 'AppExceptions'
+    | project TimeGenerated, Type, DependencyType, Name, Success, ResultCode, ProblemId, OuterMessage
+    | order by TimeGenerated asc
+    " \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    $query = @'
+    union AppExceptions, AppDependencies
+    | where TimeGenerated > ago(6h)
+    | where AppRoleName == 'orders-api'
+    | where (DependencyType == 'SQLite' and Success == false) or Type == 'AppExceptions'
+    | project TimeGenerated, Type, DependencyType, Name, Success, ResultCode, ProblemId, OuterMessage
+    | order by TimeGenerated asc
+    '@
+
+    az monitor log-analytics query `
+      --workspace $env:LOG_ANALYTICS_CUSTOMER_ID `
+      --analytics-query $query `
+      --output table
+    ```
 
 An empty exception result during the disk exercise supports the conclusion that
 the alert was preventative. It is not missing evidence that should be filled in

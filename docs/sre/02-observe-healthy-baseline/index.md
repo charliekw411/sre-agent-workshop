@@ -57,50 +57,74 @@ minute.
 
 ### Task 1: Confirm a healthy starting state
 
-```bash
-source .workshop/workshop.env
-python scripts/workshop.py smoke
-python scripts/workshop.py fault status
-```
+=== "Bash"
+
+    ```bash
+    source .workshop/workshop.env
+    python scripts/workshop.py smoke
+    python scripts/workshop.py fault status
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+    python scripts/workshop.py smoke
+    python scripts/workshop.py fault status
+    ```
 
 The CPU and disk fault states should both be inactive. If not, reset them before
 creating a baseline:
 
-```bash
-python scripts/workshop.py fault reset
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py fault reset
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py fault reset
+    ```
 
 ### Task 2: Start normal API traffic
 
-Run the load generator in a separate Bash terminal and leave it running while
-you use the portal:
+Run the load generator in a separate terminal and leave it running while you
+use the portal:
 
-```bash
-source .workshop/workshop.env
-./scripts/generate-load.sh "${SERVICE_ORDERS_API_ENDPOINT_URL}" 5 900
-```
+=== "Bash"
 
-The script sends five order-creation requests per second for 15 minutes and
-prints response counts every 25 requests. All data is synthetic.
+    ```bash
+    source .workshop/workshop.env
+    ./scripts/generate-load.sh "${SERVICE_ORDERS_API_ENDPOINT_URL}" 5 900
+    ```
 
-If Bash is unavailable, use this lower-rate PowerShell alternative:
+=== "PowerShell"
 
-```powershell
-. ./.workshop/workshop.ps1
-$until = (Get-Date).AddMinutes(15)
-$products = 'SKU-1001','SKU-1002','SKU-1003','SKU-1004','SKU-1005'
-while ((Get-Date) -lt $until) {
-  $body = @{
-    customerId = "baseline-$((Get-Random -Maximum 500))"
-    productId  = $products | Get-Random
-    quantity   = Get-Random -Minimum 1 -Maximum 6
-  } | ConvertTo-Json
-  Invoke-RestMethod -Method Post `
-    -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" `
-    -ContentType 'application/json' -Body $body | Out-Null
-  Start-Sleep -Milliseconds 500
-}
-```
+    ```powershell
+    . ./.workshop/workshop.ps1
+    $until = (Get-Date).AddMinutes(15)
+    $products = 'SKU-1001','SKU-1002','SKU-1003','SKU-1004','SKU-1005'
+    while ((Get-Date) -lt $until) {
+      $body = @{
+        customerId = "baseline-$((Get-Random -Maximum 500))"
+        productId  = $products | Get-Random
+        quantity   = Get-Random -Minimum 1 -Maximum 6
+      } | ConvertTo-Json
+      Invoke-RestMethod `
+        -Method Post `
+        -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" `
+        -ContentType 'application/json' `
+        -Body $body | Out-Null
+      Start-Sleep -Milliseconds 200
+    }
+    ```
+
+The Bash script targets five order-creation requests per second for 15 minutes
+and prints response counts every 25 requests. The PowerShell loop targets the
+same cadence, although request latency can lower its achieved rate. All data is
+synthetic.
 
 ### Task 3: Watch the VM CPU chart
 
@@ -140,9 +164,17 @@ comparing portal views.
 
 ### Task 5: Confirm the telemetry contract
 
-```bash
-python scripts/workshop.py telemetry
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py telemetry
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py telemetry
+    ```
 
 The command waits up to ten minutes for at least one sample of:
 

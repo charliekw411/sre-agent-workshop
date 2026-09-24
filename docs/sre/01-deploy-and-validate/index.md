@@ -78,13 +78,25 @@ You need:
 * Bash with `curl` and `jq`, or PowerShell 7, plus OpenSSH `ssh-keygen`.
 * Permission to run VM Run Command and query Log Analytics.
 
-```bash
-az version
-azd version
-python --version
-ssh-keygen -V 2>&1 | head -1 || true
-python -m pip install -r requirements.txt
-```
+=== "Bash"
+
+    ```bash
+    az version
+    azd version
+    python --version
+    ssh-keygen -V 2>&1 | head -1 || true
+    python -m pip install -r requirements.txt
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az version
+    azd version
+    python --version
+    Get-Command ssh-keygen | Select-Object -ExpandProperty Source
+    python -m pip install -r requirements.txt
+    ```
 
 The deployment does not require Docker or a local .NET SDK. The VM installs the
 Ubuntu-packaged .NET 8 SDK and builds a checksummed source bundle delivered
@@ -92,12 +104,27 @@ through Run Command.
 
 ### Task 2: Authenticate and choose the subscription
 
-```bash
-az login
-az account set --subscription "<subscription-id-or-name>"
-az account show --query "{Name:name, Subscription:id, Tenant:tenantId}" --output table
-azd auth login
-```
+=== "Bash"
+
+    ```bash
+    az login
+    az account set --subscription "<subscription-id-or-name>"
+    az account show \
+      --query "{Name:name, Subscription:id, Tenant:tenantId}" \
+      --output table
+    azd auth login
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az login
+    az account set --subscription "<subscription-id-or-name>"
+    az account show `
+      --query "{Name:name, Subscription:id, Tenant:tenantId}" `
+      --output table
+    azd auth login
+    ```
 
 Use the same identity and tenant for both CLIs. The preflight check rejects
 mismatched logins before creating resources.
@@ -107,24 +134,49 @@ mismatched logins before creating resources.
 Use a new environment name. The deployment deliberately refuses to migrate a
 resource group tagged with an older workshop architecture.
 
-```bash
-azd env new "<your-alias>-sre-vm-aue"
-azd env set AZURE_LOCATION australiaeast
-```
+=== "Bash"
+
+    ```bash
+    azd env new "<your-alias>-sre-vm-aue"
+    azd env set AZURE_LOCATION australiaeast
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    azd env new "<your-alias>-sre-vm-aue"
+    azd env set AZURE_LOCATION australiaeast
+    ```
 
 Optionally configure an alert email before deployment:
 
-```bash
-azd env set ALERT_EMAIL "you@example.com"
-```
+=== "Bash"
+
+    ```bash
+    azd env set ALERT_EMAIL "you@example.com"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    azd env set ALERT_EMAIL "you@example.com"
+    ```
 
 The default `Standard_D2as_v5` is an x64, two-vCPU, non-burstable VM. If it is
 unavailable within your quota, choose another x64 Generation 2 size with at
 least 4 GiB RAM:
 
-```bash
-azd env set VM_SIZE "<available-x64-vm-size>"
-```
+=== "Bash"
+
+    ```bash
+    azd env set VM_SIZE "<available-x64-vm-size>"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    azd env set VM_SIZE "<available-x64-vm-size>"
+    ```
 
 Preflight reports policy, provider, quota, SKU, or regional availability
 problems explicitly. It never changes your subscription, requests quota, picks a
@@ -132,9 +184,17 @@ different region, or creates policy exemptions.
 
 ### Task 4: Deploy the workshop
 
-```bash
-azd up
-```
+=== "Bash"
+
+    ```bash
+    azd up
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    azd up
+    ```
 
 Allow approximately 8 to 15 minutes for a fresh deployment. The workflow:
 
@@ -174,10 +234,19 @@ secret.
 
 ### Task 6: Prove the application and storage layout
 
-```bash
-python scripts/workshop.py smoke
-python scripts/workshop.py inspect
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py smoke
+    python scripts/workshop.py inspect
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py smoke
+    python scripts/workshop.py inspect
+    ```
 
 `smoke` validates the public URL and persisted order shape. `inspect` runs a
 read-only check through authenticated Run Command and verifies:
@@ -191,27 +260,64 @@ read-only check through authenticated Run Command and verifies:
 
 Call the same public endpoints yourself:
 
-```bash
-curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/health/live" | jq .
-curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/health/ready" | jq .
-curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" | jq .
-curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" | jq .
-```
+=== "Bash"
+
+    ```bash
+    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/health/live" | jq .
+    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/health/ready" | jq .
+    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" | jq .
+    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" | jq .
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/health/live"
+    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/health/ready"
+    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders"
+    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/storage"
+    ```
 
 Create a synthetic order:
 
-```bash
-curl --silent --fail \
-  --request POST "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" \
-  --header 'Content-Type: application/json' \
-  --data '{"customerId":"module-01","productId":"SKU-1002","quantity":2}' | jq .
-```
+=== "Bash"
+
+    ```bash
+    curl --silent --fail \
+      --request POST "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" \
+      --header 'Content-Type: application/json' \
+      --data '{"customerId":"module-01","productId":"SKU-1002","quantity":2}' | jq .
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    $body = @{
+      customerId = 'module-01'
+      productId  = 'SKU-1002'
+      quantity   = 2
+    } | ConvertTo-Json
+
+    Invoke-RestMethod `
+      -Method Post `
+      -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" `
+      -ContentType 'application/json' `
+      -Body $body
+    ```
 
 ### Task 7: Prove restart recovery and persistence
 
-```bash
-python scripts/workshop.py verify-restart
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py verify-restart
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py verify-restart
+    ```
 
 The command creates or reuses a persistence witness, restarts only the selected
 workshop VM, waits for readiness, and verifies:

@@ -55,28 +55,75 @@ flowchart LR
 
 ### Task 1: Prepare the baseline and notes
 
-```bash
-source .workshop/workshop.env
-python scripts/workshop.py fault reset
-python scripts/workshop.py smoke
-```
+=== "Bash"
+
+    ```bash
+    source .workshop/workshop.env
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py smoke
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py smoke
+    ```
 
 Start normal traffic in another terminal:
 
-```bash
-source .workshop/workshop.env
-./scripts/generate-load.sh "${SERVICE_ORDERS_API_ENDPOINT_URL}" 5 900
-```
+=== "Bash"
+
+    ```bash
+    source .workshop/workshop.env
+    ./scripts/generate-load.sh "${SERVICE_ORDERS_API_ENDPOINT_URL}" 5 900
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    . ./.workshop/workshop.ps1
+    $until = (Get-Date).AddMinutes(15)
+    $products = 'SKU-1001','SKU-1002','SKU-1003','SKU-1004','SKU-1005'
+    while ((Get-Date) -lt $until) {
+      $body = @{
+        customerId = "cpu-incident-$((Get-Random -Maximum 500))"
+        productId  = $products | Get-Random
+        quantity   = Get-Random -Minimum 1 -Maximum 6
+      } | ConvertTo-Json
+      Invoke-RestMethod `
+        -Method Post `
+        -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" `
+        -ContentType 'application/json' `
+        -Body $body | Out-Null
+      Start-Sleep -Milliseconds 200
+    }
+    ```
 
 Record the start time:
 
-```bash
-mkdir -p .workshop/notes
-INCIDENT_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-printf '# CPU incident\n\nFault requested at UTC: %s\n\n' "${INCIDENT_START}" \
-  > .workshop/notes/incident-01-cpu.md
-echo "${INCIDENT_START}"
-```
+=== "Bash"
+
+    ```bash
+    mkdir -p .workshop/notes
+    INCIDENT_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '# CPU incident\n\nFault requested at UTC: %s\n\n' "${INCIDENT_START}" \
+      > .workshop/notes/incident-01-cpu.md
+    echo "${INCIDENT_START}"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    New-Item -ItemType Directory -Force .workshop/notes | Out-Null
+    $INCIDENT_START = (Get-Date).ToUniversalTime().ToString(
+      'yyyy-MM-ddTHH:mm:ssZ'
+    )
+    "# CPU incident`n`nFault requested at UTC: $INCIDENT_START`n" |
+      Set-Content .workshop/notes/incident-01-cpu.md
+    $INCIDENT_START
+    ```
 
 Open the workshop VM's **Monitoring** > **Metrics** blade before injecting the
 fault. Select **Percentage CPU**, **Average**, **1 minute**, and **Last 30
@@ -86,9 +133,17 @@ minutes**. Leave the chart open.
 
 In the first terminal:
 
-```bash
-python scripts/workshop.py fault cpu 600 2
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py fault cpu 600 2
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py fault cpu 600 2
+    ```
 
 This starts two CPU workers for ten minutes. Valid durations are 10 through 1800
 seconds and valid worker counts are 1 through 8. The fault process has a 256 MiB
@@ -103,14 +158,42 @@ memory limit and runs at a reduced scheduling priority.
 
 While the fault is active, poll the endpoint:
 
-```bash
-for i in $(seq 1 40); do
-  curl --silent --output /dev/null --max-time 20 \
-    --write-out "$(date -u +%H:%M:%S) status=%{http_code} seconds=%{time_total}\n" \
-    "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders"
-  sleep 10
-done
-```
+=== "Bash"
+
+    ```bash
+    for i in $(seq 1 40); do
+      curl --silent --output /dev/null --max-time 20 \
+        --write-out "$(date -u +%H:%M:%S) status=%{http_code} seconds=%{time_total}\n" \
+        "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders"
+      sleep 10
+    done
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    1..40 | ForEach-Object {
+      $timer = [System.Diagnostics.Stopwatch]::StartNew()
+      try {
+        $response = Invoke-WebRequest `
+          -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" `
+          -TimeoutSec 20 `
+          -SkipHttpErrorCheck `
+          -ErrorAction Stop
+        $status = [int]$response.StatusCode
+      }
+      catch {
+        $status = 0
+      }
+      $timer.Stop()
+      '{0} status={1} seconds={2:N3}' -f @(
+        (Get-Date).ToUniversalTime().ToString('HH:mm:ss')
+        $status
+        $timer.Elapsed.TotalSeconds
+      )
+      Start-Sleep -Seconds 10
+    }
+    ```
 
 Watch the load-generator response counts at the same time. Depending on Azure
 host scheduling and current load, requests can remain successful but become
@@ -179,44 +262,93 @@ because it is plausible.
 
 Query the platform metric:
 
-```bash
-az monitor metrics list \
-  --resource "${VM_RESOURCE_ID}" \
-  --metric "Percentage CPU" \
-  --interval PT1M \
-  --aggregation Average Maximum \
-  --start-time "${INCIDENT_START}" \
-  --output table
-```
+=== "Bash"
+
+    ```bash
+    az monitor metrics list \
+      --resource "${VM_RESOURCE_ID}" \
+      --metric "Percentage CPU" \
+      --interval PT1M \
+      --aggregation Average Maximum \
+      --start-time "${INCIDENT_START}" \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az monitor metrics list `
+      --resource $env:VM_RESOURCE_ID `
+      --metric "Percentage CPU" `
+      --interval PT1M `
+      --aggregation Average Maximum `
+      --start-time $INCIDENT_START `
+      --output table
+    ```
 
 Query request impact:
 
-```bash
-az monitor log-analytics query \
-  --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
-  --analytics-query "
-AppRequests
-| where TimeGenerated > ago(45m)
-| where AppRoleName == 'orders-api'
-| summarize
-    Requests = sum(ItemCount),
-    SuccessRate = round(100.0 * sumif(ItemCount, Success == true) / sum(ItemCount), 2),
-    P95Ms = round(percentile(DurationMs, 95), 1)
-  by bin(TimeGenerated, 1m)
-| order by TimeGenerated asc
-" \
-  --output table
-```
+=== "Bash"
+
+    ```bash
+    az monitor log-analytics query \
+      --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
+      --analytics-query "
+    AppRequests
+    | where TimeGenerated > ago(45m)
+    | where AppRoleName == 'orders-api'
+    | summarize
+        Requests = sum(ItemCount),
+        SuccessRate = round(100.0 * sumif(ItemCount, Success == true) / sum(ItemCount), 2),
+        P95Ms = round(percentile(DurationMs, 95), 1)
+      by bin(TimeGenerated, 1m)
+    | order by TimeGenerated asc
+    " \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    $query = @'
+    AppRequests
+    | where TimeGenerated > ago(45m)
+    | where AppRoleName == 'orders-api'
+    | summarize
+        Requests = sum(ItemCount),
+        SuccessRate = round(100.0 * sumif(ItemCount, Success == true) / sum(ItemCount), 2),
+        P95Ms = round(percentile(DurationMs, 95), 1)
+      by bin(TimeGenerated, 1m)
+    | order by TimeGenerated asc
+    '@
+
+    az monitor log-analytics query `
+      --workspace $env:LOG_ANALYTICS_CUSTOMER_ID `
+      --analytics-query $query `
+      --output table
+    ```
 
 Check the control-plane change:
 
-```bash
-az monitor activity-log list \
-  --resource-id "${VM_RESOURCE_ID}" \
-  --offset 2h \
-  --query "[].{Time:eventTimestamp, Operation:operationName.localizedValue, Status:status.value, Caller:caller}" \
-  --output table
-```
+=== "Bash"
+
+    ```bash
+    az monitor activity-log list \
+      --resource-id "${VM_RESOURCE_ID}" \
+      --offset 2h \
+      --query "[].{Time:eventTimestamp, Operation:operationName.localizedValue, Status:status.value, Caller:caller}" \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az monitor activity-log list `
+      --resource-id $env:VM_RESOURCE_ID `
+      --offset 2h `
+      --query "[].{Time:eventTimestamp, Operation:operationName.localizedValue, Status:status.value, Caller:caller}" `
+      --output table
+    ```
 
 The expected causal chain is: authenticated Run Command started a bounded guest
 unit, VM CPU crossed the threshold, and request behavior changed in the same
@@ -227,11 +359,21 @@ window. SQLite exceptions are not required and should not be invented.
 The fault stops after ten minutes, but reset it explicitly once you have enough
 evidence:
 
-```bash
-python scripts/workshop.py fault reset
-python scripts/workshop.py fault status
-python scripts/workshop.py smoke
-```
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py fault status
+    python scripts/workshop.py smoke
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py fault reset
+    python scripts/workshop.py fault status
+    python scripts/workshop.py smoke
+    ```
 
 Keep the load generator running for another five minutes. In the VM Metrics
 blade, watch **Percentage CPU** return toward the Module 02 baseline. In
