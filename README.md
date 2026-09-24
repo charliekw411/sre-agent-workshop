@@ -1,7 +1,7 @@
 ---
 title: Azure SRE Agent Workshop
 description: A hands-on workshop that teaches incident detection, investigation, and root cause analysis on Azure using Azure SRE Agent and native Azure monitoring.
-ms.date: 2026-09-21
+ms.date: 2026-09-23
 ms.topic: overview
 keywords:
   - azure sre agent
@@ -48,32 +48,29 @@ Deploy a realistic Azure workload, break it three different ways on purpose, and
 
 ## What gets deployed
 
-Contoso Order Services, a two-service order-processing platform:
+A single-VM deployment of the Orders API:
 
-* `orders-api` on Azure Container Apps with public HTTPS ingress
-* `catalog-api` on Azure Container Apps with internal ingress
-* A Consumption workload-profile Container Apps environment, `cae-private-<suffix>`, in a delegated subnet of `vnet-<suffix>`
-* Azure SQL Database with a deliberately small size ceiling and public network access disabled
-* Key Vault with public network access disabled for the fault-injection secret
-* Two Private Endpoints, one each for SQL and Key Vault, with VNet-linked private DNS
-* A public Basic Azure Container Registry for Entra-authenticated remote builds and managed-identity image pulls, with admin and anonymous access disabled
-* Log Analytics workspace and workspace-based Application Insights
-* Five metric alert rules and two log alert rules
-* Azure SRE Agent scoped to the workshop resource group
-* A manual-trigger SQL bootstrap job, started and checked automatically by deployment hooks
-* Managed-identity Container Apps jobs `workshop-token-init` and `workshop-fault-client` for private-vault initialization and fault requests
+* One Ubuntu 24.04 VM, `Standard_D2as_v5` by default, running the .NET 8 Orders API as a non-root systemd service
+* SQLite on a separate 8 GiB managed data disk, mounted by UUID at `/var/lib/orders`
+* A VNet, subnet, NSG, and static public IP with a stable Azure DNS name
+* Public HTTP on port 8080 only, with no public SSH or fault-injection endpoints
+* Log Analytics, Application Insights, Azure Monitor Agent, a Data Collection Rule, and CPU, disk, and request-error alerts
+* A read-only Azure SRE Agent with Application Insights and Log Analytics connectors
 
-The earlier estimate of 2 to 4 US dollars per day excludes the added private-network
-and job costs, as well as Azure SRE Agent. Two Private Endpoints add about 0.48 US
-dollars per day at an illustrative 0.01 US dollars per endpoint-hour, plus data
-processing, private DNS, and short on-demand jobs. Regional rates vary. See
-[Cost Management](docs/sre/30-appendix/03-cost-management.md).
+Catalog API, Container Apps, ACR, Azure SQL, Key Vault, private endpoints, private
+DNS zones, and container jobs are no longer deployed. VM administration and
+bounded CPU/disk faults use authenticated Azure VM Run Command.
 
-This design accommodates policies that disable SQL and Key Vault public access
-and disallow storage shared keys. It does not make every endpoint private: ACR,
-Azure Monitor ingestion/query, and Orders ingress remain public. Policies that
-also block those paths require additional architecture work or an approved
-environment, not policy-bypass tags or exemptions.
+This is a disposable workshop workload, not a production architecture: the public
+API is unauthenticated HTTP, there is no high availability or database backup,
+and only synthetic data should be used. Azure policy must permit the VM public
+endpoint and outbound access to Ubuntu packages, NuGet, and Azure monitoring.
+No policy exemptions are created. The VM, disks, public IP, monitoring, and SRE
+Agent incur charges until removed; old Container Apps cost estimates do not apply.
+
+The curriculum in `docs/sre/` and instructional content in `agent/` have not yet
+been migrated. Deployment does not upload those legacy instructions to the new
+SRE Agent. Use the deployment and validation commands below for this architecture.
 
 ## Repository layout
 
@@ -84,7 +81,7 @@ environment, not policy-bypass tags or exemptions.
 ├── docs/               Workshop content published to GitHub Pages
 ├── infra/              Bicep templates and the azd deployment entry point
 ├── scripts/            Load generation and fault injection helpers
-├── src/                Sample .NET 8 services
+├── src/                Orders API and application regression tests
 ├── mkdocs.yml          Site configuration
 └── Makefile            Documentation build targets
 ```
@@ -103,12 +100,15 @@ Open [http://localhost:8000](http://localhost:8000).
 
 * Subscription `Owner`, or `Contributor` plus `User Access Administrator`, to create the resource group and all role assignments.
 * Azure Developer CLI 1.18 or later.
-* Azure CLI 2.60 or later with the `containerapp`, `application-insights`, and `log-analytics` extensions.
-* Bash or PowerShell.
+* Azure CLI 2.60 or later. Deployment does not require Azure CLI extensions.
+* Bash or PowerShell 7, plus OpenSSH `ssh-keygen`.
 * Python 3.10 or later with PyYAML (`python -m pip install -r requirements.txt`).
-* `jq` for parsing command output.
+* Permission to execute VM Run Command and query workspace logs for live validation.
 
-Full details in [Module 01](docs/sre/01-prerequisites/index.md).
+A local Docker daemon or .NET SDK is not required for deployment. The VM installs
+the Ubuntu-packaged .NET 8 SDK and builds the small, checksummed source bundle
+sent through Run Command. Local application development requires the .NET 8 SDK
+or a newer SDK with the .NET 8 runtime.
 
 ## Deploy the complete workshop
 
@@ -118,66 +118,121 @@ From the cloned repository, with prerequisites installed:
 az login
 az account set --subscription "<your-subscription-id>"
 azd auth login
-azd env new "<your-alias>-workshop"
-azd env set AZURE_LOCATION eastus2
+azd env list
+azd env new "<your-alias>-sre-vm-aue"
+azd env set AZURE_LOCATION australiaeast
 azd up
 ```
 
-`azd up` runs `provision`, then `package`, then `deploy --all`. Provisioning creates
-the private networking, apps, monitoring, SRE Agent, RBAC, and Key Vault with faults
-initially disabled. The `postprovision` hook starts `workshop-token-init`, waits
-for success, attaches the private Key Vault reference to `orders-api`, and enables
-fault endpoints. The job creates only a missing `fault-token`, preserving an
-existing token. No ARM deployment script, supporting storage account, or Azure
-Container Instance is needed.
+Start with a new environment, not a prior Container Apps deployment. `preup`
+checks identity, registers required providers, and generates the provisioning
+public key; its unused private key is discarded. The `up` workflow provisions
+Bicep resources, then `postprovision` mounts the managed disk, publishes the API,
+initializes SQLite, enables systemd, configures an enabled Azure Monitor response
+plan for Sev1 and Sev2 alerts in Review mode, and calls the actual public
+`/orders` endpoint. The smoke check validates persisted order fields and confirms
+the old HTTP fault routes return 404. A successful VM creation alone is not
+success.
 
-Packaging builds images remotely in ACR. After deployment, `postdeploy` runs the
-managed-identity SQL bootstrap, makes a smoke request, then syncs
-`agent/incident-filters.yaml` and `agent/knowledge.yaml` and waits for indexing.
-No local Docker or .NET SDK, portal configuration, manual role grants, SQL
-passwords, or pasted agent configuration are required.
-SRE Agent uses `Microsoft.App/agents@2025-05-01-preview`; region availability is
-constrained, so use the supported default `eastus2`.
+The final output includes the API URL, VM, data disk, workspace, and SRE Agent
+resource IDs. Safe outputs are also exported to `.workshop/workshop.env` and
+`.workshop/workshop.ps1`. Logs and JSON evidence are kept under the ignored
+`.workshop/<environment>/` directory. Failures identify the stage and preserve
+Azure diagnostics; guest deployment diagnostics are in
+`/var/log/orders-deployment.log` and `journalctl -u orders-api`.
 
-SQL is Entra-only, with a separate bootstrap identity and object-level runtime
-permissions. Initialization inserts five deterministic seed orders without
-overwriting existing orders or ballast; see [Module 03](docs/sre/03-deploy-infrastructure/index.md).
-The runtime agent investigates read-only; it cannot start the jobs or read vault
-secrets and is not granted the subscription `Monitoring Contributor` role needed
-for full Azure Monitor alert lifecycle operations.
+Repeated `azd up` uses the same disk and UUID mount, preserves all existing
+orders, does not duplicate seed rows, and reuses an unchanged published bundle.
+An existing resource group without the single-VM architecture tag is rejected
+rather than migrated or deleted. Set `VM_SIZE` with `azd env set` before deployment
+if the default size is unavailable in your subscription.
 
-After deployment, load `source .workshop/workshop.env` in Bash or
-`. ./.workshop/workshop.ps1` in PowerShell. These allowlisted exports contain only
-safe identifiers and endpoints, not secrets. Use `./scripts/inject-fault.sh status`
-or `./scripts/inject-fault.ps1 status`. The same helper commands and defaults now
-start and wait for `workshop-fault-client` through ARM. That job retrieves the
-credential inside the VNet and calls the existing `/fault` routes; your laptop
-never retrieves it and needs no VPN or private-vault data access.
+### Azure Free Account constraints
 
-The helper queries only the correlated non-secret JSON result in
-`ContainerAppConsoleLogs_CL`, using the Azure CLI `log-analytics` extension.
-Your subscription role must permit starting the job and querying workspace logs.
-Progress goes to stderr and JSON to stdout. Log ingestion can take up to five
-minutes after job success; status is a snapshot from the job, not necessarily
-the state when you receive it. On a result timeout, retain the execution name and
-32-character request ID and run `python scripts/workshop.py fault-result <request-id>`
-to retry read-only retrieval, never reinject to fetch a missing result. Queries
-cover the last hour (`PT1H`), subject to log availability policies. See
-[fault helper results](docs/sre/30-appendix/01-variables.md#fault-helper-results-and-retry).
+The initial $200 credit can fund paid Azure service tiers during the first
+30 days; it does not restrict the VM to the monthly-free sizes. The default
+`Standard_D2as_v5` consumes credit and is not a monthly-free VM. Preflight checks
+the selected x64/Generation 2 size, subscription SKU restrictions, and regional
+and VM-family quotas. It never requests a quota increase, upgrades a subscription,
+removes its spending limit, or silently changes region. Free Trial subscriptions
+[cannot request quota increases](https://learn.microsoft.com/en-us/azure/quotas/quickstart-increase-quota-portal).
 
-An earlier failed deployment with no apps or jobs can rerun in the same azd environment,
-creating `cae-private-*` and reusing existing SQL, vault, and data. If apps or jobs already
-use the old non-VNet environment, preprovision stops before attempting a move or
-deletion; choose a new azd environment name. See
-[migration guidance](docs/sre/03-deploy-infrastructure/index.md#updating-an-earlier-deployment)
-before retrying. Updating these files alone changes no Azure resources.
+Monthly-free `B1s` and `B2ats_v2` have only 1 GiB RAM; the on-VM build plus Azure
+Monitor Agent has not been validated at that size. `B2pts_v2` is ARM64 and cannot
+use this x64 deployment. B-series CPU-credit throttling can also affect CPU labs.
+Prefer an available x64 size with at least 4 GiB RAM within existing quotas.
 
-To refresh checked-in agent content without a full deployment, run
-`python scripts/workshop.py configure-agent`.
+Log Analytics has a 1 GB/day ingestion safeguard and SRE Agent has a 500-AAU
+active-usage limit. Neither is a total monetary cap: ingestion can overshoot its
+cap and reaching it stops telemetry; SRE Agent always-on charges continue until
+deletion unless its separate evaluation offer applies. Model availability varies
+by subscription and region. No separately purchased Marketplace model is deployed.
+See [Free Account credit rules](https://learn.microsoft.com/en-us/azure/cost-management-billing/manage/create-free-services)
+and [SRE Agent billing](https://learn.microsoft.com/en-us/azure/sre-agent/pricing-billing).
+An E2E run on another subscription does not prove Free Account eligibility.
+
+## Validate and benchmark the deployment
+
+For a clean wall-clock benchmark, run `python scripts/workshop.py benchmark`
+**instead of the first `azd up`** in a newly created `australiaeast` environment.
+It refuses an existing resource group, times the entire `azd up` subprocess
+through the final public smoke check, and records total and stage durations.
+The target is approximately 8 to 15 minutes, not a guaranteed Azure SLA.
+Provider registration, VM capacity, package downloads, and SRE Agent provisioning
+can affect the result.
+
+After deployment:
+
+```bash
+python scripts/workshop.py smoke
+python scripts/workshop.py inspect
+python scripts/workshop.py verify-restart
+python scripts/workshop.py telemetry
+azd up
+python scripts/workshop.py inspect
+```
+
+`verify-restart` creates one persistent test order, restarts the VM through Azure,
+and verifies a changed boot ID, the same disk UUID, automatic service recovery,
+and the unchanged public order. `telemetry` waits up to ten minutes for VM
+heartbeat, CPU, data-disk free space, API requests, SQLite dependencies, and
+availability results in Log Analytics. Exception telemetry is recorded when
+real application failures occur. The availability signal is a VM-local database
+probe, not an independent external uptime monitor.
+
+## Controlled workshop faults and cleanup
+
+```bash
+python scripts/workshop.py fault cpu 600 2
+python scripts/workshop.py fault disk 90 600
+python scripts/workshop.py fault status
+python scripts/workshop.py fault reset
+```
+
+These commands require Azure VM Run Command permissions, not an HTTP token.
+CPU pressure runs in a time-limited systemd unit. Disk pressure allocates a
+dedicated ballast file only on the managed data disk, retains at least 128 MiB
+for recovery, and removes that file on expiry or reset. Durations are capped at
+30 minutes. The ten-minute examples are long enough for the five-minute alert
+windows and monitoring ingestion; matching Sev1/Sev2 Azure Monitor alerts start
+an SRE Agent investigation in Review mode. `reset` never deletes SQLite data. If
+a Run Command request times out, inspect `fault status` before retrying an
+injection.
+
+The deployment remains running until explicitly removed:
+
+```bash
+azd down --purge
+```
+
+This removes the resource group, VM, managed disks, monitoring, and SRE Agent.
+Deleting the resource group permanently deletes the workshop database.
 
 ## A warning about the sample application
 
-`orders-api` includes fault-injection endpoints that saturate CPU, force dependency failures, and consume database storage until writes fail. They are gated behind a shared secret and disabled unless explicitly enabled.
+Authenticated workshop fault scripts deliberately consume VM CPU and data-disk
+space. Run them only against this disposable environment. The public API exposes
+sample order operations, never destructive fault operations.
 
 Do not copy this code into anything that serves real traffic.
 

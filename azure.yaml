@@ -2,64 +2,47 @@
 
 name: sre-agent-workshop
 metadata:
-  template: sre-agent-workshop@0.1.0
+  template: sre-agent-workshop@0.2.0
 requiredVersions:
   azd: ">=1.18.0"
 infra:
   provider: bicep
   path: infra/azd
-services:
-  catalog-api:
-    project: ./src/CatalogApi
-    language: dotnet
-    host: containerapp
-    resourceName: catalog-api
-    docker:
-      path: ./Dockerfile
-      remoteBuild: true
-      image: catalog-api
-  orders-api:
-    project: ./src/OrdersApi
-    language: dotnet
-    host: containerapp
-    resourceName: orders-api
-    uses:
-      - catalog-api
-    docker:
-      path: ./Dockerfile
-      remoteBuild: true
-      image: orders-api
 workflows:
   up:
     steps:
       - azd: provision
-      - azd: package
-      - azd: deploy --all
 hooks:
-  preprovision:
+  preup:
     windows:
       shell: pwsh
       run: ./scripts/prepare-azd-env.ps1
+      interactive: true
       dir: .
     posix:
       shell: sh
       run: bash ./scripts/prepare-azd-env.sh
+      interactive: true
+      dir: .
+  preprovision:
+    windows:
+      shell: pwsh
+      run: ./scripts/invoke-workshop.ps1 preprovision
+      interactive: true
+      dir: .
+    posix:
+      shell: sh
+      run: python3 ./scripts/workshop.py preprovision
+      interactive: true
       dir: .
   postprovision:
     windows:
       shell: pwsh
       run: ./scripts/postprovision.ps1
+      interactive: true
       dir: .
     posix:
       shell: sh
       run: bash ./scripts/postprovision.sh
-      dir: .
-  postdeploy:
-    windows:
-      shell: pwsh
-      run: ./scripts/postdeploy.ps1
-      dir: .
-    posix:
-      shell: sh
-      run: bash ./scripts/postdeploy.sh
+      interactive: true
       dir: .

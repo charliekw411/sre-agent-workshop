@@ -30,40 +30,33 @@ permissions:
 
 jobs:
   bicep-build:
-    name: Bicep Build
+    name: Bicep and architecture regression
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        template:
-          - infra/main.bicep
-          - infra/apps.bicep
-          - infra/alerts.bicep
-          - infra/azd/main.bicep
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install Bicep CLI
         run: az bicep install
-      - name: Build ${{ matrix.template }}
-        run: az bicep build --file ${{ matrix.template }} --stdout > /dev/null
-      - name: Lint ${{ matrix.template }}
-        run: az bicep lint --file ${{ matrix.template }}
+      - name: Build and check every nested infrastructure module
+        run: |
+          az bicep build --file infra/azd/main.bicep --outfile "$RUNNER_TEMP/workshop-template.json"
+          python scripts/check_infra.py "$RUNNER_TEMP/workshop-template.json"
+          az bicep lint --file infra/azd/main.bicep
 
   dotnet-build:
-    name: Build Sample Application
+    name: Build and test Orders API
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        project:
-          - src/OrdersApi/OrdersApi.csproj
-          - src/CatalogApi/CatalogApi.csproj
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
-      - name: Build ${{ matrix.project }}
-        run: dotnet build ${{ matrix.project }} --configuration Release
+      - name: Build Orders API
+        run: dotnet build src/OrdersApi/OrdersApi.csproj --configuration Release
+      - name: Test SQLite persistence and HTTP contract
+        run: dotnet test src/OrdersApi.Tests/OrdersApi.Tests.csproj --configuration Release
+      - name: Check application formatting
+        run: dotnet format src/OrdersApi/OrdersApi.csproj --verify-no-changes --no-restore
 
   deployment-hooks:
     name: Deployment hooks (${{ matrix.os }})
@@ -75,7 +68,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install YAML parser
         run: python -m pip install PyYAML==6.0.2
-      - name: Validate manifests and hook regressions
+      - name: Validate manifests, orchestration, and bounded faults
         run: |
           python scripts/workshop.py validate
           python -m unittest discover -s scripts -p "test_*.py" -v
@@ -84,4 +77,4 @@ jobs:
         run: ./scripts/invoke-workshop.ps1 validate
       - name: Validate Bash entrypoints
         if: runner.os == 'Linux'
-        run: shellcheck scripts/prepare-azd-env.sh scripts/export-azd-env.sh scripts/postprovision.sh scripts/postdeploy.sh scripts/inject-fault.sh
+        run: shellcheck scripts/prepare-azd-env.sh scripts/export-azd-env.sh scripts/postprovision.sh scripts/inject-fault.sh scripts/generate-load.sh scripts/vm/install.sh

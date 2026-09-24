@@ -1,15 +1,17 @@
-metadata description = 'Azure Developer CLI entry point for the complete Azure SRE Agent workshop environment.'
+metadata description = 'Azure Developer CLI entry point for a fresh single-VM Azure SRE Agent workshop environment.'
 
 targetScope = 'subscription'
 
 @description('Name of the Azure Developer CLI environment.')
 @minLength(1)
-param environmentName string
+@maxLength(64)
+param envName string
 
 @description('Azure region for all workshop resources.')
-param location string
+param location string = 'australiaeast'
 
 @description('Object ID of the signed-in attendee or service principal.')
+@minLength(1)
 param deployerPrincipalId string
 
 @allowed([
@@ -18,16 +20,29 @@ param deployerPrincipalId string
 ])
 param deployerPrincipalType string = 'User'
 
-@description('Optional email address that receives workshop alert notifications.')
+@description('SSH public key generated and retained in the azd environment by preup. No SSH port is exposed.')
+@secure()
+@minLength(1)
+param vmSshPublicKey string
+
+@description('VM size override. The default supplies two non-burstable x64 vCPUs.')
+param vmSize string = 'Standard_D2as_v5'
+
+@description('Separate SQLite data disk capacity in GiB; keep unchanged on redeployment unless growing the disk.')
+@minValue(4)
+@maxValue(1023)
+param dataDiskSizeGiB int = 8
+
+@description('Optional email address for workshop alert notifications.')
 param alertEmail string = ''
 
-var normalizedEnvironmentName = toLower(replace(environmentName, '-', ''))
-var suffix = '${take(normalizedEnvironmentName, 5)}${take(uniqueString(subscription().id, environmentName), 7)}'
-var resourceGroupName = 'rg-sre-agent-workshop-${environmentName}'
+var suffix = take(uniqueString(subscription().id, envName), 12)
+var resourceGroupName = 'rg-sre-agent-workshop-${envName}'
 var tags = {
   workload: 'sre-agent-workshop'
-  environment: environmentName
-  'azd-env-name': environmentName
+  environment: envName
+  'azd-env-name': envName
+  'workshop-architecture': 'single-vm'
 }
 
 resource workshopResourceGroup 'Microsoft.Resources/resourceGroups@2024-03-01' = {
@@ -36,93 +51,52 @@ resource workshopResourceGroup 'Microsoft.Resources/resourceGroups@2024-03-01' =
   tags: tags
 }
 
-module foundation '../main.bicep' = {
+module workshop '../main.bicep' = {
+  name: 'workshop'
   scope: workshopResourceGroup
   params: {
     location: location
     suffix: suffix
     deployerPrincipalId: deployerPrincipalId
     deployerPrincipalType: deployerPrincipalType
-    tags: tags
-  }
-}
-
-module applications '../apps.bicep' = {
-  scope: workshopResourceGroup
-  params: {
-    location: location
-    environmentName: environmentName
-    suffix: suffix
-    ordersImage: 'mcr.microsoft.com/dotnet/samples:aspnetapp'
-    catalogImage: 'mcr.microsoft.com/dotnet/samples:aspnetapp'
-    tags: tags
-  }
-  dependsOn: [
-    foundation
-  ]
-}
-
-module monitoring '../alerts.bicep' = {
-  scope: workshopResourceGroup
-  params: {
-    location: location
-    suffix: suffix
+    vmSshPublicKey: vmSshPublicKey
+    vmSize: vmSize
+    dataDiskSizeGiB: dataDiskSizeGiB
     alertEmail: alertEmail
     tags: tags
   }
-  dependsOn: [
-    applications
-  ]
-}
-
-module sreAgent '../sre-agent.bicep' = {
-  scope: workshopResourceGroup
-  params: {
-    location: location
-    suffix: suffix
-    deployerPrincipalId: deployerPrincipalId
-    deployerPrincipalType: deployerPrincipalType
-    tags: tags
-  }
-  dependsOn: [
-    foundation
-  ]
 }
 
 output AZURE_RESOURCE_GROUP string = workshopResourceGroup.name
-output AZURE_CONTAINER_REGISTRY_ENDPOINT string = foundation.outputs.registryLoginServer
-output AZURE_CONTAINER_REGISTRY_NAME string = foundation.outputs.registryName
+output RESOURCE_GROUP string = workshopResourceGroup.name
 output WORKSHOP_SUFFIX string = suffix
 output LOCATION string = location
-output RESOURCE_GROUP string = workshopResourceGroup.name
 output SUBSCRIPTION_ID string = subscription().subscriptionId
 output TENANT_ID string = tenant().tenantId
-output ACR_NAME string = foundation.outputs.registryName
-output ACR_LOGIN_SERVER string = foundation.outputs.registryLoginServer
-output LOG_ANALYTICS_NAME string = foundation.outputs.workspaceName
-output LOG_ANALYTICS_ID string = foundation.outputs.workspaceResourceId
-output LOG_ANALYTICS_CUSTOMER_ID string = foundation.outputs.workspaceCustomerId
-output APP_INSIGHTS_NAME string = foundation.outputs.appInsightsName
-output SQL_SERVER_NAME string = foundation.outputs.sqlServerName
-output SQL_DATABASE_NAME string = foundation.outputs.sqlDatabaseName
-output CONTAINER_ENV_NAME string = foundation.outputs.containerAppsEnvironmentName
-output ORDERS_API_FQDN string = applications.outputs.ordersApiFqdn
-output SERVICE_ORDERS_API_ENDPOINT_URL string = 'https://${applications.outputs.ordersApiFqdn}'
-output BOOTSTRAP_JOB_NAME string = applications.outputs.bootstrapJobName
-output TOKEN_INITIALIZER_JOB_NAME string = foundation.outputs.tokenInitializerJobName
-output FAULT_CLIENT_JOB_NAME string = applications.outputs.faultClientJobName
-output VIRTUAL_NETWORK_NAME string = foundation.outputs.virtualNetworkName
-output SQL_PRIVATE_ENDPOINT_NAME string = foundation.outputs.sqlPrivateEndpointName
-output KEY_VAULT_PRIVATE_ENDPOINT_NAME string = foundation.outputs.keyVaultPrivateEndpointName
-output KEY_VAULT_NAME string = foundation.outputs.keyVaultName
-output KEY_VAULT_URI string = foundation.outputs.keyVaultUri
-output FAULT_TOKEN_SECRET_URI string = foundation.outputs.faultTokenSecretUri
-output ORDERS_IDENTITY_PRINCIPAL_ID string = foundation.outputs.identityPrincipalId
-output ORDERS_IDENTITY_CLIENT_ID string = foundation.outputs.identityClientId
-output ORDERS_IDENTITY_RESOURCE_ID string = foundation.outputs.identityResourceId
-output SRE_AGENT_NAME string = sreAgent.outputs.agentName
-output SRE_AGENT_RESOURCE_ID string = sreAgent.outputs.agentResourceId
-output SRE_AGENT_ENDPOINT string = sreAgent.outputs.agentEndpoint
-output SRE_AGENT_PRINCIPAL_ID string = sreAgent.outputs.agentPrincipalId
-output SRE_AGENT_IDENTITY_RESOURCE_ID string = sreAgent.outputs.operationalIdentityResourceId
-output SRE_AGENT_IDENTITY_PRINCIPAL_ID string = sreAgent.outputs.operationalIdentityPrincipalId
+output VM_NAME string = workshop.outputs.vmName
+output VM_RESOURCE_ID string = workshop.outputs.vmResourceId
+output VM_PRINCIPAL_ID string = workshop.outputs.vmPrincipalId
+output VM_ADMIN_USERNAME string = workshop.outputs.vmAdminUsername
+output DATA_DISK_NAME string = workshop.outputs.dataDiskName
+output DATA_DISK_RESOURCE_ID string = workshop.outputs.dataDiskResourceId
+output ORDERS_API_FQDN string = workshop.outputs.ordersApiFqdn
+output SERVICE_ORDERS_API_ENDPOINT_URL string = workshop.outputs.ordersApiEndpoint
+output LOG_ANALYTICS_NAME string = workshop.outputs.workspaceName
+output LOG_ANALYTICS_ID string = workshop.outputs.workspaceResourceId
+output LOG_ANALYTICS_CUSTOMER_ID string = workshop.outputs.workspaceCustomerId
+output APP_INSIGHTS_NAME string = workshop.outputs.appInsightsName
+output APP_INSIGHTS_RESOURCE_ID string = workshop.outputs.appInsightsResourceId
+output VIRTUAL_NETWORK_NAME string = workshop.outputs.virtualNetworkName
+output VIRTUAL_NETWORK_RESOURCE_ID string = workshop.outputs.virtualNetworkResourceId
+output PUBLIC_IP_ADDRESS string = workshop.outputs.publicIpAddress
+output PUBLIC_IP_RESOURCE_ID string = workshop.outputs.publicIpResourceId
+output DATA_COLLECTION_RULE_NAME string = workshop.outputs.dataCollectionRuleName
+output DATA_COLLECTION_RULE_ID string = workshop.outputs.dataCollectionRuleId
+output ACTION_GROUP_NAME string = workshop.outputs.actionGroupName
+output ACTION_GROUP_ID string = workshop.outputs.actionGroupId
+output SRE_AGENT_NAME string = workshop.outputs.sreAgentName
+output SRE_AGENT_RESOURCE_ID string = workshop.outputs.sreAgentResourceId
+output SRE_AGENT_ENDPOINT string = workshop.outputs.sreAgentEndpoint
+output SRE_AGENT_PRINCIPAL_ID string = workshop.outputs.sreAgentPrincipalId
+output SRE_AGENT_IDENTITY_RESOURCE_ID string = workshop.outputs.sreAgentIdentityResourceId
+output SRE_AGENT_IDENTITY_PRINCIPAL_ID string = workshop.outputs.sreAgentIdentityPrincipalId
