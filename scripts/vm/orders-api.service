@@ -1,0 +1,33 @@
+[Unit]
+Description=Workshop Orders API
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/var/lib/orders
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=orders
+Group=orders
+WorkingDirectory=/opt/orders-api/current
+EnvironmentFile=/etc/orders-api.env
+ExecStartPre=/usr/bin/mountpoint --quiet /var/lib/orders
+ExecStart=/usr/bin/dotnet /opt/orders-api/current/OrdersApi.dll
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=25
+UMask=0027
+StateDirectory=orders-api
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/orders /var/lib/orders-api
+RestrictSUIDSGID=true
+LockPersonality=true
+SyslogIdentifier=orders-api
+
+[Install]
+WantedBy=multi-user.target

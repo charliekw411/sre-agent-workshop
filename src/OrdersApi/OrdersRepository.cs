@@ -1,5 +1,7 @@
-using System.Data;
-using Microsoft.Data.SqlClient;
+using System.Globalization;
+using Microsoft.ApplicationInsights;
+using Microsoft.ApplicationInsights.DataContracts;
+using Microsoft.Data.Sqlite;
 
 namespace OrdersApi;
 
@@ -7,157 +9,166 @@ public sealed record OrderRequest(string CustomerId, string ProductId, int Quant
 
 public sealed record OrderRecord(long OrderId, string CustomerId, string ProductId, int Quantity, decimal UnitPrice, DateTime CreatedUtc);
 
-/// <summary>Data access for the orders schema. Every statement is parameterized.</summary>
-public sealed class OrdersRepository(IConfiguration configuration, ILogger<OrdersRepository> logger)
+public sealed record StorageUsage(long UsedBytes, long MaxBytes, long AvailableBytes, long DatabaseBytes)
 {
-    // Resolved on first use so the service still starts, and still emits telemetry, when the
-    // database is misconfigured. A silent crash loop teaches nobody anything.
-    private string ConnectionString =>
-        configuration.GetConnectionString("OrdersDb")
-        ?? throw new InvalidOperationException("Connection string 'OrdersDb' is not configured.");
+    public double UsedPercent => MaxBytes > 0 ? Math.Round(UsedBytes * 100.0 / MaxBytes, 2) : 0;
+}
 
-    public async Task<long> CreateOrderAsync(OrderRequest request, decimal unitPrice, CancellationToken cancellationToken)
+public sealed class OrdersRepository(
+    OrdersDatabase database, TelemetryClient telemetry, ILogger<OrdersRepository> logger)
+{
+    public Task<long> CreateOrderAsync(OrderRequest request, decimal unitPrice, CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT INTO dbo.Orders (CustomerId, ProductId, Quantity, UnitPrice)
-            OUTPUT INSERTED.OrderId
-            VALUES (@CustomerId, @ProductId, @Quantity, @UnitPrice);
+            INSERT INTO Orders (CustomerId, ProductId, Quantity, UnitPrice, CreatedUtc)
+            VALUES (@CustomerId, @ProductId, @Quantity, @UnitPrice, @CreatedUtc)
+            RETURNING OrderId;
             """;
 
-        await using var connection = new SqlConnection(ConnectionString);
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(sql, connection);
-        command.Parameters.Add("@CustomerId", SqlDbType.NVarChar, 64).Value = request.CustomerId;
-        command.Parameters.Add("@ProductId", SqlDbType.NVarChar, 64).Value = request.ProductId;
-        command.Parameters.Add("@Quantity", SqlDbType.Int).Value = request.Quantity;
-        command.Parameters.Add("@UnitPrice", SqlDbType.Decimal).Value = unitPrice;
-
-        var result = await command.ExecuteScalarAsync(cancellationToken);
-        return Convert.ToInt64(result);
-    }
-
-    public async Task<IReadOnlyList<OrderRecord>> GetRecentOrdersAsync(int take, CancellationToken cancellationToken)
-    {
-        const string sql = """
-            SELECT TOP (@Take) OrderId, CustomerId, ProductId, Quantity, UnitPrice, CreatedUtc
-            FROM dbo.Orders
-            ORDER BY CreatedUtc DESC;
-            """;
-
-        await using var connection = new SqlConnection(ConnectionString);
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(sql, connection);
-        command.Parameters.Add("@Take", SqlDbType.Int).Value = take;
-
-        var orders = new List<OrderRecord>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
+        return ExecuteAsync("Orders.Insert", sql, async connection =>
         {
-            orders.Add(new OrderRecord(
-                reader.GetInt64(0),
-                reader.GetString(1),
-                reader.GetString(2),
-                reader.GetInt32(3),
-                reader.GetDecimal(4),
-                reader.GetDateTime(5)));
-        }
-
-        return orders;
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.Parameters.AddWithValue("@CustomerId", request.CustomerId);
+            command.Parameters.AddWithValue("@ProductId", request.ProductId);
+            command.Parameters.AddWithValue("@Quantity", request.Quantity);
+            command.Parameters.AddWithValue("@UnitPrice", unitPrice);
+            command.Parameters.AddWithValue("@CreatedUtc", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+            return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
+        }, cancellationToken);
     }
 
-    public async Task<bool> UpdateQuantityAsync(long orderId, int quantity, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<OrderRecord>> GetRecentOrdersAsync(int take, CancellationToken cancellationToken)
     {
         const string sql = """
-            UPDATE dbo.Orders SET Quantity = @Quantity WHERE OrderId = @OrderId;
+            SELECT OrderId, CustomerId, ProductId, Quantity, UnitPrice, CreatedUtc
+            FROM Orders
+            ORDER BY CreatedUtc DESC, OrderId DESC
+            LIMIT @Take;
             """;
 
-        await using var connection = new SqlConnection(ConnectionString);
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(sql, connection);
-        command.Parameters.Add("@Quantity", SqlDbType.Int).Value = quantity;
-        command.Parameters.Add("@OrderId", SqlDbType.BigInt).Value = orderId;
-        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
-    }
-
-    public async Task<(long UsedBytes, long MaxBytes)> GetStorageUsageAsync(CancellationToken cancellationToken)
-    {
-        const string sql = """
-            SELECT
-                CAST(SUM(CAST(FILEPROPERTY(name, 'SpaceUsed') AS BIGINT)) * 8192 AS BIGINT) AS UsedBytes,
-                CAST(DATABASEPROPERTYEX(DB_NAME(), 'MaxSizeInBytes') AS BIGINT) AS MaxBytes
-            FROM sys.database_files
-            WHERE type_desc = 'ROWS';
-            """;
-
-        await using var connection = new SqlConnection(ConnectionString);
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(sql, connection);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-
-        if (!await reader.ReadAsync(cancellationToken))
+        return ExecuteAsync<IReadOnlyList<OrderRecord>>("Orders.List", sql, async connection =>
         {
-            return (0, 0);
-        }
-
-        var used = reader.IsDBNull(0) ? 0L : reader.GetInt64(0);
-        var max = reader.IsDBNull(1) ? 0L : reader.GetInt64(1);
-        return (used, max);
-    }
-
-    /// <summary>
-    /// Writes padded rows in batches until the database reaches <paramref name="targetPercent"/> of its
-    /// maximum size. Used only by the Module 10 storage exhaustion lab.
-    /// </summary>
-    public async Task<long> FillStorageAsync(
-        int targetPercent,
-        Action<long> onProgress,
-        CancellationToken cancellationToken)
-    {
-        const int rowsPerBatch = 64;
-        const int payloadCharacters = 60000;
-
-        const string insertSql = """
-            INSERT INTO dbo.StorageBallast (Payload)
-            SELECT REPLICATE(CAST(N'X' AS NVARCHAR(MAX)), @PayloadLength)
-            FROM (SELECT TOP (@RowCount) 1 AS n FROM sys.all_columns) AS s;
-            """;
-
-        long bytesWritten = 0;
-
-        await using var connection = new SqlConnection(ConnectionString);
-        await connection.OpenAsync(cancellationToken);
-
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            var (used, max) = await GetStorageUsageAsync(cancellationToken);
-            if (max > 0 && used * 100 / max >= targetPercent)
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.Parameters.AddWithValue("@Take", take);
+            var orders = new List<OrderRecord>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
             {
-                logger.LogWarning(
-                    "Storage fill reached target. Used {UsedBytes} of {MaxBytes} bytes.", used, max);
-                break;
+                orders.Add(ReadOrder(reader));
             }
-
-            await using var command = new SqlCommand(insertSql, connection) { CommandTimeout = 120 };
-            command.Parameters.Add("@PayloadLength", SqlDbType.Int).Value = payloadCharacters;
-            command.Parameters.Add("@RowCount", SqlDbType.Int).Value = rowsPerBatch;
-            await command.ExecuteNonQueryAsync(cancellationToken);
-
-            bytesWritten += (long)rowsPerBatch * payloadCharacters * 2;
-            onProgress(bytesWritten);
-        }
-
-        return bytesWritten;
+            return orders;
+        }, cancellationToken);
     }
 
-    public async Task<int> ReleaseStorageAsync(CancellationToken cancellationToken)
+    public Task<OrderRecord?> GetOrderAsync(long orderId, CancellationToken cancellationToken)
     {
-        await using var connection = new SqlConnection(ConnectionString);
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("dbo.ReleaseStorageBallast", connection)
+        const string sql = """
+            SELECT OrderId, CustomerId, ProductId, Quantity, UnitPrice, CreatedUtc
+            FROM Orders WHERE OrderId = @OrderId;
+            """;
+
+        return ExecuteAsync<OrderRecord?>("Orders.Get", sql, async connection =>
         {
-            CommandType = CommandType.StoredProcedure,
-            CommandTimeout = 300
-        };
-        return await command.ExecuteNonQueryAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.Parameters.AddWithValue("@OrderId", orderId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            return await reader.ReadAsync(cancellationToken) ? ReadOrder(reader) : null;
+        }, cancellationToken);
     }
+
+    public Task<bool> UpdateQuantityAsync(long orderId, int quantity, CancellationToken cancellationToken)
+    {
+        const string sql = "UPDATE Orders SET Quantity = @Quantity WHERE OrderId = @OrderId;";
+
+        return ExecuteAsync("Orders.UpdateQuantity", sql, async connection =>
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.Parameters.AddWithValue("@Quantity", quantity);
+            command.Parameters.AddWithValue("@OrderId", orderId);
+            return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+        }, cancellationToken);
+    }
+
+    public Task ProbeAsync(CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT OrderId, CustomerId, ProductId, Quantity, UnitPrice, CreatedUtc FROM Orders LIMIT 1;";
+        return ExecuteAsync("Orders.Readiness", sql, async connection =>
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteScalarAsync(cancellationToken);
+            return true;
+        }, cancellationToken);
+    }
+
+    public async Task<StorageUsage> GetStorageUsageAsync(CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size();";
+        var databaseBytes = await ExecuteAsync("Orders.Storage", sql, async connection =>
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
+        }, cancellationToken);
+
+        // Stat the database directory, not the OS drive: /var/lib/orders is a separate VM data disk.
+        var disk = new DriveInfo(Path.GetDirectoryName(database.DataSource)!);
+        var maxBytes = disk.TotalSize;
+        var availableBytes = disk.AvailableFreeSpace;
+        return new StorageUsage(maxBytes - availableBytes, maxBytes, availableBytes, databaseBytes);
+    }
+
+    private async Task<T> ExecuteAsync<T>(
+        string name, string sql, Func<SqliteConnection, Task<T>> execute, CancellationToken cancellationToken)
+    {
+        using var operation = telemetry.StartOperation<DependencyTelemetry>(name);
+        var dependency = operation.Telemetry;
+        dependency.Type = "SQLite";
+        dependency.Target = database.DataSource;
+        dependency.Data = sql;
+        dependency.Success = false;
+        dependency.ResultCode = "Failed";
+
+        try
+        {
+            await using var connection = database.CreateConnection();
+            await connection.OpenAsync(cancellationToken);
+            await OrdersDatabase.ConfigureConnectionAsync(connection, cancellationToken);
+            var result = await execute(connection);
+            dependency.Success = true;
+            dependency.ResultCode = "0";
+            return result;
+        }
+        catch (SqliteException ex)
+        {
+            dependency.ResultCode = ex.SqliteErrorCode.ToString(CultureInfo.InvariantCulture);
+            telemetry.TrackException(ex, new Dictionary<string, string>
+            {
+                ["database.operation"] = name,
+                ["sqlite.error_code"] = dependency.ResultCode,
+                ["sqlite.extended_error_code"] = ex.SqliteExtendedErrorCode.ToString(CultureInfo.InvariantCulture)
+            });
+            logger.LogError(
+                "SQLite operation {Operation} failed ({ErrorCode}/{ExtendedErrorCode}): {Message}",
+                name, ex.SqliteErrorCode, ex.SqliteExtendedErrorCode, ex.Message);
+            throw;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            dependency.ResultCode = "Cancelled";
+            throw;
+        }
+    }
+
+    private static OrderRecord ReadOrder(SqliteDataReader reader) => new(
+        reader.GetInt64(0),
+        reader.GetString(1),
+        reader.GetString(2),
+        reader.GetInt32(3),
+        reader.GetDecimal(4),
+        DateTime.Parse(reader.GetString(5), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind));
 }

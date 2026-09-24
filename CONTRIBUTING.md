@@ -37,14 +37,16 @@ make build-docs-website
 
 The build fails on broken internal links and missing assets, which is the same check continuous integration runs.
 
-Deployment hooks also require Python 3.10 or later and PyYAML from `requirements.txt`. Keep
-deployment and agent refresh logic cross-platform in `scripts/workshop.py`; the
-Bash and PowerShell entry points should share that implementation.
+Deployment hooks require Python 3.10 or later and PyYAML from `requirements.txt`.
+Keep deployment orchestration cross-platform in `scripts/workshop.py`; Bash and
+PowerShell entry points share that implementation. VM-local configuration and
+bounded faults live in `scripts/vm/`.
 
-Run `python scripts/workshop.py validate` for local manifest validation. The
-shared CLI also exposes `prepare`, `postprovision`, `postdeploy`, `configure-agent`,
-`export`, `fault`, and `fault-result`; `azd` invokes the deployment lifecycle
-commands through its hooks.
+```bash
+python scripts/workshop.py validate
+python -m unittest discover -s scripts -p "test_*.py" -v
+shellcheck scripts/*.sh scripts/vm/*.sh
+```
 
 Preview your changes while editing:
 
@@ -55,36 +57,35 @@ make serve
 For infrastructure changes:
 
 ```bash
-az bicep build --file infra/main.bicep --stdout > /dev/null
-az bicep build --file infra/apps.bicep --stdout > /dev/null
-az bicep build --file infra/alerts.bicep --stdout > /dev/null
-az bicep lint --file infra/main.bicep
+az bicep build --file infra/azd/main.bicep --outfile .workshop/infra-template.json
+python scripts/check_infra.py .workshop/infra-template.json
+az bicep lint --file infra/azd/main.bicep
 ```
 
 For application changes:
 
-Local application validation needs the .NET 8 SDK. Attendee deployments use ACR
-remote builds and do not need a local .NET SDK or Docker daemon.
+Local validation needs the .NET 8 SDK, or a newer SDK with the .NET 8 runtime.
+Attendee deployments build on the Ubuntu VM and need neither a local SDK nor Docker.
 
 ```bash
 dotnet build src/OrdersApi/OrdersApi.csproj --configuration Release
-dotnet build src/CatalogApi/CatalogApi.csproj --configuration Release
+dotnet test src/OrdersApi.Tests/OrdersApi.Tests.csproj --configuration Release
+dotnet format src/OrdersApi/OrdersApi.csproj --verify-no-changes --no-restore
 ```
 
-For deployment documentation, retain the single `azd up` path after `az login`
-and `azd auth login`: `provision`, `package`, then `deploy --all`. The
-`postprovision` hook runs private-vault token initialization before attaching the
-Orders secret reference and enabling faults; `postdeploy` runs SQL bootstrap,
-a smoke request, then version-controlled agent synchronization and indexing.
-Keep SQL and Key Vault public access disabled, with private endpoints and
-VNet-linked DNS. Fault helpers start a managed-identity job through ARM and
-retrieve only its non-secret result through Log Analytics, never the credential
-on the attendee machine. Document delayed-result retries with `fault-result`,
-not reinjection. Do not introduce manual portal configuration, runtime role
-grants, SQL credentials, token-bearing shell examples, or policy exemptions and
-public-access/shared-key workarounds. Keep the API and permission record in
-[Module 05](docs/sre/05-configure-sre-agent/index.md) aligned with the implementation.
-Report local validation separately from live Azure validation.
+Retain the single `azd up` path: `preup` prepares parameters, Bicep provisions
+the VM and monitoring, then `postprovision` configures SQLite/systemd through
+Run Command and smoke-tests the public API. Never format an existing data disk,
+fall back to the OS disk, or treat Run Command transport success as script success.
+Faults must use authenticated Azure control-plane operations with bounded
+lifetimes, disk recovery reserve, and cleanup. Do not open public SSH or HTTP
+fault endpoints, add policy exemptions, or reintroduce the old private SQL stack.
+
+Report local validation separately from a fresh `australiaeast` benchmark,
+including total wall-clock and stage durations, restart/data persistence,
+telemetry ingestion, and a repeated deployment. Leave benchmark environments
+running unless cleanup is requested. Curriculum and agent-instruction migration
+is a separate change, not part of the infrastructure deployment.
 
 ## Documentation standards
 
@@ -159,7 +160,7 @@ Use fenced `mermaid` blocks. Keep diagrams focused on one idea; a diagram that n
 
 * Never commit credentials, connection strings, subscription IDs, or tenant IDs.
 * Parameterize every SQL statement. String concatenation into a query will be rejected.
-* Keep fault-injection code gated behind both a configuration flag and a token check.
+* Keep fault injection behind Azure VM Run Command authorization, never public HTTP routes.
 * Prefer managed identity over shared secrets in infrastructure changes.
 * Redact identifiers in screenshots before committing them.
 

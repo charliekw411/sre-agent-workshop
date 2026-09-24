@@ -2,24 +2,28 @@
 # Generates steady baseline traffic against orders-api so incidents have something to disrupt.
 #
 # Usage:
-#   ./scripts/generate-load.sh <orders-api-fqdn> [requests-per-second] [duration-seconds]
+#   ./scripts/generate-load.sh <orders-api-url> [requests-per-second] [duration-seconds]
 #
 # Example:
-#   ./scripts/generate-load.sh orders-api.happyocean-1234.eastus.azurecontainerapps.io 5 900
+#   ./scripts/generate-load.sh http://orders-example.australiaeast.cloudapp.azure.com:8080 5 900
 
 set -euo pipefail
 
-FQDN="${1:-${ORDERS_API_FQDN:-}}"
+BASE_URL="${1:-${SERVICE_ORDERS_API_ENDPOINT_URL:-}}"
 RATE="${2:-5}"
 DURATION="${3:-900}"
 
-if [[ -z "${FQDN}" ]]; then
-  echo "Usage: $0 <orders-api-fqdn> [requests-per-second] [duration-seconds]" >&2
-  echo "Or export ORDERS_API_FQDN before running." >&2
+if [[ -z "${BASE_URL}" ]]; then
+  echo "Usage: $0 <orders-api-url> [requests-per-second] [duration-seconds]" >&2
+  echo "Or export SERVICE_ORDERS_API_ENDPOINT_URL before running." >&2
   exit 1
 fi
 
-BASE_URL="https://${FQDN}"
+if [[ ! "${RATE}" =~ ^[1-9][0-9]*$ || ! "${DURATION}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Rate and duration must be positive integers." >&2
+  exit 1
+fi
+BASE_URL="${BASE_URL%/}"
 PRODUCTS=("SKU-1001" "SKU-1002" "SKU-1003" "SKU-1004" "SKU-1005")
 INTERVAL=$(awk -v r="${RATE}" 'BEGIN { printf "%.3f", 1 / r }')
 

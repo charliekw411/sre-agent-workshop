@@ -1,12 +1,51 @@
-metadata description = 'Private SQL and Key Vault connectivity for the workshop Container Apps environment.'
+metadata description = 'Small public VM network with explicit outbound connectivity and Internet ingress on TCP 8080 only.'
 
 targetScope = 'resourceGroup'
 
 param location string = resourceGroup().location
+
+@minLength(3)
+@maxLength(12)
 param suffix string
-param sqlServerId string
-param keyVaultId string
+
 param tags object = {}
+
+resource networkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2024-05-01' = {
+  name: 'nsg-orders-${suffix}'
+  location: location
+  tags: tags
+  properties: {
+    securityRules: [
+      {
+        name: 'AllowOrdersHttp'
+        properties: {
+          description: 'Public workshop Orders API; administration uses Azure Run Command, not SSH.'
+          priority: 100
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: 'Tcp'
+          sourceAddressPrefix: 'Internet'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '8080'
+        }
+      }
+      {
+        name: 'DenyOtherInbound'
+        properties: {
+          priority: 200
+          direction: 'Inbound'
+          access: 'Deny'
+          protocol: '*'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '*'
+        }
+      }
+    ]
+  }
+}
 
 resource network 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   name: 'vnet-${suffix}'
@@ -15,116 +54,72 @@ resource network 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   properties: {
     addressSpace: {
       addressPrefixes: [
-        '10.240.0.0/16'
+        '10.240.0.0/24'
       ]
     }
     subnets: [
       {
-        name: 'container-apps'
+        name: 'orders'
         properties: {
-          addressPrefix: '10.240.0.0/23'
-          delegations: [
-            {
-              name: 'container-apps'
-              properties: {
-                serviceName: 'Microsoft.App/environments'
-              }
-            }
-          ]
-        }
-      }
-      {
-        name: 'private-endpoints'
-        properties: {
-          addressPrefix: '10.240.2.0/27'
-          privateEndpointNetworkPolicies: 'Disabled'
+          addressPrefix: '10.240.0.0/27'
+          defaultOutboundAccess: false
+          networkSecurityGroup: {
+            id: networkSecurityGroup.id
+          }
         }
       }
     ]
   }
 }
 
-resource appsSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' existing = {
+resource ordersSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' existing = {
   parent: network
-  name: 'container-apps'
+  name: 'orders'
 }
 
-resource endpointsSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' existing = {
-  parent: network
-  name: 'private-endpoints'
-}
-
-var privateServices = [
-  {
-    name: 'sql'
-    resourceId: sqlServerId
-    groupId: 'sqlServer'
-    zone: 'privatelink${environment().suffixes.sqlServerHostname}'
-  }
-  {
-    name: 'vault'
-    resourceId: keyVaultId
-    groupId: 'vault'
-    zone: 'privatelink.vaultcore.azure.net'
-  }
-]
-
-resource zones 'Microsoft.Network/privateDnsZones@2020-06-01' = [for service in privateServices: {
-  name: service.zone
-  location: 'global'
+resource publicIp 'Microsoft.Network/publicIPAddresses@2024-05-01' = {
+  name: 'pip-orders-${suffix}'
+  location: location
   tags: tags
-}]
-
-resource links 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = [for (service, index) in privateServices: {
-  parent: zones[index]
-  name: 'workshop'
-  location: 'global'
+  sku: {
+    name: 'Standard'
+    tier: 'Regional'
+  }
   properties: {
-    registrationEnabled: false
-    virtualNetwork: {
-      id: network.id
+    publicIPAllocationMethod: 'Static'
+    publicIPAddressVersion: 'IPv4'
+    dnsSettings: {
+      domainNameLabel: 'orders-${suffix}'
     }
   }
-}]
+}
 
-resource endpoints 'Microsoft.Network/privateEndpoints@2024-05-01' = [for service in privateServices: {
-  name: 'pe-${service.name}-${suffix}'
+resource networkInterface 'Microsoft.Network/networkInterfaces@2024-05-01' = {
+  name: 'nic-orders-${suffix}'
   location: location
   tags: tags
   properties: {
-    subnet: {
-      id: endpointsSubnet.id
-    }
-    privateLinkServiceConnections: [
+    ipConfigurations: [
       {
-        name: service.name
+        name: 'primary'
         properties: {
-          privateLinkServiceId: service.resourceId
-          groupIds: [
-            service.groupId
-          ]
+          primary: true
+          privateIPAllocationMethod: 'Dynamic'
+          subnet: {
+            id: ordersSubnet.id
+          }
+          publicIPAddress: {
+            id: publicIp.id
+          }
         }
       }
     ]
   }
-}]
-
-resource zoneGroups 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = [for (service, index) in privateServices: {
-  parent: endpoints[index]
-  name: 'default'
-  properties: {
-    privateDnsZoneConfigs: [
-      {
-        name: service.name
-        properties: {
-          privateDnsZoneId: zones[index].id
-        }
-      }
-    ]
-  }
-}]
+}
 
 output virtualNetworkName string = network.name
-output infrastructureSubnetId string = appsSubnet.id
-output sqlPrivateEndpointName string = endpoints[0].name
-output keyVaultPrivateEndpointName string = endpoints[1].name
+output virtualNetworkResourceId string = network.id
+output networkInterfaceResourceId string = networkInterface.id
+output publicIpAddress string = publicIp.properties.ipAddress
+output publicIpResourceId string = publicIp.id
+output publicFqdn string = publicIp.properties.dnsSettings.fqdn
