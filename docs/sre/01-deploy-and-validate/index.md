@@ -1,7 +1,7 @@
 ---
 title: Module 01 - Deploy and Validate the Workshop
 description: Deploy the single-VM Orders API workshop and prove that the public API, systemd service, SQLite data disk, telemetry, and restart recovery all work.
-ms.date: 2026-09-24
+ms.date: 2026-09-25
 ms.topic: how-to
 keywords:
   - azure virtual machines
@@ -258,6 +258,18 @@ read-only check through authenticated Run Command and verifies:
 * `orders-api` is active, enabled, configured to restart, and runs as user
   `orders`.
 
+Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a browser. The same Orders API process
+serves a responsive interface at the root, without a second Azure service. List
+the seeded orders, create one with synthetic data, open its details, update its
+quantity, and refresh the service-status cards. The terminal checks below remain
+the fallback and the authoritative deployment validation.
+
+The GUI makes one `/orders` request on load or explicit refresh, one
+`/orders/{orderId}` request when details open, and mutations only when you submit
+a form. While the tab is visible, it requests `/health/live`, `/health/ready`,
+and `/storage` every 30 seconds. Hidden tabs pause that status timer, so this
+normal GUI traffic does not replace generated incident load.
+
 Call the same public endpoints yourself:
 
 === "Bash"
@@ -393,6 +405,7 @@ analysis happens inside the incident modules.
 
 * [x] `azd up` completed through the public smoke stage.
 * [x] The public `/health/ready`, `/orders`, and `/storage` endpoints return 200.
+* [x] The root browser GUI listed and updated synthetic orders and displayed service status.
 * [x] VM inspection reports an active non-root service and valid SQLite WAL database.
 * [x] Restart validation preserves the disk UUID and witness order.
 * [x] You viewed healthy activity in VM Metrics and Application Insights.

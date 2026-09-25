@@ -1,7 +1,7 @@
 ---
 title: Azure SRE Agent Workshop
 description: Deploy a single-VM Orders API, visualize its Azure Monitor signals, and operate an Azure SRE Agent response plan through CPU and data-disk incidents.
-ms.date: 2026-09-24
+ms.date: 2026-09-25
 ms.topic: overview
 keywords:
   - azure sre agent
@@ -21,7 +21,7 @@ estimated_reading_time: 5
 
 The workshop creates one disposable Ubuntu 24.04 VM:
 
-* A public .NET 8 Orders API on HTTP port 8080.
+* A public .NET 8 Orders API and browser GUI on HTTP port 8080.
 * A hardened, non-root `orders-api` systemd service.
 * SQLite on a separate 8 GiB managed data disk mounted at
   `/var/lib/orders`.

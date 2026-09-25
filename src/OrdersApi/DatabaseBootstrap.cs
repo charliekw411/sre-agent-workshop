@@ -69,6 +69,17 @@ internal static class DatabaseBootstrap
                     CreatedUtc TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS IX_Orders_CreatedUtc ON Orders (CreatedUtc DESC, OrderId DESC);
+
+                CREATE TABLE IF NOT EXISTS OrderRequests
+                (
+                    RequestId  TEXT PRIMARY KEY CHECK (length(RequestId) BETWEEN 1 AND 128),
+                    CustomerId TEXT NOT NULL,
+                    ProductId  TEXT NOT NULL,
+                    Quantity   INTEGER NOT NULL,
+                    UnitPrice  TEXT NOT NULL,
+                    OrderId    INTEGER UNIQUE,
+                    FOREIGN KEY (OrderId) REFERENCES Orders (OrderId)
+                );
                 """;
             await schema.ExecuteNonQueryAsync(cancellationToken);
         }

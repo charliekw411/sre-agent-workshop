@@ -44,6 +44,7 @@ Six modules, roughly three and a half hours, no instructor required.
 A single-VM deployment of the Orders API:
 
 * One Ubuntu 24.04 VM, `Standard_D2as_v5` by default, running the .NET 8 Orders API as a non-root systemd service
+* A responsive browser GUI served by the same Orders API process and port
 * SQLite on a separate 8 GiB managed data disk, mounted by UUID at `/var/lib/orders`
 * A VNet, subnet, NSG, and static public IP with a stable Azure DNS name
 * Public HTTP on port 8080 only, with no public SSH or fault-injection endpoints
@@ -75,7 +76,7 @@ content under `agent/`.
 ├── docs/               Workshop content published to GitHub Pages
 ├── infra/              Bicep templates and the azd deployment entry point
 ├── scripts/            Load generation and fault injection helpers
-├── src/                Orders API and application regression tests
+├── src/                Orders API, browser GUI, and application regression tests
 ├── mkdocs.yml          Site configuration
 └── Makefile            Documentation build targets
 ```
@@ -149,6 +150,18 @@ orders, does not duplicate seed rows, and reuses an unchanged published bundle.
 An existing resource group without the single-VM architecture tag is rejected
 rather than migrated or deleted. Set `VM_SIZE` with `azd env set` before deployment
 if the default size is unavailable in your subscription.
+
+### Use the Orders browser GUI
+
+Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a browser to list, create, inspect, and
+update synthetic orders or refresh liveness, readiness, and storage status. A
+browser navigation receives HTML through content negotiation; existing API
+clients and every JSON endpoint remain backward compatible.
+
+The GUI loads `/orders` on entry and on explicit order actions. While its tab is
+visible, it requests `/health/live`, `/health/ready`, and `/storage` once every
+30 seconds; it pauses that timer in a hidden tab. This low-rate status traffic is
+normal GUI activity and is separate from the workshop load generator.
 
 ### Azure Free Account constraints
 

@@ -14,27 +14,98 @@ public sealed record StorageUsage(long UsedBytes, long MaxBytes, long AvailableB
     public double UsedPercent => MaxBytes > 0 ? Math.Round(UsedBytes * 100.0 / MaxBytes, 2) : 0;
 }
 
+internal sealed record IdempotentOrderCreation(long OrderId, decimal UnitPrice, bool Replayed);
+
 public sealed class OrdersRepository(
     OrdersDatabase database, TelemetryClient telemetry, ILogger<OrdersRepository> logger)
 {
+    private const string InsertOrderSql = """
+        INSERT INTO Orders (CustomerId, ProductId, Quantity, UnitPrice, CreatedUtc)
+        VALUES (@CustomerId, @ProductId, @Quantity, @UnitPrice, @CreatedUtc)
+        RETURNING OrderId;
+        """;
+
     public Task<long> CreateOrderAsync(OrderRequest request, decimal unitPrice, CancellationToken cancellationToken)
     {
-        const string sql = """
-            INSERT INTO Orders (CustomerId, ProductId, Quantity, UnitPrice, CreatedUtc)
-            VALUES (@CustomerId, @ProductId, @Quantity, @UnitPrice, @CreatedUtc)
-            RETURNING OrderId;
+        return ExecuteAsync("Orders.Insert", InsertOrderSql, connection =>
+            InsertOrderAsync(connection, null, request, unitPrice, cancellationToken), cancellationToken);
+    }
+
+    internal Task<IdempotentOrderCreation?> CreateOrderIdempotentlyAsync(
+        OrderRequest request,
+        decimal unitPrice,
+        string requestId,
+        CancellationToken cancellationToken)
+    {
+        const string telemetrySql = """
+            INSERT INTO OrderRequests (...) ON CONFLICT(RequestId) DO NOTHING;
+            INSERT INTO Orders (...) RETURNING OrderId;
+            UPDATE OrderRequests SET OrderId = ...;
             """;
 
-        return ExecuteAsync("Orders.Insert", sql, async connection =>
+        return ExecuteAsync<IdempotentOrderCreation?>("Orders.Insert", telemetrySql, async connection =>
         {
-            await using var command = connection.CreateCommand();
-            command.CommandText = sql;
-            command.Parameters.AddWithValue("@CustomerId", request.CustomerId);
-            command.Parameters.AddWithValue("@ProductId", request.ProductId);
-            command.Parameters.AddWithValue("@Quantity", request.Quantity);
-            command.Parameters.AddWithValue("@UnitPrice", unitPrice);
-            command.Parameters.AddWithValue("@CreatedUtc", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
-            return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
+            await using var transaction = connection.BeginTransaction();
+            await using var reservation = connection.CreateCommand();
+            reservation.Transaction = transaction;
+            reservation.CommandText = """
+                INSERT INTO OrderRequests (RequestId, CustomerId, ProductId, Quantity, UnitPrice)
+                VALUES (@RequestId, @CustomerId, @ProductId, @Quantity, @UnitPrice)
+                ON CONFLICT(RequestId) DO NOTHING;
+                """;
+            reservation.Parameters.AddWithValue("@RequestId", requestId);
+            reservation.Parameters.AddWithValue("@CustomerId", request.CustomerId);
+            reservation.Parameters.AddWithValue("@ProductId", request.ProductId);
+            reservation.Parameters.AddWithValue("@Quantity", request.Quantity);
+            reservation.Parameters.AddWithValue("@UnitPrice", unitPrice);
+
+            if (await reservation.ExecuteNonQueryAsync(cancellationToken) == 0)
+            {
+                await using var existing = connection.CreateCommand();
+                existing.Transaction = transaction;
+                existing.CommandText = """
+                    SELECT CustomerId, ProductId, Quantity, UnitPrice, OrderId
+                    FROM OrderRequests
+                    WHERE RequestId = @RequestId;
+                    """;
+                existing.Parameters.AddWithValue("@RequestId", requestId);
+                await using var reader = await existing.ExecuteReaderAsync(cancellationToken);
+                if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(4))
+                {
+                    throw new InvalidOperationException("The idempotency record is incomplete.");
+                }
+
+                var sameRequest =
+                    string.Equals(reader.GetString(0), request.CustomerId, StringComparison.Ordinal)
+                    && string.Equals(reader.GetString(1), request.ProductId, StringComparison.Ordinal)
+                    && reader.GetInt32(2) == request.Quantity;
+                var savedUnitPrice = reader.GetDecimal(3);
+                var orderId = reader.GetInt64(4);
+                await reader.DisposeAsync();
+                await transaction.CommitAsync(cancellationToken);
+                return sameRequest
+                    ? new IdempotentOrderCreation(orderId, savedUnitPrice, Replayed: true)
+                    : null;
+            }
+
+            var createdOrderId = await InsertOrderAsync(
+                connection, transaction, request, unitPrice, cancellationToken);
+            await using var complete = connection.CreateCommand();
+            complete.Transaction = transaction;
+            complete.CommandText = """
+                UPDATE OrderRequests
+                SET OrderId = @OrderId
+                WHERE RequestId = @RequestId;
+                """;
+            complete.Parameters.AddWithValue("@OrderId", createdOrderId);
+            complete.Parameters.AddWithValue("@RequestId", requestId);
+            if (await complete.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                throw new InvalidOperationException("The idempotency record could not be completed.");
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+            return new IdempotentOrderCreation(createdOrderId, unitPrice, Replayed: false);
         }, cancellationToken);
     }
 
@@ -162,6 +233,24 @@ public sealed class OrdersRepository(
             dependency.ResultCode = "Cancelled";
             throw;
         }
+    }
+
+    private static async Task<long> InsertOrderAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        OrderRequest request,
+        decimal unitPrice,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = InsertOrderSql;
+        command.Parameters.AddWithValue("@CustomerId", request.CustomerId);
+        command.Parameters.AddWithValue("@ProductId", request.ProductId);
+        command.Parameters.AddWithValue("@Quantity", request.Quantity);
+        command.Parameters.AddWithValue("@UnitPrice", unitPrice);
+        command.Parameters.AddWithValue("@CreatedUtc", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
     }
 
     private static OrderRecord ReadOrder(SqliteDataReader reader) => new(
