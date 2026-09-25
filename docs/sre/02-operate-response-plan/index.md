@@ -1,7 +1,7 @@
 ---
 title: Module 02 - Operate the SRE Agent Response Plan
 description: Verify the read-only Azure SRE Agent, inspect its Azure Monitor response plan, and rehearse the human review workflow before an alert fires.
-ms.date: 2026-09-24
+ms.date: 2026-09-25
 ms.topic: how-to
 keywords:
   - azure sre agent
@@ -42,18 +42,22 @@ fault commands, restart the VM, change the API, or delete resources.
 * Verify the enabled Sev1/Sev2 response plan and Review mode.
 * Explain the identities and least-privilege boundary.
 * Inspect the alert rules that feed the response plan.
+* Tie healthy Orders GUI activity to API telemetry.
 * Rehearse a healthy-state agent assessment and verify it visually.
 
 ## Response workflow
 
 ```mermaid
 sequenceDiagram
+    participant GUI as Orders browser GUI
     participant API as Orders API and VM
     participant Monitor as Azure Monitor
     participant Plan as Response plan
     participant Agent as Azure SRE Agent
     participant Human as Workshop operator
 
+    Human->>GUI: Browse orders or refresh status
+    GUI->>API: Customer and health requests
     API->>Monitor: Metrics and telemetry
     Monitor->>Plan: Sev1 or Sev2 alert
     Plan->>Agent: Start or merge investigation
@@ -200,7 +204,12 @@ endpoint that fabricates errors.
 ### Task 5: Tie a healthy request to visual evidence
 
 Open the workshop VM's **Monitoring** > **Metrics** blade and configure the
-**Percentage CPU** chart exactly as in Module 01. Then call:
+**Percentage CPU** chart exactly as in Module 01. Open
+`SERVICE_ORDERS_API_ENDPOINT_URL` in another tab, confirm that all three status
+cards are healthy, and select **Refresh orders** once.
+
+The GUI establishes the customer view. Run the loop below as well because it
+creates a fixed, repeatable sample for the telemetry exercise:
 
 === "Bash"
 
@@ -225,6 +234,10 @@ Open the workshop VM's **Monitoring** > **Metrics** blade and configure the
 Refresh the VM chart after one or two minutes. Also open Application Insights
 **Performance** and verify that the `GET /health/ready` and `GET /orders`
 operations are visible for the same time range.
+
+The GUI calls those same API routes, so its requests use the same operation
+names. Requests for `/`, `/app.js`, and `/app.css` load the interface itself;
+focus the investigation on the underlying customer and status operations.
 
 The purpose is not to create an alert. It is to rehearse the evidence path you
 will use after the response plan opens an investigation.
@@ -265,6 +278,7 @@ incidents.
 * [x] `workshop-sev1-sev2-review` is enabled for Sev1 and Sev2 in Review mode.
 * [x] The three alert rules are enabled.
 * [x] The agent identities have no workload write role.
+* [x] Healthy Orders GUI activity appeared under the expected API operation names.
 * [x] A healthy endpoint call appears in the VM and Application Insights views.
 * [x] The agent's healthy-state assessment agrees with independently viewed evidence.
 

@@ -1,7 +1,7 @@
 ---
 title: Module 05 - Review and Improve the Response
 description: Compare the CPU and data-disk investigations, build an evidence-backed root cause analysis, and turn response gaps into specific monitoring and workflow improvements.
-ms.date: 2026-09-24
+ms.date: 2026-09-25
 ms.topic: how-to
 keywords:
   - root cause analysis
@@ -26,9 +26,10 @@ The two incidents produced different shapes:
 * Data-disk pressure created a leading capacity signal that should be handled
   before requests fail.
 
-This module compares the portal charts, alert history, SRE Agent findings, and
-raw telemetry. You will correct unsupported claims, write a concise two-incident
-analysis, and define improvements that are owned and testable.
+This module compares Orders GUI observations, portal charts, alert history, SRE
+Agent findings, and raw telemetry. You will correct unsupported claims, write a
+concise two-incident analysis, and define improvements that are owned and
+testable.
 
 ## Learning objectives
 
@@ -42,7 +43,8 @@ analysis, and define improvements that are owned and testable.
 
 ```mermaid
 flowchart LR
-    Charts[Portal charts] --> O[Observations]
+    GUI[Orders GUI observations] --> O[Observations]
+    Charts[Portal charts] --> O
     Logs[Queries and Activity Log] --> O
     Agent[SRE Agent findings] --> C{Claim review}
     O --> C
@@ -72,6 +74,11 @@ flowchart LR
     python scripts/workshop.py smoke
     python scripts/workshop.py inspect
     ```
+
+Open `SERVICE_ORDERS_API_ENDPOINT_URL` in the Orders GUI, select **Refresh
+orders** and **Refresh status**, and confirm the current customer view is
+healthy. This closes the incident narrative from the participant's perspective;
+the traffic loop below creates the fixed comparison segment for telemetry.
 
 Generate a short healthy segment:
 
@@ -110,6 +117,8 @@ For CPU:
 2. Note baseline, first threshold breach, maximum, mitigation, and recovery.
 3. Open Application Insights **Performance** for the same range and compare
    request duration.
+4. Compare those timestamps with any slow, timeout, failure, and recovery state
+   you recorded from the Orders GUI in Module 03.
 
 For disk:
 
@@ -118,6 +127,7 @@ For disk:
 3. Note baseline, first value below 15 percent, minimum, reset, and recovery.
 4. Open Application Insights **Failures** and determine whether customer errors
    occurred in the same interval.
+5. Compare the telemetry with the Orders GUI's low-capacity and recovery states.
 
 For alert handling:
 
@@ -160,7 +170,7 @@ Use this rubric:
 | --- | --- |
 | Time | Does the claim use the first telemetry deviation or merely the alert time? |
 | Scope | Does it name the correct VM, filesystem, and API operations? |
-| Impact | Is customer impact measured, not inferred from infrastructure state? |
+| Impact | Do Orders GUI observations and measured API operations agree, without inferring impact from infrastructure state alone? |
 | Trigger | Is there a correlated Run Command operation or only temporal coincidence? |
 | Exclusion | Were CPU, storage, API, and SQLite alternatives checked where relevant? |
 | Recovery | Does the evidence show the signal returned to baseline? |
@@ -275,6 +285,8 @@ Create `.workshop/notes/final-review.md` with this structure:
 
 Impact:
 
+Orders GUI evidence:
+
 Trigger:
 
 Contributing factors:
@@ -294,6 +306,8 @@ Durable remediation:
 | Recovery | | |
 
 Observed customer impact:
+
+Orders GUI evidence:
 
 Risk if left unresolved:
 
@@ -342,6 +356,7 @@ the proposed change, its risk, and how you would test it before production use.
 ## Validation
 
 * [x] You viewed the recovered CPU line alongside the incident spike.
+* [x] The current Orders GUI view is healthy and its incident observations were reconciled with telemetry.
 * [x] You compared CPU, disk, request, and alert timelines in the portal.
 * [x] Every material agent claim was graded.
 * [x] At least one weak claim was challenged and revised or removed.

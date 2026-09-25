@@ -68,6 +68,12 @@ invoke only the same bounded VM-local commands used by the terminal helper.
 Reset removes only the dedicated workshop ballast file and never changes
 `orders.db`.
 
+!!! tip "Keep the operator and customer views separate"
+    Use this authenticated documentation tab to start, inspect, and reset the
+    incident. Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a second tab for the
+    public Orders GUI. The first changes workshop state; the second only makes
+    customer and status API requests.
+
 The workshop intentionally stops before a destructive filesystem-full state.
 If writes remain successful, that is evidence that detection provided a response
 window, not evidence that the alert was false.

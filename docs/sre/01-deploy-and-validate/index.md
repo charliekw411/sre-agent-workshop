@@ -34,7 +34,7 @@ a VM is not enough: the live smoke check must pass.
 
 * Prepare the Azure CLI, Azure Developer CLI, Python, and local shell.
 * Deploy the complete workshop into a new Azure resource group.
-* Verify the public API and the absence of destructive HTTP fault routes.
+* Use the public Orders GUI and verify the absence of destructive HTTP fault routes.
 * Prove that `orders-api` runs under `systemd` and SQLite uses the managed disk.
 * Restart the VM and prove that the service and persisted orders recover.
 * Confirm healthy endpoint activity in VM Metrics and Application Insights.
@@ -43,9 +43,9 @@ a VM is not enough: the live smoke check must pass.
 
 ```mermaid
 flowchart LR
-    User[Workshop user] -->|HTTP :8080| IP[Static public IP and DNS]
+    User[Workshop user] -->|Browser GUI or JSON API<br/>HTTP :8080| IP[Static public IP and DNS]
     IP --> VM[Ubuntu 24.04 VM]
-    VM --> Service[orders-api systemd service]
+    VM --> Service[orders-api systemd service<br/>API and static GUI]
     Service --> DB[(SQLite orders.db)]
     DB --> Disk[Managed data disk<br/>/var/lib/orders]
 

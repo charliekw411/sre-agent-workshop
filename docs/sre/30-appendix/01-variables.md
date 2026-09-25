@@ -1,7 +1,7 @@
 ---
 title: Workshop Variables and Evidence
 description: Reference for the single-VM workshop's non-secret exports, local validation evidence, and supported helper commands.
-ms.date: 2026-09-24
+ms.date: 2026-09-25
 ms.topic: reference
 keywords:
   - environment variables
@@ -18,8 +18,9 @@ outputs. After `azd up`, the workshop exports an explicit non-secret allowlist t
 * `.workshop/workshop.env` for Bash
 * `.workshop/workshop.ps1` for PowerShell
 
-The files contain resource names, IDs, and the public API URL. They do not
-contain a VM private key, API credential, SRE Agent token, or fault secret.
+The files contain resource names, IDs, and the public Orders GUI and API URL.
+They do not contain a VM private key, API credential, SRE Agent token, or fault
+secret.
 
 ## Select and load an environment
 
@@ -68,7 +69,7 @@ before issuing Azure operations.
 | `DATA_DISK_NAME`, `DATA_DISK_RESOURCE_ID` | Managed SQLite data disk |
 | `PUBLIC_IP_ADDRESS`, `PUBLIC_IP_RESOURCE_ID` | Static public endpoint resource |
 | `ORDERS_API_FQDN` | Stable Azure DNS hostname |
-| `SERVICE_ORDERS_API_ENDPOINT_URL` | Public API base URL, including HTTP port 8080 |
+| `SERVICE_ORDERS_API_ENDPOINT_URL` | Public Orders GUI and API base URL, including HTTP port 8080 |
 | `VIRTUAL_NETWORK_NAME` | Workshop VNet |
 | `LOG_ANALYTICS_NAME`, `LOG_ANALYTICS_ID` | Log Analytics workspace |
 | `LOG_ANALYTICS_CUSTOMER_ID` | Workspace GUID used by CLI log queries |
@@ -84,6 +85,17 @@ PowerShell accesses the same values through `$env:VARIABLE_NAME`.
 
 Additional values can exist in the private azd environment. Do not replace the
 allowlist with a dump of every azd or process environment variable.
+
+## Orders GUI and API URL
+
+Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a normal browser navigation to receive
+the Orders GUI. The root uses content negotiation, so command-line clients that
+do not request HTML continue to receive the JSON service descriptor. Paths such
+as `/orders`, `/health/ready`, and `/storage` always return JSON.
+
+This public endpoint is the unauthenticated customer-facing workshop workload.
+It is separate from the GitHub Pages documentation site and its authenticated
+Azure incident controls.
 
 ## Supported workshop commands
 

@@ -67,6 +67,12 @@ aggregation, one-minute granularity, a rolling 30-minute window, and automatic
 refresh. The buttons invoke only the same bounded VM-local commands used by the
 terminal helper; no command text can be supplied from the browser.
 
+!!! tip "Keep the operator and customer views separate"
+    Use this authenticated documentation tab to start, inspect, and reset the
+    incident. Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a second tab for the
+    public Orders GUI. The first changes workshop state; the second only makes
+    customer and status API requests.
+
 ## Tasks
 
 ### Task 1: Prepare healthy traffic and notes
