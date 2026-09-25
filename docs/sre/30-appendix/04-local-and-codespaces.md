@@ -13,7 +13,8 @@ estimated_reading_time: 9
 
 ## Preview the documentation site
 
-The site uses MkDocs and Material for MkDocs.
+The site uses MkDocs, Material for MkDocs, Node.js 20 or later, and a locally
+bundled MSAL Browser dependency.
 
 === "Bash"
 
@@ -21,6 +22,8 @@ The site uses MkDocs and Material for MkDocs.
     python3 -m venv .venv
     source .venv/bin/activate
     python -m pip install -r requirements.txt
+    npm ci
+    npm run build:web
     python -m mkdocs serve
     ```
 
@@ -30,21 +33,33 @@ The site uses MkDocs and Material for MkDocs.
     python -m venv .venv
     . ./.venv/Scripts/Activate.ps1
     python -m pip install -r requirements.txt
+    npm ci
+    npm run build:web
     python -m mkdocs serve
     ```
 
-Open [http://localhost:8000](http://localhost:8000). Validate navigation, links,
-Markdown, and snippets with:
+Open
+[http://localhost:8000/sre-agent-workshop/](http://localhost:8000/sre-agent-workshop/).
+Without an Entra SPA configuration, the public content renders and the Azure
+controls fail closed. Follow
+[Configure the Site Azure Connection](05-site-azure-connection.md) to test
+authenticated controls locally.
+
+Validate JavaScript, navigation, links, Markdown, and snippets with:
 
 === "Bash"
 
     ```bash
+    npm test
+    npm run build:web
     python -m mkdocs build --strict --site-dir dist
     ```
 
 === "PowerShell"
 
     ```powershell
+    npm test
+    npm run build:web
     python -m mkdocs build --strict --site-dir dist
     ```
 

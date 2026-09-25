@@ -49,6 +49,7 @@ A single-VM deployment of the Orders API:
 * Public HTTP on port 8080 only, with no public SSH or fault-injection endpoints
 * Log Analytics, Application Insights, Azure Monitor Agent, a Data Collection Rule, and CPU, disk, and request-error alerts
 * A read-only Azure SRE Agent with Application Insights and Log Analytics connectors
+* A public GitHub Pages curriculum with single-tenant, authenticated inline incident controls and telemetry
 
 Earlier workshop environments use an incompatible architecture and are not
 migrated. VM administration and bounded CPU/disk faults use authenticated Azure
@@ -87,13 +88,22 @@ source .venv/bin/activate
 make serve
 ```
 
-Open [http://localhost:8000](http://localhost:8000).
+Open
+[http://localhost:8000/sre-agent-workshop/](http://localhost:8000/sre-agent-workshop/).
+
+The site build requires Node.js 20 or later so it can bundle MSAL Browser and the
+interactive launcher locally. Without tenant and SPA client configuration, the
+documentation remains readable and the Azure connection control fails closed.
+See [Configure the Site Azure Connection](docs/sre/30-appendix/05-site-azure-connection.md)
+for the Entra app registration, delegated permissions, Conditional Access,
+participant RBAC, GitHub variables, and deployed-origin validation.
 
 ## Prerequisites
 
 * Subscription `Owner`, or `Contributor` plus `User Access Administrator`, to create the resource group and all role assignments.
 * Azure Developer CLI 1.18 or later.
 * Azure CLI 2.60 or later. Deployment does not require Azure CLI extensions.
+* Node.js 20 or later for the documentation site's authenticated controls.
 * Bash with `curl` and `jq`, or PowerShell 7, plus OpenSSH `ssh-keygen`.
 * Python 3.10 or later with PyYAML (`python -m pip install -r requirements.txt`).
 * Permission to execute VM Run Command and query workspace logs for live validation.
@@ -194,6 +204,12 @@ real application failures occur. The availability signal is a VM-local database
 probe, not an independent external uptime monitor.
 
 ## Controlled workshop faults and cleanup
+
+After the site SPA registration is configured, Modules 03 and 04 expose the
+same bounded actions through authenticated browser controls. The browser sends
+only fixed VM Run Command scripts and queries Azure Monitor directly with each
+participant's delegated token and Azure RBAC. Terminal commands remain the
+fallback:
 
 ```bash
 python scripts/workshop.py fault cpu 600 2
