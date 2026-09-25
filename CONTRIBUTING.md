@@ -42,6 +42,14 @@ Keep deployment orchestration cross-platform in `scripts/workshop.py`; Bash and
 PowerShell entry points share that implementation. VM-local configuration and
 bounded faults live in `scripts/vm/`.
 
+The authenticated site controls require Node.js 20 or later. MSAL Browser and
+the site code are bundled locally rather than loaded from a runtime CDN.
+
+```bash
+npm test
+npm run build:web
+```
+
 ```bash
 python scripts/workshop.py validate
 python -m unittest discover -s scripts -p "test_*.py" -v
@@ -159,6 +167,7 @@ Use fenced `mermaid` blocks. Keep diagrams focused on one idea; a diagram that n
 ## Security expectations for contributions
 
 * Never commit credentials, connection strings, subscription IDs, or tenant IDs.
+* Never add a client secret to the static site. Tenant and client IDs are public configuration only.
 * Parameterize every SQL statement. String concatenation into a query will be rejected.
 * Keep fault injection behind Azure VM Run Command authorization, never public HTTP routes.
 * Prefer managed identity over shared secrets in infrastructure changes.

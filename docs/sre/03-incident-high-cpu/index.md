@@ -51,6 +51,22 @@ flowchart LR
     X --> H[Charts and API return to healthy levels]
 ```
 
+## Interactive incident launcher
+
+Connect to Azure from the control in the top-right site header, select your
+workshop environment, and use the launcher below. Documentation remains public,
+but run, reset, status, and telemetry requests stay disabled until the
+single-tenant connection succeeds.
+
+<div data-sre-incident="cpu">
+<p><strong>JavaScript is required for the interactive launcher.</strong> Use the terminal fallback in Task 2 when browser controls are unavailable.</p>
+</div>
+
+The graph reads **Percentage CPU** from Azure Monitor Metrics with Average
+aggregation, one-minute granularity, a rolling 30-minute window, and automatic
+refresh. The buttons invoke only the same bounded VM-local commands used by the
+terminal helper; no command text can be supplied from the browser.
+
 ## Tasks
 
 ### Task 1: Prepare healthy traffic and notes
@@ -131,7 +147,8 @@ minutes**. Leave the chart open.
 
 ### Task 2: Inject bounded CPU pressure
 
-In the first terminal:
+Select **Run CPU incident** in the inline launcher. If browser authentication or
+JavaScript is unavailable, use the equivalent terminal fallback:
 
 === "Bash"
 

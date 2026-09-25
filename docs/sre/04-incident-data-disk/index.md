@@ -51,6 +51,23 @@ flowchart LR
     X --> DB[(orders.db preserved)]
 ```
 
+## Interactive incident launcher
+
+Connect to Azure from the control in the top-right site header, select your
+workshop environment, and use the launcher below. Documentation remains public,
+but run, reset, status, and telemetry requests stay disabled until the
+single-tenant connection succeeds.
+
+<div data-sre-incident="disk">
+<p><strong>JavaScript is required for the interactive launcher.</strong> Use the terminal fallback in Task 3 when browser controls are unavailable.</p>
+</div>
+
+The graph queries Log Analytics guest telemetry for `/var/lib/orders` with
+one-minute bins, a rolling 30-minute window, and automatic refresh. The buttons
+invoke only the same bounded VM-local commands used by the terminal helper.
+Reset removes only the dedicated workshop ballast file and never changes
+`orders.db`.
+
 The workshop intentionally stops before a destructive filesystem-full state.
 If writes remain successful, that is evidence that detection provided a response
 window, not evidence that the alert was false.
@@ -132,6 +149,10 @@ Perf
 The last point is the pre-incident storage baseline. Leave both views open.
 
 ### Task 3: Record the incident start and inject disk pressure
+
+Select **Run disk incident** in the inline launcher. If browser authentication or
+JavaScript is unavailable, record the incident start and use the equivalent
+terminal fallback:
 
 === "Bash"
 

@@ -20,6 +20,7 @@ nav:
       - Troubleshooting: sre/30-appendix/02-troubleshooting.md
       - Cost Management: sre/30-appendix/03-cost-management.md
       - Running Locally or in Codespaces: sre/30-appendix/04-local-and-codespaces.md
+      - Site Azure Connection: sre/30-appendix/05-site-azure-connection.md
 
 theme:
   name: material
@@ -121,6 +122,9 @@ extra:
 
 extra_css:
   - assets/stylesheets/extra.css
+
+extra_javascript:
+  - assets/javascripts/workshop.js
 
 validation:
   omitted_files: info
