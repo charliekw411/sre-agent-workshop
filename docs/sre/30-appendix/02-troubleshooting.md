@@ -1,7 +1,7 @@
 ---
 title: Troubleshooting
 description: Diagnose deployment, VM service, SQLite, telemetry, alert, fault, SRE Agent, and cleanup problems in the single-VM workshop.
-ms.date: 2026-09-24
+ms.date: 2026-09-25
 ms.topic: troubleshooting
 keywords:
   - troubleshooting
@@ -151,7 +151,7 @@ disk and orders. Do not delete the disk as a generic retry step.
 
 ## VM and application problems
 
-### The public API is unreachable
+### The public API or Orders GUI is unreachable
 
 Check the URL, public IP, VM power state, and NSG:
 
@@ -180,6 +180,11 @@ Check the URL, public IP, VM power state, and NSG:
     ```
 
 Only TCP 8080 is allowed inbound. Port 22 is intentionally blocked.
+
+Open the exact `SERVICE_ORDERS_API_ENDPOINT_URL` value in a browser. If the page
+shell loads but its orders or status cards fail, the VM and static GUI are
+reachable and the underlying JSON requests need diagnosis. If the page itself
+does not load, continue with the VM, NSG, and service checks below.
 
 Run the supported inspection:
 
@@ -220,6 +225,38 @@ If the service itself needs inspection, use authenticated Run Command:
     ```
 
 Do not expose SSH as a troubleshooting shortcut.
+
+### The base URL returns JSON instead of the Orders GUI
+
+This is expected from curl, `Invoke-RestMethod`, monitoring probes, and clients
+that do not advertise `Accept: text/html`. The root preserves its JSON service
+descriptor for backward compatibility. A normal browser address-bar navigation
+requests HTML.
+
+Verify HTML negotiation explicitly:
+
+=== "Bash"
+
+    ```bash
+    curl --silent --fail \
+      --header 'Accept: text/html' \
+      --output /dev/null \
+      --write-out '%{http_code} %{content_type}\n' \
+      "${SERVICE_ORDERS_API_ENDPOINT_URL}/"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    $response = Invoke-WebRequest `
+      -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/" `
+      -Headers @{ Accept = 'text/html' }
+    "$($response.StatusCode) $($response.Headers.'Content-Type')"
+    ```
+
+Expect HTTP 200 and `text/html`. If the negotiated request fails after a
+deployment, rerun `azd up` so the checksummed application bundle includes the
+static assets. Do not add a second web server or Azure service.
 
 ### Readiness returns 503 or inspection reports a missing mount
 
@@ -431,6 +468,10 @@ Call `/orders` and `/storage`, wait for ingestion, and retry. Application
 Insights and guest `Perf` commonly arrive later than the VM platform metric.
 
 ### Application Insights has no requests
+
+Opening the Orders GUI and selecting **Refresh orders** and **Refresh status**
+generates the same underlying API operations. Use the commands below when you
+need a small, deterministic troubleshooting sample:
 
 === "Bash"
 

@@ -97,6 +97,9 @@ class ConfigurationTests(unittest.TestCase):
         with tarfile.open(fileobj=io.BytesIO(gzip.decompress(base64.b64decode(first)))) as archive:
             names = archive.getnames()
             self.assertIn("app/OrdersApi.csproj", names)
+            self.assertIn("app/wwwroot/index.html", names)
+            self.assertIn("app/wwwroot/app.css", names)
+            self.assertIn("app/wwwroot/app.js", names)
             self.assertIn("vm/orders-api.service", names)
             self.assertIn("vm/faults.py", names)
             self.assertFalse(any(part in path for path in names for part in (

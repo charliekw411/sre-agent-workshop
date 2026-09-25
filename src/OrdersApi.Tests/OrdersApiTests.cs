@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.ApplicationInsights.AspNetCore.Extensions;
@@ -49,6 +50,117 @@ public sealed class OrdersApiTests
         using var missingUpdate = await app.Client.PutAsJsonAsync("/orders/999999/quantity", new { quantity = 2 });
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, missingUpdate.StatusCode);
+    }
+
+    [Fact]
+    public async Task RootNegotiatesBrowserGuiWithoutChangingJsonDescriptor()
+    {
+        using var store = new TestDatabase();
+        await store.BootstrapAsync();
+        await using var app = await TestApplication.StartAsync(store);
+
+        using var defaultResponse = await app.Client.GetAsync("/");
+        Assert.Equal(HttpStatusCode.OK, defaultResponse.StatusCode);
+        Assert.Equal("application/json", defaultResponse.Content.Headers.ContentType!.MediaType);
+        var descriptor = await defaultResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("orders-api", descriptor.GetProperty("service").GetString());
+        Assert.Equal(
+            new[]
+            {
+                "/orders",
+                "/orders/{orderId}",
+                "/orders/{orderId}/quantity",
+                "/storage",
+                "/health/live",
+                "/health/ready"
+            },
+            descriptor.GetProperty("endpoints").EnumerateArray().Select(item => item.GetString()));
+
+        using var htmlRequest = new HttpRequestMessage(HttpMethod.Get, "/");
+        htmlRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
+        using var htmlResponse = await app.Client.SendAsync(htmlRequest);
+        Assert.Equal(HttpStatusCode.OK, htmlResponse.StatusCode);
+        Assert.Equal("text/html", htmlResponse.Content.Headers.ContentType!.MediaType);
+        Assert.Equal("utf-8", htmlResponse.Content.Headers.ContentType.CharSet);
+        Assert.Contains("default-src 'self'", Assert.Single(
+            htmlResponse.Headers.GetValues("Content-Security-Policy")));
+        var html = await htmlResponse.Content.ReadAsStringAsync();
+        Assert.Contains("<main id=\"main-content\"", html);
+        Assert.Contains("<dialog id=\"order-dialog\"", html);
+        Assert.Contains("aria-live=\"polite\"", html);
+        Assert.Contains("href=\"/app.css\"", html);
+        Assert.Contains("src=\"/app.js\"", html);
+        Assert.DoesNotContain("https://", html);
+        Assert.DoesNotContain("/fault", html);
+
+        using var css = await app.Client.GetAsync("/app.css");
+        using var javascript = await app.Client.GetAsync("/app.js");
+        Assert.Equal(HttpStatusCode.OK, css.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, javascript.StatusCode);
+        Assert.Equal("text/css", css.Content.Headers.ContentType!.MediaType);
+        Assert.Contains("javascript", javascript.Content.Headers.ContentType!.MediaType);
+        Assert.Equal("nosniff", Assert.Single(css.Headers.GetValues("X-Content-Type-Options")));
+        Assert.Contains("prefers-reduced-motion", await css.Content.ReadAsStringAsync());
+        Assert.Contains("Idempotency-Key", await javascript.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task IdempotencyKeyReplaysCreateAndConflictingPayloadReturnsProblem()
+    {
+        using var store = new TestDatabase();
+        await store.BootstrapAsync();
+        await using var app = await TestApplication.StartAsync(store);
+        const string requestId = "browser-request-123";
+
+        static HttpRequestMessage CreateRequest(OrderRequest order)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/orders")
+            {
+                Content = JsonContent.Create(order)
+            };
+            request.Headers.Add("Idempotency-Key", requestId);
+            return request;
+        }
+
+        using var firstRequest = CreateRequest(new("retry-customer", "SKU-1002", 2));
+        using var first = await app.Client.SendAsync(firstRequest);
+        using var replayRequest = CreateRequest(new("retry-customer", "SKU-1002", 2));
+        using var replay = await app.Client.SendAsync(replayRequest);
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, replay.StatusCode);
+        var firstBody = await first.Content.ReadFromJsonAsync<JsonElement>();
+        var replayBody = await replay.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(firstBody.GetProperty("orderId").GetInt64(), replayBody.GetProperty("orderId").GetInt64());
+        Assert.Equal(first.Headers.Location, replay.Headers.Location);
+        Assert.Equal("true", Assert.Single(replay.Headers.GetValues("Idempotency-Replayed")));
+
+        using var conflictRequest = CreateRequest(new("retry-customer", "SKU-1002", 3));
+        using var conflict = await app.Client.SendAsync(conflictRequest);
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+        Assert.Equal("application/problem+json", conflict.Content.Headers.ContentType!.MediaType);
+        var problem = await conflict.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Idempotency key conflict", problem.GetProperty("title").GetString());
+        Assert.Equal(6, (await app.Client.GetFromJsonAsync<OrderRecord[]>("/orders"))!.Length);
+    }
+
+    [Fact]
+    public async Task InvalidIdempotencyKeyIsRejectedBeforeWriting()
+    {
+        using var store = new TestDatabase();
+        await store.BootstrapAsync();
+        await using var app = await TestApplication.StartAsync(store);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/orders")
+        {
+            Content = JsonContent.Create(new OrderRequest("customer", "SKU-1001", 1))
+        };
+        Assert.True(request.Headers.TryAddWithoutValidation("Idempotency-Key", "not valid"));
+
+        using var response = await app.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(body.GetProperty("errors").TryGetProperty("idempotencyKey", out _));
+        Assert.Equal(5, (await app.Client.GetFromJsonAsync<OrderRecord[]>("/orders"))!.Length);
     }
 
     [Fact]

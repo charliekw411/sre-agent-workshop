@@ -1,7 +1,7 @@
 ---
 title: Module 04 - Respond to Data-Disk Pressure
 description: Fill only the managed SQLite data disk with a bounded ballast file, visualize the leading capacity signal, review the SRE Agent investigation, and recover without deleting orders.
-ms.date: 2026-09-24
+ms.date: 2026-09-25
 ms.topic: how-to
 keywords:
   - managed disk
@@ -68,6 +68,12 @@ invoke only the same bounded VM-local commands used by the terminal helper.
 Reset removes only the dedicated workshop ballast file and never changes
 `orders.db`.
 
+!!! tip "Keep the operator and customer views separate"
+    Use this authenticated documentation tab to start, inspect, and reset the
+    incident. Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a second tab for the
+    public Orders GUI. The first changes workshop state; the second only makes
+    customer and status API requests.
+
 The workshop intentionally stops before a destructive filesystem-full state.
 If writes remain successful, that is evidence that detection provided a response
 window, not evidence that the alert was false.
@@ -97,6 +103,10 @@ window, not evidence that the alert was false.
     ```
 
 Record the starting `usedPercent`, `availableBytes`, and `databaseBytes`.
+
+Optionally open `SERVICE_ORDERS_API_ENDPOINT_URL` in a browser and record the
+same baseline from the **Data disk** card. Keep the terminal output as the
+authoritative numeric fallback.
 
 Start low-rate traffic in another terminal:
 
@@ -191,6 +201,12 @@ Safety checks refuse to run when:
 * The allocation would violate the 128 MiB recovery reserve.
 
 ### Task 4: Hit read and write endpoints during pressure
+
+The optional Orders GUI exposes the same customer paths. Refresh the status
+cards to see disk usage, create one synthetic order, and refresh the list. A
+successful write while the card reports low capacity demonstrates a response
+window rather than an outage. Use the loop below for consistent timestamped
+evidence.
 
 Poll application storage and both customer paths:
 
@@ -453,6 +469,10 @@ alert can fire or resolve after the filesystem itself has already recovered.
 Confirm the VM CPU chart remains healthy and the order created in Task 4 is
 still returned by `/orders`.
 
+In the optional Orders GUI, refresh status and confirm that available space
+returns near its baseline, the data-disk card visibly recovers, and the order is
+still listed.
+
 The reset stops the transient unit and removes only
 `/var/lib/orders/.workshop-disk-pressure`. It never deletes or recreates SQLite.
 
@@ -468,6 +488,7 @@ mitigation, recovery, and resolution times.
 * [x] The response plan opened or updated an SRE Agent investigation.
 * [x] You distinguished capacity risk from demonstrated customer impact.
 * [x] Reset restored free space and preserved SQLite integrity and orders.
+* [x] The optional Orders GUI showed low capacity and recovery, or the terminal fallback captured both.
 
 ## Knowledge check
 

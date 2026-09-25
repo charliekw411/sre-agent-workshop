@@ -28,6 +28,14 @@ public partial class Program
 
         var app = builder.Build();
         app.UseExceptionHandler();
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            OnPrepareResponse = context =>
+            {
+                context.Context.Response.Headers.CacheControl = "no-cache";
+                context.Context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            }
+        });
 
         app.MapGet("/health/live", () => Results.Ok(new { status = "live", service = serviceName }));
         app.MapGet("/health/ready", async (OrdersRepository repository, CancellationToken cancellationToken) =>
@@ -36,26 +44,43 @@ public partial class Program
             return Results.Ok(new { status = "ready", service = serviceName });
         });
 
-        app.MapGet("/", () => Results.Ok(new
+        app.MapGet("/", (HttpRequest request, IWebHostEnvironment environment) =>
         {
-            service = serviceName,
-            description = "Contoso Order Services - orders API",
-            endpoints = new[] { "/orders", "/orders/{orderId}", "/orders/{orderId}/quantity", "/storage", "/health/live", "/health/ready" }
-        }));
+            if (AcceptsHtml(request))
+            {
+                request.HttpContext.Response.Headers.CacheControl = "no-cache";
+                request.HttpContext.Response.Headers["Content-Security-Policy"] =
+                    "default-src 'self'; base-uri 'none'; connect-src 'self'; form-action 'self'; "
+                    + "frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; "
+                    + "script-src 'self'; style-src 'self'";
+                request.HttpContext.Response.Headers["Referrer-Policy"] = "no-referrer";
+                request.HttpContext.Response.Headers["X-Content-Type-Options"] = "nosniff";
+                var webRoot = environment.WebRootPath ?? Path.Combine(environment.ContentRootPath, "wwwroot");
+                return Results.File(Path.Combine(webRoot, "index.html"), "text/html; charset=utf-8");
+            }
+
+            return Results.Ok(new
+            {
+                service = serviceName,
+                description = "Contoso Order Services - orders API",
+                endpoints = new[] { "/orders", "/orders/{orderId}", "/orders/{orderId}/quantity", "/storage", "/health/live", "/health/ready" }
+            });
+        });
 
         app.MapPost("/orders", async (
-            OrderRequest request,
+            OrderRequest order,
+            HttpContext httpContext,
             OrdersRepository repository,
             ILogger<Program> logger,
             CancellationToken cancellationToken) =>
         {
-            var errors = ValidateOrder(request);
+            var errors = ValidateOrder(order);
             if (errors.Count > 0)
             {
                 return Results.ValidationProblem(errors);
             }
 
-            if (!SampleProducts.TryGetPrice(request.ProductId, out var unitPrice))
+            if (!SampleProducts.TryGetPrice(order.ProductId, out var unitPrice))
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
@@ -63,9 +88,45 @@ public partial class Program
                 });
             }
 
-            var orderId = await repository.CreateOrderAsync(request, unitPrice, cancellationToken);
-            logger.LogInformation("Created order {OrderId} for customer {CustomerId}.", orderId, request.CustomerId);
-            return Results.Created($"/orders/{orderId}", new { orderId, unitPrice });
+            if (!TryGetIdempotencyKey(httpContext.Request, out var requestId, out var keyError))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["idempotencyKey"] = [keyError!]
+                });
+            }
+
+            if (requestId is null)
+            {
+                var orderId = await repository.CreateOrderAsync(order, unitPrice, cancellationToken);
+                logger.LogInformation("Created order {OrderId} for customer {CustomerId}.", orderId, order.CustomerId);
+                return Results.Created($"/orders/{orderId}", new { orderId, unitPrice });
+            }
+
+            var creation = await repository.CreateOrderIdempotentlyAsync(
+                order, unitPrice, requestId, cancellationToken);
+            if (creation is null)
+            {
+                return Results.Problem(
+                    title: "Idempotency key conflict",
+                    detail: "The Idempotency-Key was already used for a different order request.",
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+
+            if (creation.Replayed)
+            {
+                httpContext.Response.Headers["Idempotency-Replayed"] = "true";
+                logger.LogInformation("Replayed order creation {OrderId}.", creation.OrderId);
+            }
+            else
+            {
+                logger.LogInformation(
+                    "Created order {OrderId} for customer {CustomerId}.", creation.OrderId, order.CustomerId);
+            }
+
+            return Results.Created(
+                $"/orders/{creation.OrderId}",
+                new { orderId = creation.OrderId, unitPrice = creation.UnitPrice });
         });
 
         app.MapGet("/orders", async (OrdersRepository repository, CancellationToken cancellationToken) =>
@@ -102,6 +163,52 @@ public partial class Program
 
         return app;
     }
+
+    private static bool AcceptsHtml(HttpRequest request)
+    {
+        var accepted = request.GetTypedHeaders().Accept;
+        return accepted is not null && accepted.Any(value =>
+            value.Quality.GetValueOrDefault(1) > 0
+            && string.Equals(value.MediaType.Value, "text/html", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool TryGetIdempotencyKey(
+        HttpRequest request,
+        out string? requestId,
+        out string? error)
+    {
+        requestId = null;
+        error = null;
+        if (!request.Headers.TryGetValue("Idempotency-Key", out var values))
+        {
+            return true;
+        }
+
+        if (values.Count != 1)
+        {
+            error = "Idempotency-Key must be supplied once.";
+            return false;
+        }
+
+        var value = values[0]!;
+        if (value.Length is < 1 or > 128 || !value.All(IsIdempotencyKeyCharacter))
+        {
+            error = "Idempotency-Key must contain 1 to 128 letters, digits, periods, underscores, colons or hyphens.";
+            return false;
+        }
+
+        requestId = value;
+        return true;
+    }
+
+    private static bool IsIdempotencyKeyCharacter(char value) =>
+        value is >= 'a' and <= 'z'
+            or >= 'A' and <= 'Z'
+            or >= '0' and <= '9'
+            or '.'
+            or '_'
+            or ':'
+            or '-';
 
     private static Dictionary<string, string[]> ValidateOrder(OrderRequest request)
     {

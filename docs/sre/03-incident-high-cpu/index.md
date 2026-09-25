@@ -1,7 +1,7 @@
 ---
 title: Module 03 - Respond to High CPU
 description: Trigger bounded CPU pressure through authenticated VM Run Command, follow the alert into an SRE Agent investigation, verify the diagnosis, and recover.
-ms.date: 2026-09-24
+ms.date: 2026-09-25
 ms.topic: how-to
 keywords:
   - cpu saturation
@@ -66,6 +66,12 @@ The graph reads **Percentage CPU** from Azure Monitor Metrics with Average
 aggregation, one-minute granularity, a rolling 30-minute window, and automatic
 refresh. The buttons invoke only the same bounded VM-local commands used by the
 terminal helper; no command text can be supplied from the browser.
+
+!!! tip "Keep the operator and customer views separate"
+    Use this authenticated documentation tab to start, inspect, and reset the
+    incident. Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a second tab for the
+    public Orders GUI. The first changes workshop state; the second only makes
+    customer and status API requests.
 
 ## Tasks
 
@@ -172,6 +178,12 @@ memory limit and runs at a reduced scheduling priority.
     another injection. A second active CPU fault is rejected.
 
 ### Task 3: Hit the API and observe customer impact
+
+Optionally keep `SERVICE_ORDERS_API_ENDPOINT_URL` open in a browser as the
+customer-impact view. Select **Refresh orders** during the fault and note the
+reported latency, timeout, or failure state. The status cards continue their
+low-rate 30-second refresh and make recovery visible, but they do not replace the
+load generator or the timed terminal sample below.
 
 While the fault is active, poll the endpoint:
 
@@ -397,6 +409,10 @@ blade, watch **Percentage CPU** return toward its healthy range. In
 Application Insights, confirm request duration also recovers. The Azure Monitor
 alert auto-resolves after the evaluation window is healthy.
 
+In the optional Orders GUI, select **Refresh orders** and **Refresh status**.
+Confirm that any slow, timeout, or unavailable state returns to a successful
+response with normal latency.
+
 Record fault start, degradation start, alert time, mitigation time, recovery
 time, and alert resolution in `.workshop/notes/incident-01-cpu.md`.
 
@@ -409,6 +425,7 @@ time, and alert resolution in `.workshop/notes/incident-01-cpu.md`.
 * [x] The response plan created or updated an SRE Agent investigation.
 * [x] You verified the diagnosis with platform metrics, requests, and Activity Log.
 * [x] CPU and request behavior returned to baseline after reset.
+* [x] The optional Orders GUI showed customer-facing degradation and recovery, or the terminal fallback captured both.
 
 ## Knowledge check
 

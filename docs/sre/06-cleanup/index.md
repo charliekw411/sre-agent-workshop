@@ -1,7 +1,7 @@
 ---
 title: Module 06 - Preserve Evidence and Clean Up
 description: Capture final portal evidence, stop all workshop activity, preserve investigation artifacts, delete the Azure environment, and verify removal.
-ms.date: 2026-09-24
+ms.date: 2026-09-25
 ms.topic: how-to
 keywords:
   - cleanup
@@ -30,7 +30,7 @@ organization's data-handling policy.
 
 ## Learning objectives
 
-* Capture a final healthy CPU and API view after both incidents.
+* Capture final healthy Orders GUI, CPU, and API views after both incidents.
 * Stop load generation and reset bounded faults.
 * Preserve notes, charts, alert history, and agent findings.
 * Review the exact Azure scope before deletion.
@@ -56,6 +56,10 @@ organization's data-handling policy.
     python scripts/workshop.py smoke
     ```
 
+Open `SERVICE_ORDERS_API_ENDPOINT_URL` in the Orders GUI. Select **Refresh
+orders** and **Refresh status**, confirm the service is available, and capture a
+final screenshot with only synthetic order data visible.
+
 Send one final minute of healthy traffic:
 
 === "Bash"
@@ -79,15 +83,16 @@ Send one final minute of healthy traffic:
 
 Before deleting anything:
 
-1. Open the VM **Monitoring** > **Metrics** blade.
-2. Display **Percentage CPU** over the full workshop window.
-3. Confirm the current segment is healthy and the earlier CPU spike remains
+1. Save the final healthy Orders GUI screenshot.
+2. Open the VM **Monitoring** > **Metrics** blade.
+3. Display **Percentage CPU** over the full workshop window.
+4. Confirm the current segment is healthy and the earlier CPU spike remains
    visible.
-4. Open Application Insights **Performance** and confirm current endpoint
+5. Open Application Insights **Performance** and confirm current endpoint
    traffic.
-5. Open **Monitor** > **Alerts**, include resolved alerts, and capture the CPU
+6. Open **Monitor** > **Alerts**, include resolved alerts, and capture the CPU
    and data-disk alert history.
-6. Save the final SRE Agent investigation summaries.
+7. Save the final SRE Agent investigation summaries.
 
 <!-- SCREENSHOT: Final VM CPU chart showing baseline, incident spike, and recovered state -->
 
@@ -142,6 +147,7 @@ Create a directory outside `.workshop` and copy your notes:
 Keep:
 
 * Baseline values and portal screenshots.
+* The final healthy Orders GUI screenshot.
 * CPU and data-disk timelines.
 * Alert and response-plan timestamps.
 * Agent drafts and your corrections.
@@ -208,6 +214,10 @@ VM, both disks, public endpoint, telemetry, alert history, response plan, and
 SRE Agent. There is no database backup.
 
 Allow Azure several minutes to finish deletion.
+
+The Orders GUI becoming unreachable is expected after the public IP and VM are
+deleted, but it is not sufficient proof of cleanup. Verify Azure resource
+removal in the next task.
 
 ### Task 6: Verify removal
 
@@ -282,7 +292,7 @@ Do not delete the repository or your copied review artifacts.
 
 ## Validation
 
-* [x] You captured the final VM CPU, API, alert, and SRE Agent views.
+* [x] You captured the final healthy Orders GUI, VM CPU, API, alert, and SRE Agent views.
 * [x] All load generation and faults were stopped.
 * [x] Notes and screenshots were copied outside deployment state.
 * [x] You reviewed the resource inventory before deletion.
@@ -302,10 +312,10 @@ Do not delete the repository or your copied review artifacts.
 
 ## Workshop complete
 
-You deployed and validated a persistent single-VM workload, confirmed healthy
-telemetry, operated an SRE Agent response plan, handled CPU and disk-capacity
-incidents, verified automated findings, and converted the evidence into an
-improvement backlog.
+You deployed and validated a persistent single-VM workload, used its customer
+GUI, confirmed healthy telemetry, operated an SRE Agent response plan, handled
+CPU and disk-capacity incidents, verified automated findings, and converted the
+evidence into an improvement backlog.
 
 [Return to workshop home :material-home:](../../index.md){ .md-button .md-button--primary }
 [Troubleshooting](../30-appendix/02-troubleshooting.md){ .md-button }

@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; base-uri 'none'; connect-src 'self'; form-action 'self'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'">
+  <title>Contoso Orders</title>
+  <link rel="stylesheet" href="/app.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="/" aria-label="Contoso Orders home">
+        <span class="brand-mark" aria-hidden="true">C</span>
+        <span>
+          <strong>Contoso</strong>
+          <span>Order Services</span>
+        </span>
+      </a>
+      <div id="service-summary" class="service-summary checking" role="status" aria-live="polite">
+        <span class="summary-dot" aria-hidden="true"></span>
+        <span id="service-summary-text">Checking service</span>
+      </div>
+    </div>
+  </header>
+
+  <main id="main-content" class="page-shell">
+    <section class="hero" aria-labelledby="page-heading">
+      <div>
+        <p class="eyebrow">Customer workspace</p>
+        <h1 id="page-heading">Orders</h1>
+        <p class="hero-copy">
+          Create and manage synthetic workshop orders, then watch how the service
+          responds during an incident and recovery.
+        </p>
+      </div>
+      <button id="refresh-orders" class="button secondary" type="button">
+        <span class="button-label">Refresh orders</span>
+        <span class="button-spinner" aria-hidden="true"></span>
+      </button>
+    </section>
+
+    <section class="status-section" aria-labelledby="status-heading">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Current signals</p>
+          <h2 id="status-heading">Service status</h2>
+          <p id="status-updated" class="section-note">Status has not been checked yet.</p>
+        </div>
+        <button id="refresh-status" class="button quiet" type="button">
+          <span class="button-label">Refresh status</span>
+          <span class="button-spinner" aria-hidden="true"></span>
+        </button>
+      </div>
+
+      <div id="status-grid" class="status-grid" aria-busy="true">
+        <article class="status-card checking" data-status-card="live">
+          <div class="status-card-heading">
+            <div class="status-icon" aria-hidden="true">L</div>
+            <div>
+              <h3>Liveness</h3>
+              <p>Process availability</p>
+            </div>
+            <span id="live-state" class="status-badge">Checking</span>
+          </div>
+          <dl class="status-details">
+            <div>
+              <dt>Response</dt>
+              <dd id="live-response">Waiting</dd>
+            </div>
+            <div>
+              <dt>Latency</dt>
+              <dd id="live-latency">--</dd>
+            </div>
+          </dl>
+          <p id="live-message" class="status-message">Contacting /health/live</p>
+        </article>
+
+        <article class="status-card checking" data-status-card="ready">
+          <div class="status-card-heading">
+            <div class="status-icon" aria-hidden="true">R</div>
+            <div>
+              <h3>Readiness</h3>
+              <p>Database availability</p>
+            </div>
+            <span id="ready-state" class="status-badge">Checking</span>
+          </div>
+          <dl class="status-details">
+            <div>
+              <dt>Response</dt>
+              <dd id="ready-response">Waiting</dd>
+            </div>
+            <div>
+              <dt>Latency</dt>
+              <dd id="ready-latency">--</dd>
+            </div>
+          </dl>
+          <p id="ready-message" class="status-message">Contacting /health/ready</p>
+        </article>
+
+        <article class="status-card checking storage-card" data-status-card="storage">
+          <div class="status-card-heading">
+            <div class="status-icon" aria-hidden="true">D</div>
+            <div>
+              <h3>Data disk</h3>
+              <p>Orders storage</p>
+            </div>
+            <span id="storage-state" class="status-badge">Checking</span>
+          </div>
+          <div class="storage-meter">
+            <div class="meter-label">
+              <span>Disk used</span>
+              <strong id="storage-percent">--</strong>
+            </div>
+            <progress id="storage-progress" max="100" value="0">
+              0 percent used
+            </progress>
+          </div>
+          <dl class="status-details storage-details">
+            <div>
+              <dt>Available</dt>
+              <dd id="storage-available">--</dd>
+            </div>
+            <div>
+              <dt>Database</dt>
+              <dd id="storage-database">--</dd>
+            </div>
+            <div>
+              <dt>Latency</dt>
+              <dd id="storage-latency">--</dd>
+            </div>
+          </dl>
+          <p id="storage-message" class="status-message">Contacting /storage</p>
+        </article>
+      </div>
+    </section>
+
+    <div class="workspace-grid">
+      <section class="panel create-panel" aria-labelledby="create-heading">
+        <div class="panel-heading">
+          <p class="eyebrow">New transaction</p>
+          <h2 id="create-heading">Create an order</h2>
+          <p>Use synthetic workshop data only.</p>
+        </div>
+
+        <form id="create-order-form">
+          <div class="field">
+            <label for="customer-id">Customer ID</label>
+            <input id="customer-id" name="customerId" type="text" required
+                   maxlength="64" autocomplete="off" aria-describedby="customer-hint customer-error">
+            <p id="customer-hint" class="field-hint">1 to 64 characters</p>
+            <p id="customer-error" class="field-error" aria-live="polite"></p>
+          </div>
+
+          <div class="field">
+            <label for="product-id">Product</label>
+            <select id="product-id" name="productId" required aria-describedby="product-error">
+              <option value="SKU-1001">Contoso Mechanical Keyboard - $129.99</option>
+              <option value="SKU-1002">Contoso 27in Monitor - $349.00</option>
+              <option value="SKU-1003">Contoso Docking Station - $219.50</option>
+              <option value="SKU-1004">Contoso Wireless Mouse - $45.75</option>
+              <option value="SKU-1005">Contoso Noise Cancelling Headset - $189.00</option>
+            </select>
+            <p id="product-error" class="field-error" aria-live="polite"></p>
+          </div>
+
+          <div class="field">
+            <label for="order-quantity">Quantity</label>
+            <input id="order-quantity" name="quantity" type="number" required
+                   min="1" max="1000" step="1" value="1" inputmode="numeric"
+                   aria-describedby="quantity-hint quantity-error">
+            <p id="quantity-hint" class="field-hint">Between 1 and 1,000</p>
+            <p id="quantity-error" class="field-error" aria-live="polite"></p>
+          </div>
+
+          <div class="order-total">
+            <span>Estimated total</span>
+            <output id="estimated-total" for="product-id order-quantity">$129.99</output>
+          </div>
+
+          <button id="create-order" class="button primary full-width" type="submit">
+            <span class="button-label">Create order</span>
+            <span class="button-spinner" aria-hidden="true"></span>
+          </button>
+          <div id="create-feedback" class="feedback" role="status" aria-live="polite" hidden></div>
+        </form>
+      </section>
+
+      <section class="panel orders-panel" aria-labelledby="orders-heading">
+        <div class="section-heading orders-heading">
+          <div>
+            <p class="eyebrow">Recent activity</p>
+            <h2 id="orders-heading">Recent orders</h2>
+            <p id="orders-summary" class="section-note">Loading recent orders...</p>
+          </div>
+        </div>
+
+        <div id="orders-feedback" class="feedback" role="status" aria-live="polite" hidden></div>
+        <div id="orders-table-wrap" class="table-wrap" aria-busy="true">
+          <table>
+            <caption class="sr-only">
+              Recent orders. Select an order to inspect details or update its quantity.
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Order</th>
+                <th scope="col">Customer</th>
+                <th scope="col">Product</th>
+                <th scope="col" class="number">Qty</th>
+                <th scope="col" class="number">Unit price</th>
+                <th scope="col" class="number">Total</th>
+                <th scope="col">Created</th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="orders-body"></tbody>
+          </table>
+        </div>
+        <div id="orders-empty" class="empty-state" hidden>
+          <div class="empty-icon" aria-hidden="true">0</div>
+          <h3>No orders yet</h3>
+          <p>Create the first synthetic order with the form.</p>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <p>Contoso SRE workshop workload. Synthetic data only.</p>
+  </footer>
+
+  <dialog id="order-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-status">
+    <div class="dialog-shell">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Order details</p>
+          <h2 id="dialog-title">Order</h2>
+        </div>
+        <form method="dialog">
+          <button class="icon-button" type="submit" aria-label="Close order details">&times;</button>
+        </form>
+      </div>
+
+      <div id="dialog-loading" class="dialog-loading" role="status">
+        <span class="large-spinner" aria-hidden="true"></span>
+        <span>Loading order...</span>
+      </div>
+
+      <div id="dialog-content" hidden>
+        <dl class="order-details">
+          <div>
+            <dt>Order ID</dt>
+            <dd id="detail-order-id">--</dd>
+          </div>
+          <div>
+            <dt>Customer</dt>
+            <dd id="detail-customer">--</dd>
+          </div>
+          <div>
+            <dt>Product</dt>
+            <dd id="detail-product">--</dd>
+          </div>
+          <div>
+            <dt>Unit price</dt>
+            <dd id="detail-price">--</dd>
+          </div>
+          <div>
+            <dt>Total</dt>
+            <dd id="detail-total">--</dd>
+          </div>
+          <div>
+            <dt>Created</dt>
+            <dd id="detail-created">--</dd>
+          </div>
+        </dl>
+
+        <form id="update-quantity-form" class="update-form">
+          <div class="field">
+            <label for="detail-quantity">Quantity</label>
+            <input id="detail-quantity" name="quantity" type="number" required
+                   min="1" max="1000" step="1" inputmode="numeric"
+                   aria-describedby="detail-quantity-error">
+            <p id="detail-quantity-error" class="field-error" aria-live="polite"></p>
+          </div>
+          <button id="update-quantity" class="button primary" type="submit">
+            <span class="button-label">Update quantity</span>
+            <span class="button-spinner" aria-hidden="true"></span>
+          </button>
+        </form>
+      </div>
+
+      <div id="dialog-feedback" class="feedback" role="status" aria-live="polite" hidden></div>
+      <p id="dialog-status" class="dialog-status"></p>
+    </div>
+  </dialog>
+
+  <div id="announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+</body>
+</html>

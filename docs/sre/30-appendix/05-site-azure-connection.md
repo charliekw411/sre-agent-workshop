@@ -16,6 +16,12 @@ used only for the inline Azure controls and telemetry in Modules 03 and 04. The
 site has no server component, client secret, embedded Azure credential, or
 public fault endpoint.
 
+This operator site is separate from the Orders GUI served by the workshop VM.
+The Orders GUI is intentionally unauthenticated and calls only customer and
+status APIs. Signing into this site does not sign into the Orders GUI, and the
+Orders GUI never receives Azure tokens or incident controls. Keep both in
+separate tabs during Modules 03 and 04.
+
 ## Register the single-tenant SPA
 
 Create one app registration in the workshop Microsoft Entra tenant:
@@ -157,18 +163,22 @@ Validate from the deployed GitHub Pages origin against the
    challenge.
 3. Confirm the control shows the expected account, tenant, subscription, and
    `rg-sre-agent-workshop-sre-vm-aue-final` environment.
-4. In Module 03, run the CPU incident and confirm the Average **Percentage CPU**
-   graph refreshes at one-minute granularity over the last 30 minutes.
-5. Reset the incident and confirm the VM fault status becomes inactive.
-6. In Module 04, run the disk incident and confirm the Log Analytics graph falls
-   for `/var/lib/orders`.
-7. Reset it and verify free space recovers, the ballast is removed, and
+4. Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a separate tab and confirm the
+   Orders GUI reports healthy liveness, readiness, and storage.
+5. In Module 03, run the CPU incident, confirm the Average **Percentage CPU**
+   graph refreshes at one-minute granularity, and compare it with the Orders GUI
+   customer view.
+6. Reset the incident and confirm the VM fault status and Orders GUI recover.
+7. In Module 04, run the disk incident and compare the Log Analytics graph for
+   `/var/lib/orders` with the Orders GUI data-disk card.
+8. Reset it and verify both views recover, the ballast is removed, and
    `orders.db` and existing orders remain.
-8. Open the launcher links for the matching Azure Monitor alert and SRE Agent
+9. Open the launcher links for the matching Azure Monitor alert and SRE Agent
    investigation.
-9. Sign out, then verify all buttons and queries are disabled while every
-   documentation page remains readable.
-10. Attempt sign-in with an account that is not accepted by the workshop tenant
+10. Sign out, then verify all operator buttons and queries are disabled while
+    every documentation page remains readable and the public Orders GUI remains
+    independent of that sign-in state.
+11. Attempt sign-in with an account that is not accepted by the workshop tenant
     and verify the connection does not succeed.
 
 If Run Command times out, do not select **Run incident** again. Select **Check

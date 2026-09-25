@@ -1,7 +1,7 @@
 ---
 title: Running Locally or in Codespaces
 description: Preview the documentation, run the SQLite Orders API locally, or deploy the VM workshop from local, Codespaces, or Cloud Shell terminals.
-ms.date: 2026-09-24
+ms.date: 2026-09-25
 ms.topic: how-to
 keywords:
   - local development
@@ -91,6 +91,12 @@ Create a local SQLite database outside the source project:
     dotnet run --project src/OrdersApi -- --bootstrap
     dotnet run --project src/OrdersApi --urls http://localhost:8080
     ```
+
+Open [http://localhost:8080/](http://localhost:8080/) in a browser to use the
+Orders GUI. Browser navigation receives HTML through content negotiation, while
+the JSON endpoints and command-line examples below are unchanged. The visible
+page refreshes its three service-status requests every 30 seconds and pauses
+that timer when hidden.
 
 In another terminal:
 

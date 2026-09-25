@@ -1,7 +1,7 @@
 ---
 title: Module 01 - Deploy and Validate the Workshop
 description: Deploy the single-VM Orders API workshop and prove that the public API, systemd service, SQLite data disk, telemetry, and restart recovery all work.
-ms.date: 2026-09-24
+ms.date: 2026-09-25
 ms.topic: how-to
 keywords:
   - azure virtual machines
@@ -34,7 +34,7 @@ a VM is not enough: the live smoke check must pass.
 
 * Prepare the Azure CLI, Azure Developer CLI, Python, and local shell.
 * Deploy the complete workshop into a new Azure resource group.
-* Verify the public API and the absence of destructive HTTP fault routes.
+* Use the public Orders GUI and verify the absence of destructive HTTP fault routes.
 * Prove that `orders-api` runs under `systemd` and SQLite uses the managed disk.
 * Restart the VM and prove that the service and persisted orders recover.
 * Confirm healthy endpoint activity in VM Metrics and Application Insights.
@@ -43,9 +43,9 @@ a VM is not enough: the live smoke check must pass.
 
 ```mermaid
 flowchart LR
-    User[Workshop user] -->|HTTP :8080| IP[Static public IP and DNS]
+    User[Workshop user] -->|Browser GUI or JSON API<br/>HTTP :8080| IP[Static public IP and DNS]
     IP --> VM[Ubuntu 24.04 VM]
-    VM --> Service[orders-api systemd service]
+    VM --> Service[orders-api systemd service<br/>API and static GUI]
     Service --> DB[(SQLite orders.db)]
     DB --> Disk[Managed data disk<br/>/var/lib/orders]
 
@@ -258,6 +258,18 @@ read-only check through authenticated Run Command and verifies:
 * `orders-api` is active, enabled, configured to restart, and runs as user
   `orders`.
 
+Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a browser. The same Orders API process
+serves a responsive interface at the root, without a second Azure service. List
+the seeded orders, create one with synthetic data, open its details, update its
+quantity, and refresh the service-status cards. The terminal checks below remain
+the fallback and the authoritative deployment validation.
+
+The GUI makes one `/orders` request on load or explicit refresh, one
+`/orders/{orderId}` request when details open, and mutations only when you submit
+a form. While the tab is visible, it requests `/health/live`, `/health/ready`,
+and `/storage` every 30 seconds. Hidden tabs pause that status timer, so this
+normal GUI traffic does not replace generated incident load.
+
 Call the same public endpoints yourself:
 
 === "Bash"
@@ -393,6 +405,7 @@ analysis happens inside the incident modules.
 
 * [x] `azd up` completed through the public smoke stage.
 * [x] The public `/health/ready`, `/orders`, and `/storage` endpoints return 200.
+* [x] The root browser GUI listed and updated synthetic orders and displayed service status.
 * [x] VM inspection reports an active non-root service and valid SQLite WAL database.
 * [x] Restart validation preserves the disk UUID and witness order.
 * [x] You viewed healthy activity in VM Metrics and Application Insights.

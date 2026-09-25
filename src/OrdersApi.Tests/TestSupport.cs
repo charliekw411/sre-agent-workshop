@@ -111,7 +111,9 @@ internal sealed class TestApplication(WebApplication application, RecordingTelem
         {
             ApplicationName = typeof(Program).Assembly.FullName,
             EnvironmentName = Environments.Production,
-            ContentRootPath = AppContext.BaseDirectory
+            ContentRootPath = AppContext.BaseDirectory,
+            WebRootPath = Path.GetFullPath(Path.Combine(
+                AppContext.BaseDirectory, "..", "..", "..", "..", "OrdersApi", "wwwroot"))
         });
         builder.Configuration.Sources.Clear();
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>

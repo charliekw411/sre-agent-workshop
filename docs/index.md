@@ -1,7 +1,7 @@
 ---
 title: Azure SRE Agent Workshop
-description: Deploy a single-VM Orders API, visualize its Azure Monitor signals, and operate an Azure SRE Agent response plan through CPU and data-disk incidents.
-ms.date: 2026-09-24
+description: Deploy a single-VM Orders API, exercise its browser GUI, visualize Azure Monitor signals, and operate an Azure SRE Agent response plan through CPU and data-disk incidents.
+ms.date: 2026-09-25
 ms.topic: overview
 keywords:
   - azure sre agent
@@ -21,7 +21,7 @@ estimated_reading_time: 5
 
 The workshop creates one disposable Ubuntu 24.04 VM:
 
-* A public .NET 8 Orders API on HTTP port 8080.
+* A public .NET 8 Orders API and browser GUI on HTTP port 8080.
 * A hardened, non-root `orders-api` systemd service.
 * SQLite on a separate 8 GiB managed data disk mounted at
   `/var/lib/orders`.
@@ -36,8 +36,15 @@ There is no public SSH access and no public fault-injection endpoint.
 Administrative checks and bounded CPU or disk faults use authenticated Azure VM
 Run Command.
 
+The workshop uses two separate browser surfaces. The public Orders GUI is the
+customer view served by the VM on port 8080. This documentation site is the
+operator view; after Microsoft Entra sign-in, its incident launchers use Azure
+RBAC and Run Command. Administrative controls never appear in the Orders GUI.
+
 ## What you learn
 
+* Use the Orders GUI to establish a healthy customer baseline and observe
+  degradation and recovery.
 * Prove that the application runs under systemd and persists SQLite data across
   a VM restart.
 * Confirm that healthy endpoint activity reaches VM Metrics and Application
@@ -49,8 +56,9 @@ Run Command.
 
 ## Learning path
 
-The six modules follow one operator journey. Every module includes a portal
-checkpoint that ties an action against the API or VM to a visual telemetry view.
+The six modules follow one operator journey. The Orders GUI supplies the
+customer view, and each module ties API or VM activity to repeatable terminal
+evidence and an Azure portal checkpoint.
 
 ```mermaid
 flowchart LR
@@ -70,14 +78,14 @@ flowchart LR
     class M5,M6 learn
 ```
 
-| Module | Outcome | Portal evidence |
+| Module | Outcome | Visual evidence |
 | --- | --- | --- |
-| 01 | Deploy, prove persistence, and confirm investigation telemetry | Healthy VM CPU and API operations |
-| 02 | Verify and rehearse the Sev1/Sev2 Review response plan | Response plan, alert rules, and agent assessment |
-| 03 | Detect, investigate, and recover from CPU saturation | VM CPU spike, API duration, alert, and agent investigation |
-| 04 | Detect and safely remove managed-disk pressure | Data-disk free-space chart, VM CPU comparison, alert, and agent investigation |
-| 05 | Produce an evidence-backed incident review | Incident, recovery, and alert timelines |
-| 06 | Preserve evidence and delete the environment | Final healthy CPU, API, alert, and investigation views |
+| 01 | Deploy, use the GUI, prove persistence, and confirm telemetry | Healthy GUI status, VM CPU, and API operations |
+| 02 | Rehearse the Sev1/Sev2 Review response plan | Healthy GUI requests, response plan, alert rules, and agent assessment |
+| 03 | Detect, investigate, and recover from CPU saturation | GUI degradation and recovery, VM CPU, request duration, alert, and investigation |
+| 04 | Detect and safely remove managed-disk pressure | GUI capacity and recovery, disk free space, alert, and investigation |
+| 05 | Produce an evidence-backed incident review | Customer-view observations plus incident, recovery, and alert timelines |
+| 06 | Preserve evidence and delete the environment | Final healthy GUI, CPU, API, alert, and investigation views |
 
 Allow approximately three and a half hours for the full path, including Azure
 ingestion and alert evaluation waits.

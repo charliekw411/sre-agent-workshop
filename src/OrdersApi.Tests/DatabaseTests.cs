@@ -149,6 +149,48 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task IdempotentCreateSurvivesBootstrapAndRejectsAnotherPayload()
+    {
+        using var fixture = new RepositoryFixture();
+        await fixture.Store.BootstrapAsync();
+        var request = new OrderRequest("retry-customer", "SKU-1003", 4);
+
+        var created = await fixture.Repository.CreateOrderIdempotentlyAsync(
+            request, 219.50m, "persisted-request", CancellationToken.None);
+        await fixture.Store.BootstrapAsync();
+        var replayed = await fixture.Repository.CreateOrderIdempotentlyAsync(
+            request, 219.50m, "persisted-request", CancellationToken.None);
+        var conflict = await fixture.Repository.CreateOrderIdempotentlyAsync(
+            request with { Quantity = 5 }, 219.50m, "persisted-request", CancellationToken.None);
+
+        Assert.NotNull(created);
+        Assert.NotNull(replayed);
+        Assert.False(created.Replayed);
+        Assert.True(replayed.Replayed);
+        Assert.Equal(created.OrderId, replayed.OrderId);
+        Assert.Equal(219.50m, replayed.UnitPrice);
+        Assert.Null(conflict);
+        Assert.Equal(6, (await fixture.Repository.GetRecentOrdersAsync(25, CancellationToken.None)).Count);
+    }
+
+    [Fact]
+    public async Task ConcurrentRetriesCreateExactlyOneOrder()
+    {
+        using var fixture = new RepositoryFixture();
+        await fixture.Store.BootstrapAsync();
+        var request = new OrderRequest("concurrent-retry", "SKU-1004", 3);
+
+        var attempts = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+            fixture.Repository.CreateOrderIdempotentlyAsync(
+                request, 45.75m, "concurrent-request", CancellationToken.None))));
+
+        Assert.All(attempts, Assert.NotNull);
+        Assert.Single(attempts, result => !result!.Replayed);
+        Assert.Single(attempts.Select(result => result!.OrderId).Distinct());
+        Assert.Equal(6, (await fixture.Repository.GetRecentOrdersAsync(25, CancellationToken.None)).Count);
+    }
+
+    [Fact]
     public async Task LockedWriterFailsWithinTheBusyTimeoutAndEmitsFailureTelemetry()
     {
         using var fixture = new RepositoryFixture();

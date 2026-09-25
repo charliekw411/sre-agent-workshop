@@ -45,7 +45,7 @@ SAFE_OUTPUTS = {
     "SRE_AGENT_ENDPOINT", "SRE_AGENT_PRINCIPAL_ID", "SRE_AGENT_IDENTITY_RESOURCE_ID",
     "SRE_AGENT_IDENTITY_PRINCIPAL_ID",
 }
-SOURCE_FILES = ("*.cs", "*.csproj", "appsettings.json")
+SOURCE_FILES = ("*.cs", "*.csproj", "appsettings.json", "wwwroot/**/*")
 VM_FILES = ("install.sh", "orders-api.service", "faults.py", "inspect.py")
 TRANSIENT_HTTP = {408, 429, 502, 503, 504}
 SRE_RESPONSE_PLAN_NAME = "workshop-sev1-sev2-review"
@@ -389,6 +389,9 @@ def validate():
     source = list((ROOT / "src" / "OrdersApi").glob("*.cs"))
     if not source or not (ROOT / "src" / "OrdersApi" / "OrdersApi.csproj").is_file():
         raise DeploymentError("Orders API sources are missing.")
+    for filename in ("index.html", "app.css", "app.js"):
+        if not (ROOT / "src" / "OrdersApi" / "wwwroot" / filename).is_file():
+            raise DeploymentError(f"Orders browser asset is missing: {filename}")
     for filename in VM_FILES:
         if not (ROOT / "scripts" / "vm" / filename).is_file():
             raise DeploymentError(f"VM configuration file is missing: {filename}")
@@ -460,7 +463,8 @@ def bundle():
     for pattern in SOURCE_FILES:
         for path in sorted(project.glob(pattern)):
             if path.is_file() and not path.is_symlink():
-                files["app/" + path.name] = path.read_bytes().replace(b"\r\n", b"\n")
+                relative = path.relative_to(project).as_posix()
+                files["app/" + relative] = path.read_bytes().replace(b"\r\n", b"\n")
     for filename in VM_FILES:
         files["vm/" + filename] = (ROOT / "scripts" / "vm" / filename).read_bytes().replace(b"\r\n", b"\n")
     stream = io.BytesIO()
