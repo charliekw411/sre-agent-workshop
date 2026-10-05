@@ -664,15 +664,15 @@ const signalConfig = {
     latency: byId("ready-latency"),
     message: byId("ready-message"),
   },
-  storage: {
-    path: "/storage",
-    state: byId("storage-state"),
-    latency: byId("storage-latency"),
-    message: byId("storage-message"),
-    percent: byId("storage-percent"),
-    progress: byId("storage-progress"),
-    available: byId("storage-available"),
-    database: byId("storage-database"),
+  database: {
+    path: "/database",
+    state: byId("database-state"),
+    latency: byId("database-latency"),
+    message: byId("database-message"),
+    provider: byId("database-provider"),
+    version: byId("database-version"),
+    schema: byId("database-schema"),
+    size: byId("database-size"),
   },
 };
 
@@ -701,21 +701,27 @@ function applySuccessfulSignal(name, result) {
   let message = `${config.path} returned HTTP ${result.status}.`;
 
   config.latency.textContent = formatLatency(result.durationMs);
-  if (name === "storage") {
-    const usedPercent = Number(result.data?.usedPercent);
-    if (!Number.isFinite(usedPercent)) {
-      throw new Error("The storage response is missing usage data.");
+  if (name === "database") {
+    const databaseBytes = Number(result.data?.databaseBytes);
+    const schemaVersion = Number(result.data?.schemaVersion);
+    if (
+      result.data?.provider !== "PostgreSQL"
+      || result.data?.status !== "ready"
+      || !String(result.data?.serverVersion || "").startsWith("16.")
+      || !Number.isSafeInteger(schemaVersion)
+      || schemaVersion < 1
+      || !Number.isFinite(databaseBytes)
+      || databaseBytes <= 0
+    ) {
+      throw new Error("The PostgreSQL status response is incomplete.");
     }
-    degraded ||= usedPercent >= 85;
-    if (usedPercent >= 85) {
-      label = "Low capacity";
-      message = "Disk usage is above the 85 percent caution level.";
+    config.provider.textContent = result.data.provider;
+    config.version.textContent = result.data.serverVersion;
+    config.schema.textContent = `v${schemaVersion}`;
+    config.size.textContent = formatBytes(databaseBytes);
+    if (slow) {
+      message = `${config.path} responded slowly.`;
     }
-    config.percent.textContent = `${usedPercent.toFixed(2)}%`;
-    config.progress.value = Math.max(0, Math.min(100, usedPercent));
-    config.progress.textContent = `${usedPercent.toFixed(2)} percent used`;
-    config.available.textContent = formatBytes(result.data.availableBytes);
-    config.database.textContent = formatBytes(result.data.databaseBytes);
   } else {
     const expected = name === "live" ? "live" : "ready";
     if (result.data?.status !== expected) {
@@ -744,16 +750,16 @@ function applyFailedSignal(name, error) {
 function updateServiceSummary() {
   const live = state.signalStates.get("live");
   const ready = state.signalStates.get("ready");
-  const storage = state.signalStates.get("storage");
+  const database = state.signalStates.get("database");
   elements.serviceSummary.classList.remove("checking", "healthy", "degraded", "unavailable");
 
-  if (!live || !ready || !storage) {
+  if (!live || !ready || !database) {
     elements.serviceSummary.classList.add("checking");
     elements.serviceSummaryText.textContent = "Checking service";
   } else if (live === "unavailable" || ready === "unavailable") {
     elements.serviceSummary.classList.add("unavailable");
     elements.serviceSummaryText.textContent = "Service unavailable";
-  } else if ([live, ready, storage].some((value) => value !== "healthy")) {
+  } else if ([live, ready, database].some((value) => value !== "healthy")) {
     elements.serviceSummary.classList.add("degraded");
     elements.serviceSummaryText.textContent = "Service degraded";
   } else {

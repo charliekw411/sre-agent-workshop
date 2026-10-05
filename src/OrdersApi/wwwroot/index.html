@@ -104,39 +104,38 @@
           <p id="ready-message" class="status-message">Contacting /health/ready</p>
         </article>
 
-        <article class="status-card checking storage-card" data-status-card="storage">
+        <article class="status-card checking database-card" data-status-card="database">
           <div class="status-card-heading">
-            <div class="status-icon" aria-hidden="true">D</div>
+            <div class="status-icon" aria-hidden="true">P</div>
             <div>
-              <h3>Data disk</h3>
-              <p>Orders storage</p>
+              <h3>PostgreSQL</h3>
+              <p>Managed orders database</p>
             </div>
-            <span id="storage-state" class="status-badge">Checking</span>
+            <span id="database-state" class="status-badge">Checking</span>
           </div>
-          <div class="storage-meter">
-            <div class="meter-label">
-              <span>Disk used</span>
-              <strong id="storage-percent">--</strong>
-            </div>
-            <progress id="storage-progress" max="100" value="0">
-              0 percent used
-            </progress>
-          </div>
-          <dl class="status-details storage-details">
+          <dl class="status-details database-details">
             <div>
-              <dt>Available</dt>
-              <dd id="storage-available">--</dd>
+              <dt>Provider</dt>
+              <dd id="database-provider">--</dd>
             </div>
             <div>
-              <dt>Database</dt>
-              <dd id="storage-database">--</dd>
+              <dt>Version</dt>
+              <dd id="database-version">--</dd>
+            </div>
+            <div>
+              <dt>Schema</dt>
+              <dd id="database-schema">--</dd>
+            </div>
+            <div>
+              <dt>Size</dt>
+              <dd id="database-size">--</dd>
             </div>
             <div>
               <dt>Latency</dt>
-              <dd id="storage-latency">--</dd>
+              <dd id="database-latency">--</dd>
             </div>
           </dl>
-          <p id="storage-message" class="status-message">Contacting /storage</p>
+          <p id="database-message" class="status-message">Contacting /database</p>
         </article>
       </div>
     </section>

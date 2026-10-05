@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Microsoft.ApplicationInsights;
 using Microsoft.ApplicationInsights.DataContracts;
-using Microsoft.Data.Sqlite;
+using Npgsql;
 
 namespace OrdersApi;
 
@@ -34,7 +34,7 @@ internal sealed class DatabaseAvailabilityService(
         var availability = new AvailabilityTelemetry
         {
             Id = activity.SpanId.ToString(),
-            Name = "orders-api-sqlite",
+            Name = "orders-api-postgresql",
             Timestamp = DateTimeOffset.UtcNow,
             RunLocation = Environment.MachineName,
             Success = false
@@ -46,12 +46,24 @@ internal sealed class DatabaseAvailabilityService(
         {
             await repository.ProbeAsync(cancellationToken);
             availability.Success = true;
-            availability.Message = "Orders SQLite schema is readable.";
+            availability.Message = "Orders PostgreSQL schema is ready.";
         }
-        catch (SqliteException ex)
+        catch (PostgresException ex)
         {
             // The repository records the actual exception and a failed dependency before rethrowing.
-            availability.Message = $"SQLite error {ex.SqliteErrorCode}/{ex.SqliteExtendedErrorCode}.";
+            availability.Message = $"PostgreSQL SQLSTATE {ex.SqlState}.";
+        }
+        catch (NpgsqlException)
+        {
+            availability.Message = "PostgreSQL connectivity is unavailable.";
+        }
+        catch (TimeoutException)
+        {
+            availability.Message = "PostgreSQL connectivity timed out.";
+        }
+        catch (OrdersDatabaseUnavailableException)
+        {
+            availability.Message = "The required PostgreSQL schema is unavailable.";
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

@@ -1,68 +1,118 @@
-using Microsoft.Data.Sqlite;
+using Azure.Core;
+using Azure.Identity;
+using Npgsql;
 
 namespace OrdersApi;
 
-public sealed class OrdersDatabase
+public sealed class OrdersDatabase : IAsyncDisposable
 {
-    public const int BusyTimeoutSeconds = 5;
-    private readonly string _connectionString;
+    internal const int CommandTimeoutSeconds = 5;
+    internal const string ManagedIdentityAuthentication = "ManagedIdentity";
+    internal const string PasswordAuthentication = "Password";
+    private static readonly string[] TokenScopes =
+        ["https://ossrdbms-aad.database.windows.net/.default"];
+    private readonly NpgsqlDataSource _dataSource;
 
-    public OrdersDatabase(string? connectionString)
+    public OrdersDatabase(
+        string? connectionString,
+        string? authentication = PasswordAuthentication,
+        string? managedIdentityClientId = null)
     {
         if (string.IsNullOrWhiteSpace(connectionString))
         {
             throw new InvalidOperationException(
-                "ConnectionStrings__OrdersDb is required, for example: Data Source=/var/lib/orders/orders.db.");
+                "ConnectionStrings__OrdersDb is required and must identify a PostgreSQL database.");
         }
 
-        SqliteConnectionStringBuilder builder;
+        authentication ??= PasswordAuthentication;
+        NpgsqlConnectionStringBuilder connection;
         try
         {
-            builder = new SqliteConnectionStringBuilder(connectionString);
+            connection = new NpgsqlConnectionStringBuilder(connectionString);
         }
         catch (ArgumentException ex)
         {
             throw new InvalidOperationException(
-                "ConnectionStrings__OrdersDb must be a valid SQLite connection string.", ex);
+                "ConnectionStrings__OrdersDb must be a valid PostgreSQL connection string.", ex);
         }
 
-        if (string.IsNullOrWhiteSpace(builder.DataSource)
-            || !Path.IsPathFullyQualified(builder.DataSource)
-            || builder.DataSource.IndexOfAny(Path.GetInvalidPathChars()) >= 0
-            || string.IsNullOrEmpty(Path.GetFileName(builder.DataSource))
-            || builder.Mode is SqliteOpenMode.Memory or SqliteOpenMode.ReadOnly
-            || !string.IsNullOrEmpty(builder.Password))
+        if (string.IsNullOrWhiteSpace(connection.Host)
+            || string.IsNullOrWhiteSpace(connection.Database)
+            || string.IsNullOrWhiteSpace(connection.Username))
         {
             throw new InvalidOperationException(
-                "ConnectionStrings__OrdersDb must name an absolute, writable SQLite file path, without a password.");
+                "ConnectionStrings__OrdersDb must include PostgreSQL Host, Database, and Username values.");
         }
 
-        DataSource = Path.GetFullPath(builder.DataSource);
-        builder.DataSource = DataSource;
-        builder.Mode = SqliteOpenMode.ReadWrite;
-        builder.Cache = SqliteCacheMode.Private;
-        builder.Pooling = false;
-        builder.DefaultTimeout = BusyTimeoutSeconds;
-        _connectionString = builder.ConnectionString;
-    }
-
-    public string DataSource { get; }
-
-    public SqliteConnection CreateConnection(bool allowCreate = false)
-    {
-        var builder = new SqliteConnectionStringBuilder(_connectionString)
+        if (!string.Equals(authentication, PasswordAuthentication, StringComparison.Ordinal)
+            && !string.Equals(authentication, ManagedIdentityAuthentication, StringComparison.Ordinal))
         {
-            // Only the explicit bootstrap command may create a database.
-            Mode = allowCreate ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadWrite
-        };
-        return new SqliteConnection(builder.ConnectionString);
+            throw new InvalidOperationException(
+                "OrdersDatabase__Authentication must be Password or ManagedIdentity.");
+        }
+
+        connection.Pooling = true;
+        connection.Timeout = CommandTimeoutSeconds;
+        connection.CommandTimeout = CommandTimeoutSeconds;
+        connection.CancellationTimeout = 2_000;
+        connection.IncludeErrorDetail = false;
+        connection.ApplicationName = "orders-api";
+        connection.MaxPoolSize = 20;
+        connection.MinPoolSize = 0;
+
+        var dataSourceBuilder = new NpgsqlDataSourceBuilder(connection.ConnectionString);
+        if (string.Equals(authentication, ManagedIdentityAuthentication, StringComparison.Ordinal))
+        {
+            if (!string.IsNullOrEmpty(connection.Password))
+            {
+                throw new InvalidOperationException(
+                    "ManagedIdentity database authentication must not include a password.");
+            }
+            if (connection.SslMode != SslMode.VerifyFull)
+            {
+                throw new InvalidOperationException(
+                    "ManagedIdentity database authentication requires SSL Mode=VerifyFull.");
+            }
+            if (!string.IsNullOrWhiteSpace(managedIdentityClientId)
+                && !Guid.TryParse(managedIdentityClientId, out _))
+            {
+                throw new InvalidOperationException(
+                    "OrdersDatabase__ManagedIdentityClientId must be a client ID GUID.");
+            }
+
+            var identity = string.IsNullOrWhiteSpace(managedIdentityClientId)
+                ? ManagedIdentityId.SystemAssigned
+                : ManagedIdentityId.FromUserAssignedClientId(managedIdentityClientId);
+            TokenCredential credential = new ManagedIdentityCredential(identity);
+            dataSourceBuilder.UsePeriodicPasswordProvider(
+                async (_, cancellationToken) =>
+                {
+                    var token = await credential.GetTokenAsync(
+                        new TokenRequestContext(TokenScopes), cancellationToken);
+                    return token.Token;
+                },
+                TimeSpan.FromMinutes(50),
+                TimeSpan.FromSeconds(5));
+        }
+        else if (string.IsNullOrEmpty(connection.Password))
+        {
+            throw new InvalidOperationException(
+                "Password database authentication requires a password from an external environment value.");
+        }
+
+        DatabaseName = connection.Database;
+        TelemetryTarget = $"PostgreSQL/{connection.Database}";
+        _dataSource = dataSourceBuilder.Build();
     }
 
-    public static async Task ConfigureConnectionAsync(
-        SqliteConnection connection, CancellationToken cancellationToken)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA busy_timeout = 5000;";
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
+    public string DatabaseName { get; }
+    public string TelemetryTarget { get; }
+
+    public NpgsqlConnection CreateConnection() => _dataSource.CreateConnection();
+
+    public ValueTask<NpgsqlConnection> OpenConnectionAsync(
+        CancellationToken cancellationToken = default) =>
+        _dataSource.OpenConnectionAsync(cancellationToken);
+
+    public ValueTask DisposeAsync() => _dataSource.DisposeAsync();
 }
