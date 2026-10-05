@@ -5,12 +5,15 @@ import {
   LOG_ANALYTICS_SCOPE,
   WorkshopError,
   buildCpuMetricsUrl,
-  buildDiskQuery,
+  buildPostgresqlQuery,
   createFaultScript,
   isWorkshopResourceGroup,
-  parseLogSeries,
   parseMetricSeries,
+  parsePostgresqlFaultRule,
+  parsePostgresqlSeries,
   parseRunCommandResult,
+  postgresqlFaultRuleBody,
+  postgresqlFaultRuleUrl,
   portalResourceUrl,
   selectEnvironmentResources,
   sreAgentIncidentsUrl,
@@ -271,14 +274,76 @@ export class AzureWorkshopClient {
         customerId: workspaceCustomerId,
       },
       sreAgent: selected.sreAgent,
+      networkSecurityGroup: selected.networkSecurityGroup,
+      postgresqlServer: selected.postgresqlServer,
       alerts: Object.freeze({
         cpu: `${alertRoot}/metricAlerts/alert-orders-high-cpu`,
-        disk: `${alertRoot}/scheduledQueryRules/alert-orders-data-disk-free`,
+        postgresql:
+          `${alertRoot}/scheduledQueryRules/alert-orders-postgresql-connectivity`,
       }),
     });
   }
 
   async runFault(environment, action) {
+    if (action === "postgresql") {
+      await this.runVmFault(environment, "status");
+      const postgresql = await this.setPostgresqlFault(environment, true);
+      try {
+        const application = await this.runVmFault(environment, "postgresql-denied");
+        return { ...postgresql, ...application, ok: true };
+      } catch (error) {
+        throw new AmbiguousOperationError(
+          "The NSG rule is verified as Deny, but the Orders API-only recycle did " +
+            "not prove controlled PostgreSQL failure. Check status, then retry or reset.",
+          { cause: error },
+        );
+      }
+    }
+    if (action === "reset-postgresql" || action === "reset") {
+      const postgresql = await this.setPostgresqlFault(environment, false);
+      let application;
+      try {
+        application = await this.runVmFault(environment, "postgresql-ready");
+      } catch (error) {
+        throw new AmbiguousOperationError(
+          "The NSG rule is verified as Allow, but the Orders API-only recycle did " +
+            `not prove complete recovery. Check status, then retry ${action}.`,
+          { cause: error },
+        );
+      }
+      if (action === "reset") {
+        try {
+          const cpu = await this.runVmFault(environment, "reset");
+          return { ...postgresql, ...application, ...cpu, ok: true };
+        } catch (error) {
+          throw new AmbiguousOperationError(
+            "PostgreSQL recovery is verified, but the all-scenarios reset did not " +
+              "verify CPU cleanup. Check status, then retry reset or reset only CPU.",
+            { cause: error },
+          );
+        }
+      }
+      return { ...postgresql, ...application, ok: true };
+    }
+    if (action === "reset-cpu") {
+      const cpu = await this.runVmFault(environment, "reset");
+      const postgresql = await this.postgresqlFaultStatus(environment);
+      return { ...cpu, ...postgresql, ok: true };
+    }
+    if (action === "status") {
+      const postgresql = await this.postgresqlFaultStatus(environment);
+      const application = await this.runVmFault(environment, "postgresql-status");
+      return { ...postgresql, ...application, ok: true };
+    }
+    const result = await this.runVmFault(environment, action);
+    return {
+      ...result,
+      ...(await this.postgresqlFaultStatus(environment)),
+      ok: true,
+    };
+  }
+
+  async runVmFault(environment, action) {
     const correlationId = requestId();
     const script = createFaultScript(action, correlationId);
     const url =
@@ -366,6 +431,51 @@ export class AzureWorkshopClient {
     );
   }
 
+  async postgresqlFaultStatus(environment) {
+    const { payload } = await this.request(
+      postgresqlFaultRuleUrl(environment.networkSecurityGroup.id),
+    );
+    return parsePostgresqlFaultRule(payload);
+  }
+
+  async setPostgresqlFault(environment, inject) {
+    const url = postgresqlFaultRuleUrl(environment.networkSecurityGroup.id);
+    const beforeResponse = await this.request(url);
+    const before = parsePostgresqlFaultRule(beforeResponse.payload);
+    const access = inject ? "Deny" : "Allow";
+    if (before.postgresqlAccess !== access) {
+      if (!before.etag) {
+        throw new WorkshopError(
+          "Azure did not return a concurrency token for the PostgreSQL fault rule.",
+        );
+      }
+      try {
+        await this.request(url, {
+          method: "PUT",
+          body: postgresqlFaultRuleBody(access),
+          headers: { "If-Match": before.etag },
+        });
+      } catch (error) {
+        if (error instanceof AzureRequestError && error.status === null) {
+          throw new AmbiguousOperationError(
+            "The PostgreSQL network rule update was interrupted and may have " +
+              "completed. Check fault status before retrying.",
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+    }
+    const afterResponse = await this.request(url);
+    const after = parsePostgresqlFaultRule(afterResponse.payload);
+    if (after.postgresqlAccess !== access) {
+      throw new AmbiguousOperationError(
+        `Azure did not verify PostgreSQL access as ${access}. Check fault status.`,
+      );
+    }
+    return after;
+  }
+
   async cpuSeries(environment) {
     const { payload } = await this.request(
       buildCpuMetricsUrl(environment.virtualMachine.id),
@@ -373,7 +483,7 @@ export class AzureWorkshopClient {
     return parseMetricSeries(payload);
   }
 
-  async diskSeries(environment) {
+  async postgresqlSeries(environment) {
     const { payload } = await this.request(
       `${LOG_ANALYTICS_ENDPOINT}/v1/workspaces/${environment.workspace.customerId}/query`,
       {
@@ -381,16 +491,17 @@ export class AzureWorkshopClient {
         scope: LOG_ANALYTICS_SCOPE,
         timeoutMs: 30000,
         body: {
-          query: buildDiskQuery(environment.virtualMachine.id),
+          query: buildPostgresqlQuery(),
           timespan: "PT30M",
         },
       },
     );
-    return parseLogSeries(payload);
+    return parsePostgresqlSeries(payload);
   }
 
   links(environment, scenario) {
-    const alertId = scenario === "cpu" ? environment.alerts.cpu : environment.alerts.disk;
+    const alertId =
+      scenario === "cpu" ? environment.alerts.cpu : environment.alerts.postgresql;
     const chartResource =
       scenario === "cpu" ? environment.virtualMachine.id : environment.workspace.id;
     return {

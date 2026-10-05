@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-platform deployment, smoke checks, and authenticated VM fault actions."""
+"""Cross-platform deployment, PostgreSQL smoke checks, and bounded fault actions."""
 
 import argparse
 import base64
@@ -32,13 +32,19 @@ PROVIDERS = {
     "Microsoft.App", "Microsoft.Compute", "Microsoft.Network",
     "Microsoft.OperationalInsights", "Microsoft.Insights",
     "Microsoft.ManagedIdentity", "Microsoft.AlertsManagement",
+    "Microsoft.DBforPostgreSQL",
 }
 SAFE_OUTPUTS = {
     "AZURE_ENV_NAME", "AZURE_LOCATION", "AZURE_SUBSCRIPTION_ID",
     "AZURE_RESOURCE_GROUP", "RESOURCE_GROUP", "SUBSCRIPTION_ID", "TENANT_ID",
     "WORKSHOP_SUFFIX", "LOCATION", "VM_NAME", "VM_RESOURCE_ID",
-    "DATA_DISK_NAME", "DATA_DISK_RESOURCE_ID", "PUBLIC_IP_ADDRESS",
-    "PUBLIC_IP_RESOURCE_ID", "ORDERS_API_FQDN", "SERVICE_ORDERS_API_ENDPOINT_URL",
+    "PUBLIC_IP_ADDRESS", "PUBLIC_IP_RESOURCE_ID", "ORDERS_API_FQDN",
+    "SERVICE_ORDERS_API_ENDPOINT_URL", "NETWORK_SECURITY_GROUP_NAME",
+    "NETWORK_SECURITY_GROUP_RESOURCE_ID", "POSTGRESQL_SUBNET_RESOURCE_ID",
+    "POSTGRESQL_FAULT_RULE_NAME", "POSTGRESQL_FAULT_RULE_RESOURCE_ID",
+    "POSTGRESQL_SERVER_NAME", "POSTGRESQL_SERVER_RESOURCE_ID", "POSTGRESQL_HOST",
+    "POSTGRESQL_DATABASE", "POSTGRESQL_USER", "POSTGRESQL_PRIVATE_DNS_ZONE_NAME",
+    "POSTGRESQL_PRIVATE_DNS_ZONE_RESOURCE_ID",
     "LOG_ANALYTICS_NAME", "LOG_ANALYTICS_ID", "LOG_ANALYTICS_CUSTOMER_ID",
     "APP_INSIGHTS_NAME", "APP_INSIGHTS_RESOURCE_ID", "VIRTUAL_NETWORK_NAME",
     "DATA_COLLECTION_RULE_ID", "SRE_AGENT_NAME", "SRE_AGENT_RESOURCE_ID",
@@ -59,9 +65,14 @@ FRESH_ENVIRONMENT_EVIDENCE = (
     "restart.json",
     "telemetry.json",
     "fault-cpu.json",
-    "fault-disk.json",
+    "fault-reset-cpu.json",
+    "fault-postgresql.json",
+    "fault-postgresql-partial.json",
+    "fault-reset-postgresql.json",
+    "fault-reset-postgresql-partial.json",
     "fault-status.json",
     "fault-reset.json",
+    "fault-reset-partial.json",
     "fresh-benchmark.json",
 )
 
@@ -262,10 +273,11 @@ def check_resource_group(values, fresh=False):
             "Create and select a new azd environment. No resources were changed."
         )
     tags = az("group", "show", "--name", group, "--subscription", subscription, "--query", "tags") or {}
-    if tags.get("workshop-architecture") != "single-vm":
+    if tags.get("workshop-architecture") != "single-vm-postgresql-v1":
         raise DeploymentError(
-            f"{group} is not a single-VM workshop environment. Use a new azd environment; "
-            "legacy resources and data will not be migrated or deleted."
+            f"{group} is not a compatible PostgreSQL workshop environment. "
+            "Use a new azd environment or explicitly remove the old disposable "
+            "environment; legacy resources and data are not migrated or deleted."
         )
     return True
 
@@ -376,6 +388,47 @@ def check_vm_capacity(values, check_existing=True):
     progress(f"[preflight] {size}: {cpus} x64 vCPUs, {memory:g} GiB RAM; regional and family quotas available.")
 
 
+def check_postgresql_capacity(values):
+    location = required(values, "AZURE_LOCATION")
+    subscription = required(values, "AZURE_SUBSCRIPTION_ID")
+    capabilities = az(
+        "postgres", "flexible-server", "list-skus",
+        "--location", location,
+        "--subscription", subscription,
+        timeout=300,
+    )
+    if not isinstance(capabilities, list):
+        raise DeploymentError(
+            "Azure did not return PostgreSQL Flexible Server capabilities.")
+    versions = {
+        str(version.get("name"))
+        for capability in capabilities if isinstance(capability, dict)
+        for version in (capability.get("supportedServerVersions") or [])
+        if isinstance(version, dict) and version.get("name")
+    }
+    skus = {
+        str(sku.get("name"))
+        for capability in capabilities if isinstance(capability, dict)
+        for edition in (capability.get("supportedServerEditions") or [])
+        if isinstance(edition, dict)
+        for sku in (edition.get("supportedServerSkus") or [])
+        if isinstance(sku, dict) and sku.get("name")
+    }
+    if "16" not in versions or "Standard_B1ms" not in skus:
+        reasons = sorted({
+            str(capability.get("reason"))
+            for capability in capabilities
+            if isinstance(capability, dict) and capability.get("reason")
+        })
+        detail = " ".join(reasons)
+        raise DeploymentError(
+            f"PostgreSQL 16 / Standard_B1ms is not advertised in {location} "
+            f"for this subscription. {detail} No resources were deployed.".strip()
+        )
+    progress(
+        f"[preflight] PostgreSQL 16 / Standard_B1ms is advertised in {location}.")
+
+
 def validate():
     config = yaml.safe_load((ROOT / "azure.yaml").read_text(encoding="utf-8"))
     if config.get("services"):
@@ -395,7 +448,13 @@ def validate():
     for filename in VM_FILES:
         if not (ROOT / "scripts" / "vm" / filename).is_file():
             raise DeploymentError(f"VM configuration file is missing: {filename}")
-    progress("VM deployment manifest and source files are valid.")
+    for filename in (
+        "postgresql.bicep", "postgresql-identity.bicep", "fault.bicep",
+    ):
+        if not (ROOT / "infra" / filename).is_file():
+            raise DeploymentError(
+                f"PostgreSQL infrastructure file is missing: {filename}")
+    progress("VM, PostgreSQL, and fault deployment source files are valid.")
 
 
 def prepare():
@@ -444,6 +503,7 @@ def prepare():
                     f"SRE Agent is not advertised in {location}; no region substitution is made."
                 )
             check_vm_capacity(values, check_existing=False)
+            check_postgresql_capacity(values)
         ensure_ssh_public_key(values)
         export_values(values)
 
@@ -454,7 +514,8 @@ def preprovision():
         raise DeploymentError("Run azd up first so preup can prepare the VM parameters.")
     check_resource_group(values)
     write_json(state_directory(values) / "provision-start.json", {"started": time.time()})
-    progress("[infrastructure] Provisioning VM, monitoring, and SRE Agent")
+    progress(
+        "[infrastructure] Provisioning VM, private PostgreSQL, monitoring, and SRE Agent")
 
 
 def bundle():
@@ -539,6 +600,9 @@ def deploy_vm(values):
     packed, digest = bundle()
     settings = base64.b64encode(json.dumps({
         "applicationInsightsConnectionString": connection_string,
+        "postgresqlHost": required(values, "POSTGRESQL_HOST"),
+        "postgresqlDatabase": required(values, "POSTGRESQL_DATABASE"),
+        "postgresqlUser": required(values, "POSTGRESQL_USER"),
     }).encode("utf-8")).decode("ascii")
     body = f"""
 work=$(mktemp -d /var/tmp/orders-deploy.XXXXXXXX)
@@ -795,7 +859,17 @@ def smoke(values):
         raise DeploymentError("Public /orders must return at least five initialized orders.")
     for order in orders:
         validate_order(order)
-    for path in ("/fault/cpu", "/fault/storage", "/fault/reset"):
+    status, database = request_json(url, "/database")
+    if (status != 200 or not isinstance(database, dict)
+            or database.get("provider") != "PostgreSQL"
+            or database.get("status") != "ready"
+            or not str(database.get("serverVersion", "")).startswith("16.")
+            or database.get("schemaVersion") != 1
+            or not isinstance(database.get("databaseBytes"), int)
+            or database["databaseBytes"] <= 0):
+        raise DeploymentError(
+            "Public /database must report a ready PostgreSQL schema.")
+    for path in ("/fault/cpu", "/fault/postgresql", "/fault/reset"):
         try:
             request_json(url, path, "POST", {})
         except HttpError as error:
@@ -804,6 +878,8 @@ def smoke(values):
             raise
         raise DeploymentError(f"Destructive HTTP fault route unexpectedly exists: {path}")
     result = {"ok": True, "url": url, "ordersValidated": len(orders),
+              "database": {"provider": database["provider"],
+                           "schemaVersion": database["schemaVersion"]},
               "httpFaultRoutes": "absent", "checkedUtc": datetime.now(timezone.utc).isoformat()}
     write_json(state_directory(values) / "smoke.json", result)
     progress(f"[smoke] Read {len(orders)} persisted orders from {url}/orders; HTTP fault routes are absent.")
@@ -825,7 +901,12 @@ def postprovision():
         smoke(values)
     export_values(values)
     progress(f"Orders API: {required(values, 'SERVICE_ORDERS_API_ENDPOINT_URL')}")
-    for key in ("VM_RESOURCE_ID", "DATA_DISK_RESOURCE_ID", "LOG_ANALYTICS_ID", "SRE_AGENT_RESOURCE_ID"):
+    for key in (
+        "VM_RESOURCE_ID",
+        "POSTGRESQL_SERVER_RESOURCE_ID",
+        "LOG_ANALYTICS_ID",
+        "SRE_AGENT_RESOURCE_ID",
+    ):
         progress(f"{key}: {required(values, key)}")
 
 
@@ -835,30 +916,184 @@ def inspect_vm(values):
     return result
 
 
-def fault(values, action, arguments):
-    fields = {
-        "cpu": ((300, 2), ((10, 1800), (1, 8))),
-        "disk": ((90, 300), ((50, 97), (30, 1800))),
-        "status": ((), ()), "reset": ((), ()),
+def postgresql_fault_status(values):
+    rule = az(
+        "network", "nsg", "rule", "show",
+        "--resource-group", required(values, "RESOURCE_GROUP"),
+        "--nsg-name", required(values, "NETWORK_SECURITY_GROUP_NAME"),
+        "--name", required(values, "POSTGRESQL_FAULT_RULE_NAME"),
+        "--subscription", required(values, "AZURE_SUBSCRIPTION_ID"),
+    )
+    expected = {
+        "priority": 100,
+        "direction": "Outbound",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.240.0.0/27",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.240.0.32/27",
+        "destinationPortRange": "5432",
     }
-    action = {"storage": "disk", "release": "reset"}.get(action, action)
-    if action not in fields:
-        raise DeploymentError("Fault action must be cpu, disk, status, or reset.")
-    defaults, limits = fields[action]
-    if len(arguments) > len(defaults):
-        raise DeploymentError(f"Too many arguments for {action}.")
-    try:
-        numbers = [int(value) for value in arguments] + list(defaults[len(arguments):])
-    except (ValueError, TypeError) as error:
-        raise DeploymentError("Fault arguments must be integers.") from error
-    for number, (minimum, maximum) in zip(numbers, limits):
-        if not minimum <= number <= maximum:
-            raise DeploymentError(f"{action} argument must be between {minimum} and {maximum}.")
+    if not isinstance(rule, dict):
+        raise DeploymentError("Azure did not return the PostgreSQL fault rule.")
+    for key, value in expected.items():
+        if rule.get(key) != value:
+            raise DeploymentError(
+                f"PostgreSQL fault rule {key} is not the expected bounded value.")
+    access = rule.get("access")
+    if access not in {"Allow", "Deny"}:
+        raise DeploymentError("PostgreSQL fault rule has an unexpected access state.")
+    return {
+        "postgresql": "active" if access == "Deny" else "inactive",
+        "postgresqlAccess": access,
+    }
+
+
+def deploy_postgresql_fault(values, inject):
+    progress(
+        f"[fault-postgresql] {'Injecting' if inject else 'Resetting'} "
+        "the bounded NSG TCP 5432 rule")
+    az(
+        "deployment", "group", "create",
+        "--name", "orders-postgresql-fault",
+        "--resource-group", required(values, "RESOURCE_GROUP"),
+        "--subscription", required(values, "AZURE_SUBSCRIPTION_ID"),
+        "--template-file", str(ROOT / "infra" / "fault.bicep"),
+        "--parameters",
+        "networkSecurityGroupName="
+        + required(values, "NETWORK_SECURITY_GROUP_NAME"),
+        "injectPostgresqlFault=" + ("true" if inject else "false"),
+        timeout=300,
+    )
+    result = postgresql_fault_status(values)
+    expected = "active" if inject else "inactive"
+    if result["postgresql"] != expected:
+        raise DeploymentError(
+            f"PostgreSQL fault rule did not reach the {expected} state.")
+    return result
+
+
+def vm_fault(values, action, numbers=()):
     command = "/usr/bin/python3 /opt/orders-api/faults.py " + " ".join(
         [action, *map(str, numbers), "--request-id", "__WORKSHOP_REQUEST_ID__"]
     )
     progress(f"[fault-{action}] Invoking authenticated Azure VM Run Command")
-    result = run_vm(values, command, timeout=240)
+    return run_vm(values, command, timeout=240)
+
+
+def fault(values, action, arguments):
+    if action not in {
+        "cpu",
+        "postgresql",
+        "status",
+        "reset",
+        "reset-cpu",
+        "reset-postgresql",
+    }:
+        raise DeploymentError(
+            "Fault action must be cpu, postgresql, status, reset-cpu, "
+            "reset-postgresql, or reset.")
+    if action == "cpu":
+        defaults = (300, 2)
+        limits = ((10, 1800), (1, 8))
+        if len(arguments) > len(defaults):
+            raise DeploymentError("Too many arguments for cpu.")
+        try:
+            numbers = [
+                int(value) for value in arguments
+            ] + list(defaults[len(arguments):])
+        except (ValueError, TypeError) as error:
+            raise DeploymentError("CPU fault arguments must be integers.") from error
+        for number, (minimum, maximum) in zip(numbers, limits):
+            if not minimum <= number <= maximum:
+                raise DeploymentError(
+                    f"cpu argument must be between {minimum} and {maximum}.")
+        result = {
+            **vm_fault(values, "cpu", numbers),
+            **postgresql_fault_status(values),
+        }
+    elif arguments:
+        raise DeploymentError(f"{action} does not accept additional arguments.")
+    elif action == "postgresql":
+        vm_fault(values, "status")
+        postgresql = deploy_postgresql_fault(values, inject=True)
+        try:
+            application = vm_fault(values, "postgresql-denied")
+        except DeploymentError as error:
+            partial = {
+                **postgresql,
+                "ok": False,
+                "verification": "failed",
+                "error": str(error),
+            }
+            write_json(
+                state_directory(values) / "fault-postgresql-partial.json",
+                partial,
+            )
+            raise DeploymentError(
+                "The NSG rule is verified as Deny, but the Orders API recycle "
+                "did not prove controlled PostgreSQL failure. The operation is "
+                "partial; run `python scripts/workshop.py fault status`, then "
+                "retry this action or run `fault reset-postgresql`."
+            ) from error
+        result = {**postgresql, **application}
+    elif action in {"reset-postgresql", "reset"}:
+        postgresql = deploy_postgresql_fault(values, inject=False)
+        try:
+            application = vm_fault(values, "postgresql-ready")
+        except DeploymentError as error:
+            partial_name = (
+                "reset-postgresql" if action == "reset-postgresql" else "reset"
+            )
+            partial = {
+                **postgresql,
+                "ok": False,
+                "verification": "failed",
+                "error": str(error),
+            }
+            write_json(
+                state_directory(values) / f"fault-{partial_name}-partial.json",
+                partial,
+            )
+            raise DeploymentError(
+                "The NSG rule is verified as Allow, but the Orders API recycle "
+                "did not prove PostgreSQL recovery. The operation is partial; "
+                "run `python scripts/workshop.py fault status`, then retry "
+                f"`fault {partial_name}`."
+            ) from error
+        result = {**postgresql, **application}
+        if action == "reset":
+            try:
+                result = {**result, **vm_fault(values, "reset")}
+            except DeploymentError as error:
+                partial = {
+                    **result,
+                    "ok": False,
+                    "verification": "failed",
+                    "error": str(error),
+                }
+                write_json(
+                    state_directory(values) / "fault-reset-partial.json",
+                    partial,
+                )
+                raise DeploymentError(
+                    "PostgreSQL recovery is verified, but the all-scenarios "
+                    "reset did not verify CPU cleanup. Run `fault status`, then "
+                    "retry `fault reset` or use `fault reset-cpu`."
+                ) from error
+    elif action == "reset-cpu":
+        result = {
+            **vm_fault(values, "reset"),
+            **postgresql_fault_status(values),
+        }
+    else:
+        result = {
+            **postgresql_fault_status(values),
+            **vm_fault(values, "postgresql-status"),
+        }
+    result["ok"] = True
+    if action in {"postgresql", "reset-postgresql", "reset"}:
+        partial_path = state_directory(values) / f"fault-{action}-partial.json"
+        partial_path.unlink(missing_ok=True)
     write_json(state_directory(values) / f"fault-{action}.json", result)
     return result
 
@@ -898,17 +1133,15 @@ union isfuzzy=true
     (Heartbeat | where _ResourceId =~ '{vm_id}' | summarize Samples=count() | extend Signal='heartbeat'),
     (Perf | where _ResourceId =~ '{vm_id}' and CounterName == '% Processor Time'
         | summarize Samples=count() | extend Signal='cpu'),
-    (Perf | where _ResourceId =~ '{vm_id}' and CounterName == '% Free Space'
-        and InstanceName contains '/var/lib/orders'
-        | summarize Samples=count() | extend Signal='data-disk'),
     (AppRequests | where AppRoleName == 'orders-api' | summarize Samples=count() | extend Signal='requests'),
-    (AppDependencies | where AppRoleName == 'orders-api' | summarize Samples=count() | extend Signal='dependencies'),
+    (AppDependencies | where AppRoleName == 'orders-api' and DependencyType == 'PostgreSQL'
+        | summarize Samples=count() | extend Signal='postgresql'),
     (AppAvailabilityResults | where AppRoleName == 'orders-api'
         | summarize Samples=count() | extend Signal='availability'),
     (AppExceptions | where AppRoleName == 'orders-api' | summarize Samples=count() | extend Signal='exceptions')
 | project Signal, Samples
 """
-    expected = {"heartbeat", "cpu", "data-disk", "requests", "dependencies", "availability"}
+    expected = {"heartbeat", "cpu", "requests", "postgresql", "availability"}
     deadline = time.monotonic() + timeout
     counts = {}
     while time.monotonic() < deadline:
@@ -926,18 +1159,24 @@ union isfuzzy=true
 def verify_restart(values):
     url = await_ready(values)
     before = inspect_vm(values)
-    disk_uuid = before["storage"]["uuid"]
+    server_id = required(values, "POSTGRESQL_SERVER_RESOURCE_ID")
+    if not re.fullmatch(
+            r"/subscriptions/[0-9a-fA-F-]+/resourceGroups/[\w.()-]+/"
+            r"providers/Microsoft.DBforPostgreSQL/flexibleServers/[\w-]+",
+            server_id):
+        raise DeploymentError("Unexpected PostgreSQL server resource identifier.")
     witness_path = state_directory(values) / "persistence-witness.json"
     witness = None
     if witness_path.exists():
         existing = json.loads(witness_path.read_text(encoding="utf-8"))
         if not isinstance(existing, dict):
             raise DeploymentError("Persistence witness is invalid.")
-        if "diskUuid" not in existing:
-            progress("[restart] Replacing a legacy persistence witness without disk identity.")
-        elif existing["diskUuid"] != disk_uuid:
+        if "postgresqlServerResourceId" not in existing:
+            progress(
+                "[restart] Replacing a pre-PostgreSQL persistence witness.")
+        elif existing["postgresqlServerResourceId"].casefold() != server_id.casefold():
             raise DeploymentError(
-                "Persistence witness belongs to a different managed data disk. "
+                "Persistence witness belongs to a different PostgreSQL server. "
                 "Fresh-environment evidence should be cleared before validation."
             )
         else:
@@ -955,7 +1194,11 @@ def verify_restart(values):
             raise DeploymentError("Persistence test could not create a positive-ID order.")
         _, order = request_json(url, f"/orders/{created['orderId']}")
         validate_order(order)
-        witness = {"orderId": created["orderId"], "order": order, "diskUuid": disk_uuid}
+        witness = {
+            "orderId": created["orderId"],
+            "order": order,
+            "postgresqlServerResourceId": server_id,
+        }
         write_json(witness_path, witness)
     progress("[restart] Restarting only the selected workshop VM through Azure")
     az("vm", "restart", "--resource-group", required(values, "RESOURCE_GROUP"),
@@ -968,10 +1211,18 @@ def verify_restart(values):
         raise DeploymentError("The public order changed or disappeared after VM restart.")
     if before["bootId"] == after["bootId"]:
         raise DeploymentError("VM restart did not change the boot ID.")
-    if before["storage"]["uuid"] != after["storage"]["uuid"]:
-        raise DeploymentError("The managed data disk changed after restart.")
-    result = {"ok": True, "orderId": witness["orderId"], "beforeBootId": before["bootId"],
-              "afterBootId": after["bootId"], "diskUuid": after["storage"]["uuid"]}
+    if (before["database"]["serverVersion"] != after["database"]["serverVersion"]
+            or before["database"]["migrationVersion"]
+            != after["database"]["migrationVersion"]):
+        raise DeploymentError(
+            "PostgreSQL version or migration state changed across the VM restart.")
+    result = {
+        "ok": True,
+        "orderId": witness["orderId"],
+        "beforeBootId": before["bootId"],
+        "afterBootId": after["bootId"],
+        "postgresqlServerResourceId": server_id,
+    }
     write_json(state_directory(values) / "restart.json", result)
     smoke(values)
     return result

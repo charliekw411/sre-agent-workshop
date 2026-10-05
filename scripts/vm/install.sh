@@ -34,61 +34,18 @@ start_stage() {
 start_stage cloud-init
 timeout 180 cloud-init status --wait
 
-start_stage data-disk
-device_link=/dev/disk/azure/scsi1/lun0
-for _ in {1..30}; do
-  [[ -b "${device_link}" ]] && break
-  sleep 2
-done
-[[ -b "${device_link}" ]] || { echo "Managed data disk LUN 0 did not appear."; exit 1; }
-device=$(readlink --canonicalize "${device_link}")
-if file_system=$(blkid -s TYPE -o value "${device}"); then
-  [[ "${file_system}" == "ext4" ]] || { echo "Refusing to overwrite a non-ext4 data disk."; exit 1; }
-  [[ "$(blkid -s LABEL -o value "${device}")" == "orders-data" ]] \
-    || { echo "Refusing to adopt an unrelated ext4 data disk."; exit 1; }
-else
-  code=$?
-  [[ "${code}" -eq 2 ]] || { echo "Cannot inspect managed data disk (blkid exit ${code})."; exit 1; }
-  [[ "$(lsblk --noheadings --raw --output TYPE "${device}")" == "disk" ]] \
-    || { echo "Refusing to format a disk with partitions."; exit 1; }
-  [[ -z "$(wipefs --noheadings --output TYPE "${device}")" ]] \
-    || { echo "Refusing to format a disk with existing signatures."; exit 1; }
-  [[ -z "$(lsblk --noheadings --raw --output MOUNTPOINTS "${device}" | tr -d '[:space:]')" ]] \
-    || { echo "Refusing to format a mounted disk."; exit 1; }
-  mkfs.ext4 -q -m 1 -L orders-data "${device}"
-fi
-disk_uuid=$(blkid -s UUID -o value "${device}")
-[[ -n "${disk_uuid}" ]] || { echo "Data disk UUID is empty."; exit 1; }
-mkdir -p /var/lib/orders
-existing_source=$(awk '$2 == "/var/lib/orders" { print $1 }' /etc/fstab)
-if [[ -n "${existing_source}" && "${existing_source}" != "UUID=${disk_uuid}" ]]; then
-  echo "Refusing to replace the existing /var/lib/orders mount."
-  exit 1
-fi
-if [[ -z "${existing_source}" ]]; then
-  printf 'UUID=%s /var/lib/orders ext4 defaults,nofail,nodev,nosuid,noexec,x-systemd.device-timeout=30s 0 2\n' \
-    "${disk_uuid}" >> /etc/fstab
-fi
-systemctl daemon-reload
-if ! mountpoint --quiet /var/lib/orders; then
-  mount /var/lib/orders
-fi
-[[ "$(findmnt --noheadings --output UUID --target /var/lib/orders)" == "${disk_uuid}" ]] \
-  || { echo "The Orders directory is not mounted from LUN 0."; exit 1; }
-
 start_stage packages
 if ! command -v dotnet >/dev/null || ! dotnet --list-sdks | grep --quiet '^8\.' \
-    || ! command -v sqlite3 >/dev/null; then
+    || ! command -v psql >/dev/null; then
   export DEBIAN_FRONTEND=noninteractive
   timeout 180 apt-get update -qq -o Acquire::Retries=2 -o Acquire::http::Timeout=30
   timeout 240 apt-get install --yes --no-install-recommends -qq \
-    -o DPkg::Lock::Timeout=60 dotnet-sdk-8.0 sqlite3 curl
+    -o DPkg::Lock::Timeout=60 dotnet-sdk-8.0 postgresql-client curl ca-certificates
 fi
 if ! id orders >/dev/null 2>&1; then
-  useradd --system --create-home --home-dir /var/lib/orders-api --shell /usr/sbin/nologin orders
+  useradd --system --create-home --home-dir /var/lib/contoso-orders --shell /usr/sbin/nologin orders
 fi
-chown orders:orders /var/lib/orders /var/lib/orders-api
-chmod 0750 /var/lib/orders /var/lib/orders-api
+install -d -o orders -g orders -m 0750 /var/lib/contoso-orders
 install -d -m 0755 /opt/orders-api /opt/orders-api/releases
 install -m 0644 "${work}/vm/faults.py" /opt/orders-api/faults.py
 install -m 0644 "${work}/vm/inspect.py" /opt/orders-api/inspect.py
@@ -105,33 +62,92 @@ if [[ ! -f "${release}/OrdersApi.dll" ]]; then
   chmod -R go-w "${release}"
 fi
 
-start_stage sqlite-and-service
+start_stage postgresql-configuration
 /usr/bin/python3 - "${settings}" <<'PY'
 import base64
 import json
 from pathlib import Path
+import re
 import sys
 
 settings = json.loads(base64.b64decode(sys.argv[1]))
 connection = settings["applicationInsightsConnectionString"]
-if any(character in connection for character in ('"', "\n", "\r", "\\")):
+host = settings["postgresqlHost"]
+database = settings["postgresqlDatabase"]
+user = settings["postgresqlUser"]
+if not re.fullmatch(r"[A-Za-z0-9=;:/?._-]+", connection):
     raise ValueError("Invalid Application Insights connection string")
+if not re.fullmatch(r"[a-z0-9-]+\.postgres\.database\.azure\.com", host):
+    raise ValueError("Invalid PostgreSQL private host")
+for label, value in (("database", database), ("user", user)):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,63}", value):
+        raise ValueError(f"Invalid PostgreSQL {label}")
 Path("/etc/orders-api.env").write_text(
     "ASPNETCORE_URLS=http://0.0.0.0:8080\n"
     "ASPNETCORE_ENVIRONMENT=Production\n"
-    'ConnectionStrings__OrdersDb="Data Source=/var/lib/orders/orders.db"\n'
+    f'ConnectionStrings__OrdersDb="Host={host};Port=5432;Database={database};'
+    f'Username={user};SSL Mode=VerifyFull;Timeout=5;Command Timeout=5;'
+    'Application Name=orders-api"\n'
+    "OrdersDatabase__Authentication=ManagedIdentity\n"
     f'APPLICATIONINSIGHTS_CONNECTION_STRING="{connection}"\n'
     "SERVICE_NAME=orders-api\n"
     "DOTNET_CLI_TELEMETRY_OPTOUT=1\n"
-    "TMPDIR=/var/lib/orders-api\n",
+    "TMPDIR=/var/lib/contoso-orders\n",
     encoding="utf-8",
 )
 PY
 chown root:orders /etc/orders-api.env
 chmod 0640 /etc/orders-api.env
-timeout 60 runuser -u orders -- env \
-  'ConnectionStrings__OrdersDb=Data Source=/var/lib/orders/orders.db' \
-  DOTNET_CLI_TELEMETRY_OPTOUT=1 /usr/bin/dotnet "${release}/OrdersApi.dll" --bootstrap
+
+postgresql_host=$(/usr/bin/python3 - "${settings}" <<'PY'
+import base64
+import json
+import sys
+print(json.loads(base64.b64decode(sys.argv[1]))["postgresqlHost"])
+PY
+)
+dns_ready=false
+for _ in {1..60}; do
+  if getent ahostsv4 "${postgresql_host}" | grep --quiet 'STREAM'; then
+    dns_ready=true
+    break
+  fi
+  sleep 5
+done
+[[ "${dns_ready}" == "true" ]] || { echo "PostgreSQL private DNS did not become ready."; exit 1; }
+
+tcp_ready=false
+for _ in {1..60}; do
+  if timeout 5 bash -c "exec 3<>/dev/tcp/${postgresql_host}/5432"; then
+    tcp_ready=true
+    break
+  fi
+  sleep 5
+done
+[[ "${tcp_ready}" == "true" ]] || { echo "PostgreSQL TCP 5432 did not become reachable."; exit 1; }
+
+token_json=$(curl --fail --silent --show-error --max-time 10 \
+  --noproxy '*' \
+  --header Metadata:true \
+  'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fossrdbms-aad.database.windows.net')
+/usr/bin/python3 -c 'import json,sys; value=json.load(sys.stdin); assert value.get("access_token") and value.get("expires_on")' \
+  <<<"${token_json}"
+unset token_json
+
+start_stage postgresql-bootstrap
+bootstrapped=false
+for attempt in {1..30}; do
+  if timeout 70 runuser -u orders -- /bin/bash -c \
+      "set -a; source /etc/orders-api.env; exec /usr/bin/dotnet '${release}/OrdersApi.dll' --bootstrap"; then
+    bootstrapped=true
+    break
+  fi
+  echo "PostgreSQL bootstrap not ready (attempt ${attempt}/30); retrying."
+  sleep 10
+done
+[[ "${bootstrapped}" == "true" ]] || { echo "PostgreSQL bootstrap did not complete."; exit 1; }
+
+start_stage service
 ln -sfn "${release}" /opt/orders-api/current.next
 mv --force --no-target-directory /opt/orders-api/current.next /opt/orders-api/current
 install -m 0644 "${work}/vm/orders-api.service" /etc/systemd/system/orders-api.service
@@ -139,7 +155,7 @@ systemctl daemon-reload
 systemctl enable orders-api
 systemctl restart orders-api
 ready=false
-for _ in {1..24}; do
+for _ in {1..36}; do
   if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/health/ready; then
     ready=true
     break

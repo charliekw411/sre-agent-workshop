@@ -329,9 +329,9 @@ export function renderLineChart(root, points, scenario, now = new Date()) {
   summary.textContent =
     scenario.id === "cpu"
       ? `Latest ${formatPercent(latest.value)} | Peak ${formatPercent(Math.max(...values))}`
-      : `Latest ${formatPercent(latest.value)} free | Minimum ${formatPercent(
-          Math.min(...values),
-        )} free`;
+      : `Latest ${formatPercent(latest.value)} failed | Peak ${formatPercent(
+          Math.max(...values),
+        )} failed`;
   root.append(summary);
 
   const svg = svgElement("svg", {
@@ -423,19 +423,36 @@ export function renderLineChart(root, points, scenario, now = new Date()) {
 
 function describeResult(action, result) {
   if (action === "reset") {
-    return "Incident reset completed. Workshop ballast was removed and fault units are inactive.";
+    return (
+      "All-scenarios reset completed. PostgreSQL access is allowed, CPU fault units are " +
+      "inactive, and the recycled Orders API passed readiness and order probes."
+    );
+  }
+  if (action === "reset-cpu") {
+    return "CPU incident reset completed without changing the PostgreSQL fault rule.";
+  }
+  if (action === "reset-postgresql") {
+    return (
+      "PostgreSQL incident reset completed. Access is allowed and the recycled " +
+      "Orders API passed readiness and order probes; the CPU fault was not changed."
+    );
   }
   if (action === "status") {
-    return `Fault status: CPU ${result.cpu || "unknown"}, disk ${result.disk || "unknown"}.`;
+    return `Fault status: CPU ${result.cpu || "unknown"}, PostgreSQL ${
+      result.postgresql || "unknown"
+    } (${result.postgresqlAccess || "unknown"}), application connectivity ${
+      result.postgresqlConnectivity || "unknown"
+    }.`;
   }
   if (action === "cpu") {
     return `CPU incident started for ${result.seconds || 600} seconds with ${
       result.workers || 2
     } workers.`;
   }
-  return `Disk incident started at ${result.targetPercent || 90}% used for ${
-    result.seconds || 600
-  } seconds.`;
+  return (
+    "PostgreSQL access is blocked by the scoped outbound NSG rule. The Orders API " +
+    "was recycled and its liveness 200 plus controlled readiness/order 503s were verified."
+  );
 }
 
 export class IncidentLauncher {
@@ -462,7 +479,7 @@ export class IncidentLauncher {
       "sre-launcher__description",
       this.scenario.id === "cpu"
         ? "Starts the existing bounded 10-minute, two-worker CPU fault through VM Run Command."
-        : "Creates the existing 10-minute, 90%-used ballast on /var/lib/orders through VM Run Command.",
+        : "Changes the scoped outbound TCP 5432 NSG rule and recycles only orders-api.",
     );
     const actions = element("div", "sre-launcher__actions");
     this.run = actionButton(this.scenario.runLabel, "md-button md-button--primary");
@@ -510,8 +527,8 @@ export class IncidentLauncher {
       "p",
       "sre-launcher__safety",
       this.scenario.id === "cpu"
-        ? "Fixed limits: 600 seconds, 2 workers, 256 MiB memory cap, reduced scheduling priority."
-        : "Fixed limits: 90% used, 600 seconds, 128 MiB recovery reserve; reset removes only .workshop-disk-pressure.",
+        ? "Fixed limits: 600 seconds, 2 workers, 256 MiB memory cap, reduced scheduling priority. Reset changes only CPU."
+        : "Fixed scope: Orders subnet to PostgreSQL subnet on TCP 5432 only. Reset changes only PostgreSQL connectivity.",
     );
     this.root.append(
       heading,
@@ -525,7 +542,9 @@ export class IncidentLauncher {
     );
 
     this.run.addEventListener("click", () => this.execute(this.scenario.action));
-    this.reset.addEventListener("click", () => this.execute("reset"));
+    this.reset.addEventListener("click", () =>
+      this.execute(`reset-${this.scenario.id}`),
+    );
     this.statusButton.addEventListener("click", () => this.execute("status"));
     this.refresh.addEventListener("click", () => this.refreshGraph(true));
   }
@@ -533,11 +552,15 @@ export class IncidentLauncher {
   async execute(action) {
     this.status.dataset.kind = "progress";
     this.status.textContent =
-      action === "reset"
-        ? "Resetting the workshop fault through Azure VM Run Command..."
+      action === "reset-cpu"
+        ? "Resetting only the CPU fault..."
+        : action === "reset-postgresql"
+          ? "Restoring PostgreSQL access and verifying the recycled Orders API..."
+          : action === "reset"
+            ? "Resetting all workshop fault scenarios..."
         : action === "status"
-          ? "Checking fault status through Azure VM Run Command..."
-          : "Starting the bounded workshop fault through Azure VM Run Command...";
+          ? "Checking the VM and PostgreSQL network fault status..."
+          : "Starting the bounded workshop fault through Azure...";
     try {
       const result = await this.app.executeFault(action);
       this.status.dataset.kind = "success";
@@ -576,13 +599,16 @@ export class IncidentLauncher {
 
     if (busy) {
       this.status.dataset.kind = "progress";
-      this.status.textContent = "An authenticated VM Run Command operation is in progress.";
+      this.status.textContent = "An authenticated Azure fault operation is in progress.";
     }
     const key = `${state.environment.subscription.id}:${state.environment.resourceGroup.id}`;
     if (key !== this.environmentKey) {
       this.environmentKey = key;
       this.status.dataset.kind = "success";
-      this.status.textContent = `Targeting ${state.environment.resourceGroup.name} / ${state.environment.virtualMachine.name}.`;
+      this.status.textContent =
+        `Targeting ${state.environment.resourceGroup.name} / ` +
+        `${state.environment.virtualMachine.name} / ` +
+        `${state.environment.postgresqlServer.name}.`;
       const links = this.app.incidentLinks(this.scenario.id);
       this.chartLink.href = links.chart;
       this.alertLink.href = links.alert;

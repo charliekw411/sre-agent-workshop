@@ -1,4 +1,4 @@
-metadata description = 'Single-VM Orders API workshop with a persistent data disk, Azure Monitor, and a read-only Azure SRE Agent.'
+metadata description = 'Public Orders API VM with private PostgreSQL Flexible Server, Azure Monitor, and a read-only Azure SRE Agent.'
 
 targetScope = 'resourceGroup'
 
@@ -27,11 +27,6 @@ param vmSshPublicKey string
 
 @description('Non-burstable VM size. An alternative size must support the x64 Gen2 Ubuntu image.')
 param vmSize string = 'Standard_D2as_v5'
-
-@description('Capacity of the separate SQLite data disk in GiB. Existing disks can be grown, not shrunk.')
-@minValue(4)
-@maxValue(1023)
-param dataDiskSizeGiB int = 8
 
 @description('Optional email address for Azure Monitor alert notifications.')
 param alertEmail string = ''
@@ -94,8 +89,28 @@ module virtualMachine './vm.bicep' = {
     networkInterfaceResourceId: network.outputs.networkInterfaceResourceId
     vmSshPublicKey: vmSshPublicKey
     vmSize: vmSize
-    dataDiskSizeGiB: dataDiskSizeGiB
     tags: tags
+  }
+}
+
+module postgresql './postgresql.bicep' = {
+  name: 'orders-postgresql'
+  params: {
+    location: location
+    suffix: suffix
+    delegatedSubnetResourceId: network.outputs.postgresqlSubnetResourceId
+    virtualNetworkResourceId: network.outputs.virtualNetworkResourceId
+    workspaceResourceId: workspace.id
+    tags: tags
+  }
+}
+
+module postgresqlAdministrator './postgresql-identity.bicep' = {
+  name: 'orders-postgresql-administrator'
+  params: {
+    serverName: postgresql.outputs.serverName
+    principalId: virtualMachine.outputs.vmPrincipalId
+    principalName: virtualMachine.outputs.vmName
   }
 }
 
@@ -128,7 +143,7 @@ resource performanceRule 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
   tags: tags
   kind: 'Linux'
   properties: {
-    description: 'CPU, memory, and filesystem performance, including the SQLite mount at /var/lib/orders.'
+    description: 'CPU and memory performance for the Orders API virtual machine.'
     dataSources: {
       performanceCounters: [
         {
@@ -141,12 +156,6 @@ resource performanceRule 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
             'Processor(*)\\% Processor Time'
             'Processor(*)\\% IO Wait Time'
             'Memory(*)\\% Used Memory'
-            'Logical Disk(*)\\% Free Space'
-            'Logical Disk(*)\\Free Megabytes'
-            'Logical Disk(*)\\Disk Reads/sec'
-            'Logical Disk(*)\\Disk Writes/sec'
-            'Logical Disk(*)\\Disk Read Bytes/sec'
-            'Logical Disk(*)\\Disk Write Bytes/sec'
           ]
         }
       ]
@@ -213,14 +222,24 @@ output vmName string = virtualMachine.outputs.vmName
 output vmResourceId string = virtualMachine.outputs.vmResourceId
 output vmPrincipalId string = virtualMachine.outputs.vmPrincipalId
 output vmAdminUsername string = virtualMachine.outputs.vmAdminUsername
-output dataDiskName string = virtualMachine.outputs.dataDiskName
-output dataDiskResourceId string = virtualMachine.outputs.dataDiskResourceId
 output ordersApiFqdn string = network.outputs.publicFqdn
 output ordersApiEndpoint string = 'http://${network.outputs.publicFqdn}:8080'
 output publicIpAddress string = network.outputs.publicIpAddress
 output publicIpResourceId string = network.outputs.publicIpResourceId
 output virtualNetworkName string = network.outputs.virtualNetworkName
 output virtualNetworkResourceId string = network.outputs.virtualNetworkResourceId
+output networkSecurityGroupName string = network.outputs.networkSecurityGroupName
+output networkSecurityGroupResourceId string = network.outputs.networkSecurityGroupResourceId
+output postgresqlSubnetResourceId string = network.outputs.postgresqlSubnetResourceId
+output postgresqlFaultRuleName string = network.outputs.postgresqlFaultRuleName
+output postgresqlFaultRuleResourceId string = network.outputs.postgresqlFaultRuleResourceId
+output postgresqlServerName string = postgresql.outputs.serverName
+output postgresqlServerResourceId string = postgresql.outputs.serverResourceId
+output postgresqlHost string = postgresql.outputs.serverFqdn
+output postgresqlDatabase string = postgresql.outputs.databaseName
+output postgresqlUser string = virtualMachine.outputs.vmName
+output postgresqlPrivateDnsZoneName string = postgresql.outputs.privateDnsZoneName
+output postgresqlPrivateDnsZoneResourceId string = postgresql.outputs.privateDnsZoneResourceId
 output workspaceName string = workspace.name
 output workspaceResourceId string = workspace.id
 output workspaceCustomerId string = workspace.properties.customerId

@@ -1,4 +1,4 @@
-metadata description = 'Ubuntu 24.04 Orders API VM and an independently managed, retained SQLite data disk.'
+metadata description = 'Ubuntu 24.04 Orders API VM using a private managed PostgreSQL database.'
 
 targetScope = 'resourceGroup'
 
@@ -19,34 +19,12 @@ param vmSshPublicKey string
 @description('Non-burstable VM size; overrides must support x64 Gen2 and Trusted Launch.')
 param vmSize string = 'Standard_D2as_v5'
 
-@description('SQLite data disk capacity in GiB. Run Command mounts LUN 0 at /var/lib/orders without reformatting an existing filesystem.')
-@minValue(4)
-@maxValue(1023)
-param dataDiskSizeGiB int = 8
-
 @description('Linux administration account; no inbound SSH or password authentication is enabled.')
 param adminUsername string = 'workshopadmin'
 
 param tags object = {}
 
 var vmName = 'vm-orders-${suffix}'
-
-resource dataDisk 'Microsoft.Compute/disks@2024-03-02' = {
-  name: 'disk-orders-data-${suffix}'
-  location: location
-  tags: tags
-  sku: {
-    name: 'StandardSSD_LRS'
-  }
-  properties: {
-    creationData: {
-      createOption: 'Empty'
-    }
-    diskSizeGB: dataDiskSizeGiB
-    networkAccessPolicy: 'DenyAll'
-    publicNetworkAccess: 'Disabled'
-  }
-}
 
 resource vm 'Microsoft.Compute/virtualMachines@2024-03-01' = {
   name: vmName
@@ -79,19 +57,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-03-01' = {
         }
         deleteOption: 'Delete'
       }
-      dataDisks: [
-        {
-          name: dataDisk.name
-          lun: 0
-          createOption: 'Attach'
-          caching: 'None'
-          managedDisk: {
-            id: dataDisk.id
-          }
-          // Deleting the VM retains SQLite; deleting the workshop resource group removes the disk.
-          deleteOption: 'Detach'
-        }
-      ]
+      dataDisks: []
     }
     osProfile: {
       computerName: vmName
@@ -140,5 +106,3 @@ output vmName string = vm.name
 output vmResourceId string = vm.id
 output vmPrincipalId string = vm.identity.principalId
 output vmAdminUsername string = adminUsername
-output dataDiskName string = dataDisk.name
-output dataDiskResourceId string = dataDisk.id
