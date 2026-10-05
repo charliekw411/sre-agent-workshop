@@ -1,7 +1,7 @@
 ---
 title: Module 03 - Respond to High CPU
 description: Trigger bounded CPU pressure through authenticated VM Run Command, follow the alert into an SRE Agent investigation, verify the diagnosis, and recover.
-ms.date: 2026-09-25
+ms.date: 2026-10-06
 ms.topic: how-to
 keywords:
   - cpu saturation
@@ -26,7 +26,7 @@ created by the SRE Agent response plan.
 
 The fault is not an API feature. The helper authenticates to Azure, invokes VM
 Run Command, and starts a bounded guest process. It expires automatically and can
-also be stopped with `fault reset`.
+also be stopped with `fault reset-cpu`, which does not change PostgreSQL access.
 
 ## Learning objectives
 
@@ -81,7 +81,7 @@ terminal helper; no command text can be supplied from the browser.
 
     ```bash
     source .workshop/workshop.env
-    python scripts/workshop.py fault reset
+    python scripts/workshop.py fault reset-cpu
     python scripts/workshop.py smoke
     ```
 
@@ -89,7 +89,7 @@ terminal helper; no command text can be supplied from the browser.
 
     ```powershell
     . ./.workshop/workshop.ps1
-    python scripts/workshop.py fault reset
+    python scripts/workshop.py fault reset-cpu
     python scripts/workshop.py smoke
     ```
 
@@ -279,7 +279,7 @@ Investigate the high-CPU alert for the Orders VM.
 2. Quantify the customer impact using request volume, success rate, and P95 duration.
 3. Check Azure Activity Log for a VM Run Command operation near the start.
 4. Identify which evidence supports CPU pressure as the cause rather than an API,
-   network, or SQLite failure.
+   network, or PostgreSQL failure.
 5. Propose a mitigation, but do not claim that you executed it.
 Cite every chart, metric, or query used.
 ```
@@ -381,7 +381,8 @@ Check the control-plane change:
 
 The expected causal chain is: authenticated Run Command started a bounded guest
 unit, VM CPU crossed the threshold, and request behavior changed in the same
-window. SQLite exceptions are not required and should not be invented.
+window. PostgreSQL dependency failures are not required and should not be
+invented.
 
 ### Task 8: Mitigate and prove recovery
 
@@ -391,7 +392,7 @@ evidence:
 === "Bash"
 
     ```bash
-    python scripts/workshop.py fault reset
+    python scripts/workshop.py fault reset-cpu
     python scripts/workshop.py fault status
     python scripts/workshop.py smoke
     ```
@@ -399,7 +400,7 @@ evidence:
 === "PowerShell"
 
     ```powershell
-    python scripts/workshop.py fault reset
+    python scripts/workshop.py fault reset-cpu
     python scripts/workshop.py fault status
     python scripts/workshop.py smoke
     ```
@@ -440,9 +441,9 @@ time, and alert resolution in `.workshop/notes/incident-01-cpu.md`.
 
 ## Next steps
 
-[Next: Module 04 - Respond to Data-Disk Pressure :material-arrow-right:](../04-incident-data-disk/index.md){ .md-button .md-button--primary }
+[Next: Module 04 - Respond to PostgreSQL Connectivity Loss :material-arrow-right:](../04-incident-postgresql/index.md){ .md-button .md-button--primary }
 
 <div class="sre-nav" markdown>
 [:material-arrow-left: Module 02 - Operate the Response Plan](../02-operate-response-plan/index.md)
-[Module 04 - Respond to Data-Disk Pressure :material-arrow-right:](../04-incident-data-disk/index.md)
+[Module 04 - Respond to PostgreSQL Connectivity Loss :material-arrow-right:](../04-incident-postgresql/index.md)
 </div>

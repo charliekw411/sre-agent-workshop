@@ -1,155 +1,183 @@
 ---
 title: Contoso Order Services architecture context
-description: Architectural context supplied to Azure SRE Agent so investigations account for design constraints that are not visible in resource configuration.
-ms.date: 2026-09-21
+description: Architecture and operational constraints for the VM and private PostgreSQL workshop.
+ms.date: 2026-09-25
 ms.topic: reference
 ---
 
 ## System overview
 
-Contoso Order Services is a two-service order-processing platform running on Azure Container Apps with an Azure SQL Database back end. It accepts customer orders, resolves product pricing, and persists orders durably.
+Contoso Order Services is a deliberately small workshop application. One Ubuntu
+VM runs the public .NET 8 `orders-api` as a hardened, non-root `systemd` service.
+The API stores orders in a separate Azure Database for PostgreSQL Flexible Server.
+There is no Catalog service, Container Apps environment, container registry, Key
+Vault, or Azure SQL resource in this deployment.
 
-## Services
+The VM is a single point of failure. PostgreSQL uses no high availability. These
+constraints keep cost and workshop setup bounded; do not infer production
+redundancy from the use of a managed database.
 
-### orders-api
+## Application behavior
 
-* Public HTTPS API and the only externally reachable application service.
-* Accepts order submissions on `POST /orders` and serves order history on `GET /orders`.
-* Updates an existing order through `PUT /orders/{id}/quantity`, accepting quantities from 1 through 1000.
-* Calls `catalog-api` synchronously to resolve product pricing before every write.
-* Writes orders to Azure SQL Database.
-* Allocated 0.5 vCPU and 1 GiB memory.
-* Fixed at exactly one replica. This is a deliberate workshop constraint and a known single point of failure.
+The Orders API listens on public HTTP port 8080. SSH and fault endpoints are not
+publicly reachable.
 
-### catalog-api
+| Endpoint | Behavior |
+| --- | --- |
+| `GET /` | Browser application or API metadata; does not prove database health |
+| `GET /orders` | Reads the 25 most recent orders from PostgreSQL |
+| `GET /orders/{id}` | Reads one order from PostgreSQL |
+| `POST /orders` | Validates and inserts an order; optional `Idempotency-Key` |
+| `PUT /orders/{id}/quantity` | Updates an order in PostgreSQL |
+| `GET /database` | Reports PostgreSQL provider, server version, schema version, and database size |
+| `GET /health/live` | Proves only that the process is running |
+| `GET /health/ready` | Probes PostgreSQL connectivity and required schema objects |
 
-* Internal-only service with no external ingress.
-* Returns product and pricing data on `GET /catalog/{productId}`.
-* Allocated 0.25 vCPU and 0.5 GiB memory.
-* Fixed at exactly one replica.
-* External clients reach Catalog functionality through `orders-api`, so its failures surface there as customer-visible symptoms.
+Product prices are an in-process sample catalog. Every order read or write uses
+PostgreSQL. A PostgreSQL connectivity failure therefore affects all order
+operations and readiness, while the static browser and liveness endpoint can
+remain available.
 
-### Orders database
+The API uses a singleton pooled Npgsql data source with five-second connection
+and command timeouts. Each repository operation emits an `AppDependencies` item
+whose `DependencyType` is `PostgreSQL`. Failures also emit sanitized
+`AppExceptions`; credentials, tokens, and raw provider error text are not
+recorded. A background probe emits `AppAvailabilityResults` named
+`orders-api-postgresql` once per minute.
 
-* Azure SQL Database, Standard S0 service objective.
-* Maximum size is capped at 1 GB, which is far below the tier maximum. This is deliberate.
-* Reaching the size cap fails writes with SQL error 40544 while reads continue to succeed.
-* Authentication is Microsoft Entra-only. A separate bootstrap job identity is the SQL administrator; the Orders API identity has object-level grants, not `db_owner`.
-* Storage release uses a narrowly scoped privileged stored procedure, rather than granting schema ownership to the runtime.
-* Initialization inserts only missing seed orders, preserving existing orders and storage ballast on redeployment. Reserved IDs -1 through -5 map to SKU-1001 through SKU-1005, priced 129.99, 349.00, 219.50, 45.75, and 189.00. All use customer `workshop-seed`, quantity 1, and timestamp `2026-01-01T00:00:00Z`.
+## PostgreSQL
 
-## Networking and governance
+* Azure Database for PostgreSQL Flexible Server 16.
+* `Standard_B1ms`, 32 GiB storage with auto-grow, no high availability.
+* Seven-day locally redundant backups.
+* Database name `orders`.
+* Public network access and password authentication are disabled.
+* The private DNS zone is `private.postgres.database.azure.com`.
+* Migration state is recorded in `orders_schema_migrations`; the current schema
+  version is 1.
+* Seed order IDs -1 through -5 are deterministic. Positive IDs use a PostgreSQL
+  identity sequence that initialization synchronizes after seeding.
 
-* The Container Apps environment is `cae-private-<suffix>`, using a Consumption workload profile and a subnet delegated to `Microsoft.App/environments` in `vnet-<suffix>`.
-* SQL and Key Vault both have `publicNetworkAccess: Disabled`. Each has a private endpoint on the separate private-endpoint subnet: `pe-sql-<suffix>` and `pe-vault-<suffix>`.
-* Private DNS zones `privatelink.database.windows.net` and `privatelink.vaultcore.azure.net` are linked to the VNet. The normal SQL and vault hostnames resolve to private endpoint addresses from the apps and jobs.
-* The public SQL firewall and `AllowAllWindowsAzureIps` rule have been removed. Their absence is intentional, not a missing configuration to repair.
-* Orders HTTPS ingress remains public and Catalog ingress remains internal. Basic ACR remains public with Entra-authenticated remote builds, managed-identity image pulls, and admin/anonymous access off. Azure Monitor ingestion and queries remain public. This is not an all-private design.
-* There is no Premium ACR, dedicated build pool, NAT gateway, or VPN in this scope.
+Schema bootstrap runs before `systemd` starts the API. It uses a PostgreSQL
+advisory lock and a serializable transaction so repeated deployment is
+idempotent and concurrent initializers cannot partially apply the schema.
 
-For SQL or vault connectivity failures, investigate private endpoint approval,
-private DNS records and VNet links, the environment's delegated subnet, app/job
-environment references, and managed-identity permissions. Check SQL bootstrap
-success and the Orders contained user/object grants separately from networking.
-An attendee laptop without VNet access cannot test private data-plane connectivity.
-Use read-only resource configuration and logs; request an authorized operator's
-in-network diagnostic evidence if needed, not new privileges for the SRE runtime.
+The VM system-assigned managed identity is both the PostgreSQL Microsoft Entra
+administrator and the runtime principal. The API obtains short-lived tokens for
+`https://ossrdbms-aad.database.windows.net` and requires TLS certificate and
+hostname verification. Combining administrator and runtime privilege is a
+disposable-lab simplification, not a production pattern. Production should use
+separate bootstrap and least-privileged runtime principals.
 
-Inherited policies can disable SQL and vault public access. In the former
-deployment, `DenyPublicEndpointEnabled` rejected the SQL firewall rule because
-SQL public access had been disabled. The former deployment script's supporting
-storage failed with `KeyBasedAuthenticationNotPermitted` when storage shared
-keys were prohibited.
-The private endpoints and storage-free managed-identity jobs address these
-constraints. Never propose re-enabling public SQL/vault access, recreating a
-public SQL firewall exception, using SQL passwords or storage shared keys, adding
-policy-bypass tags, or obtaining exemptions as an incident workaround. If policy
-also blocks public ACR, Azure Monitor, Orders ingress, or required preview
-resources, additional architecture work or an approved environment is required.
+## Network path
 
-## Business impact model
+The VNet is `10.240.0.0/24`:
 
-Not all operations carry equal weight. Rank impact accordingly.
+* The Orders VM uses subnet `orders` (`10.240.0.0/27`).
+* PostgreSQL uses delegated subnet `postgresql` (`10.240.0.32/27`).
+* The PostgreSQL hostname resolves privately from the VM.
+* The network security group `nsg-orders-<suffix>` permits public inbound TCP
+  8080 and denies other inbound traffic.
+* Outbound rule `PostgreSqlFaultInjection`, priority 100, normally allows only
+  TCP 5432 from the Orders subnet to the PostgreSQL subnet.
 
-| Operation         | Business function          | Impact when failing                        |
-|-------------------|----------------------------|--------------------------------------------|
-| `POST /orders`    | Order intake, revenue path | Severity 1. Direct revenue loss.           |
-| `GET /orders`     | Order history browsing     | Severity 3. Degraded experience only.      |
-| `GET /catalog`    | Internal pricing lookup    | Severity depends on effect on `POST /orders`. |
+For database failures, distinguish four boundaries:
 
-Always segment impact by operation. A service-wide failure rate that mixes reads and writes understates a total loss of order intake.
+1. Private DNS must return the Flexible Server private address.
+2. TCP 5432 must cross the scoped NSG rule.
+3. TLS verification and the managed-identity token must succeed.
+4. The database and migration version must be ready.
 
-## Known architectural gaps
+Do not recommend enabling public database access, adding a firewall exception,
+disabling TLS verification, or creating a password as an incident workaround.
+Those changes defeat intentional controls and do not identify the failed
+boundary.
 
-These are real properties of the system. Treat them as candidate contributing factors in any relevant incident.
+## Monitoring and alerts
 
-* `orders-api` has no circuit breaker on its calls to `catalog-api`. Dependency failures pass through to customers as HTTP 500 at full request rate.
-* `orders-api` has no fallback pricing path. There is no cache, no last-known price, and no deferred pricing mode.
-* Retries have no exponential backoff and no jitter.
-* Readiness and liveness probes check process health only. Neither reflects dependency health, so an unhealthy replica is never removed from rotation.
-* Both services run a single replica, so there is no redundancy within a service.
-* There is no telemetry for circuit breaker state, connection pool utilization, or storage growth rate.
+The VM has Azure Monitor Agent and a Data Collection Rule for heartbeat and CPU
+performance counters. Application Insights is workspace based.
 
-## Deployment model
+| Alert | Severity | Condition |
+| --- | --- | --- |
+| `alert-orders-high-cpu` | Sev2 | VM average Percentage CPU exceeds 80% for five minutes |
+| `alert-orders-postgresql-connectivity` | Sev1 | Any failed PostgreSQL dependency is observed in five minutes |
+| `alert-orders-http-5xx` | Sev1 | More than 10 HTTP 5xx responses occur in five minutes |
 
-* `azd up` runs `provision`, then `package`, then `deploy --all`. Bicep provisions networking, apps, monitoring, SRE Agent, Key Vault, and role assignments.
-* Initial app provisioning keeps fault endpoints disabled. `postprovision` starts `workshop-token-init`, waits for success, attaches the private Key Vault reference to Orders, then enables faults.
-* `workshop-token-init` uses `id-fault-token-init-<suffix>` with vault-scoped `Key Vault Secrets Officer`. It creates only a missing `fault-token`, preserving an existing token on redeployment.
-* The old ARM `Microsoft.Resources/deploymentScripts` resource `generate-fault-token` is removed. No script-supporting storage account or Azure Container Instance is needed; `Microsoft.Network` replaces `Microsoft.ContainerInstance` and `Microsoft.Storage` in required provider registration.
-* Application images are built remotely in public Basic ACR using Entra authentication and pulled using managed identity. Attendees need no local Docker daemon or .NET SDK.
-* `postdeploy` starts the manual-trigger SQL initialization job, waits for success, makes a smoke request, then synchronizes `agent/incident-filters.yaml` and `agent/knowledge.yaml` and waits for indexing.
-* Agent instructions and runbooks are checked-in Markdown. Refresh them through `azd up` or `python scripts/workshop.py configure-agent`, not portal configuration.
-* The SRE runtime has Reader and Monitoring Reader at resource-group scope and Log Analytics Reader at workspace scope. It investigates read-only and cannot start jobs, remediate, access fault secrets, or acknowledge/close Azure Monitor alerts.
-* The attendee's agent-scoped SRE Agent Administrator role permits configuration; it does not expand runtime permissions.
-* Changes appear in the Azure Activity log and as new Container Apps revisions. Check both when correlating an incident with a change.
+The PostgreSQL dependency alert is the primary incident signal for Module 04.
+Use `AppDependencies`, `AppAvailabilityResults`, `AppRequests`, and
+`AppExceptions` to establish impact. Use VM metrics only for the CPU incident;
+normal VM CPU does not prove PostgreSQL is healthy.
 
-Existing apps and jobs on the old non-VNet `cae-<suffix>` environment cannot move in place.
-Preprovision stops before attempting a move or deletion and requires a new azd
-environment name. If an earlier failed deployment created no apps or jobs, the same azd
-environment can be retried, creating `cae-private-<suffix>` and reusing SQL, vault,
-and data. Old empty environments and failed deployment-script metadata are not
-automatically deleted; they remain until deliberate resource-group cleanup.
-Never suggest deleting apps or data to force an automatic migration.
+## SRE Agent authority
+
+The SRE Agent runtime has read-only Azure resource, monitoring, and Log Analytics
+access. It can investigate but cannot run VM commands, edit the NSG, restart
+resources, change PostgreSQL configuration, or close alerts. Recommendations
+must identify the authorized operator action and must not claim remediation was
+performed.
+
+The attendee has agent-scoped administration to operate the response plan. That
+role does not increase the runtime's infrastructure privileges.
+
+## Deployment and persistence
+
+`azd up` provisions the VM, private PostgreSQL, monitoring, alerts, and SRE Agent,
+then the post-provision hook publishes and bootstraps the API. Compatible
+resource groups carry `workshop-architecture=single-vm-postgresql-v1`. Older
+workshop environments are rejected rather than migrated or deleted implicitly.
+
+Deployment never emits a PostgreSQL password. Generated environment files
+contain only allowlisted resource identifiers and endpoints.
+
+Restart validation creates or reuses a witness order, binds that evidence to the
+PostgreSQL server resource ID, restarts only the VM, and proves the same order
+still exists afterward. This tests separation of compute and data lifecycle; it
+does not prove database high availability.
 
 ## Fault injection
 
-`orders-api` exposes workshop-only endpoints under `/fault`, protected by an `X-Fault-Token` header. When these are active, the container console log contains a line beginning `FAULT INJECTED`. Always search `ContainerAppConsoleLogs_CL` for that string early in an investigation, because it explains behavior that no configuration or deployment change would account for.
+There are two operator-controlled incidents:
 
-Attendees invoke the Bash or PowerShell fault helper with the existing commands
-and defaults. The helper starts and waits for `workshop-fault-client` through ARM.
-That job uses `id-fault-client-<suffix>` with only vault-scoped `Key Vault Secrets User`,
-retrieves the credential inside the VNet, and calls the existing `/fault` routes.
-The laptop never retrieves the credential and needs no VPN or private-vault
-data access. The caller needs job-start/read and workspace-query permission,
-included in the required subscription Owner or Contributor plus User Access
-Administrator roles. The attendee's legacy vault Secrets User grant remains for
-authorized in-network administration and is not used by local helpers.
+* CPU: authenticated Azure VM Run Command starts a bounded transient `systemd`
+  unit. The default CLI action is 300 seconds with two workers; the browser lab
+  uses fixed workshop limits.
+* PostgreSQL connectivity: an authenticated control-plane action changes only
+  `PostgreSqlFaultInjection` from `Allow` to `Deny`. It does not stop or alter
+  PostgreSQL and does not block unrelated outbound traffic. Because Azure NSGs
+  preserve established flows, the authorized injector then restarts only
+  `orders-api` through VM Run Command and requires liveness HTTP 200 plus
+  controlled readiness/order HTTP 503 responses. This recycle drains Npgsql
+  sessions and makes delivery deterministic; it is not the incident trigger.
 
-The helper uses the Azure CLI `log-analytics` extension to retrieve only the
-correlated non-secret JSON result from `ContainerAppConsoleLogs_CL`, marked
-`WORKSHOP_RESULT:<32-character-request-id>:<JSON>`. Progress goes to stderr and
-JSON to stdout. Generated shell files contain only allowlisted non-secret
-identifiers and endpoints, including the job and private-network resource names.
-No secrets are printed in results or errors.
+`python scripts/workshop.py fault status` reads both fault states and probes
+current application connectivity without restarting the API.
+`fault reset-cpu` stops only the CPU unit. `fault reset-postgresql` restores the
+PostgreSQL rule to `Allow`, then restarts only `orders-api` and requires
+readiness and an order operation to succeed without changing CPU. The
+unqualified `fault reset` is explicitly the all-scenarios cleanup. A normal
+`azd up` also reconciles the rule to `Allow`. The PostgreSQL fault has no timer,
+so operators must reset it. Neither inject nor PostgreSQL reset is successful
+on NSG state alone.
 
-Retrieval waits up to five minutes for log ingestion after job success. A status
-response is a snapshot from the job and may not describe current state at log
-arrival; fault timers continue during this delay. Correlate execution and telemetry
-times rather than assuming the helper's return time is the injection time.
+The NSG rule update and expected API-only Run Command appear in the Azure
+Activity log. The scoped rule change, followed by the deliberate pool drain, a
+sharp rise in PostgreSQL dependency failures, and failed readiness is evidence
+for the workshop trigger. Do not identify the recycle as root cause. Rule timing
+alone is correlation; verify dependency failure after `Deny` and recovery after
+`Allow` before concluding causation.
 
-If logs are delayed, the helper reports the execution and 32-character request ID.
-`python scripts/workshop.py fault-result <request-id>` retries only read-only log
-retrieval for the last hour (`PT1H`), never another job or `/fault` request. Log
-availability policies apply. Never recommend reinjection to recover a missing
-result. A failed job requires inspection of its execution logs, not secret
-retrieval or broader roles. The SRE runtime may read those non-secret logs but
-cannot run either private job.
+## Known gaps and trade-offs
 
-| Endpoint              | Injected condition                                    |
-|-----------------------|-------------------------------------------------------|
-| `POST /fault/cpu`     | CPU-bound threads saturate the `orders-api` allocation |
-| `POST /fault/errors`  | `catalog-api` pricing lookups return HTTP 503          |
-| `POST /fault/storage` | The orders database is filled toward its size cap      |
-| `POST /fault/storage/release` | Releases storage ballast through the scoped procedure |
-| `POST /fault/reset` | Resets active fault state |
-| `GET /fault/status` | Captures a fault-state snapshot |
+* One VM and one no-HA Flexible Server provide no application or database
+  redundancy.
+* The public Orders endpoint uses HTTP for workshop simplicity.
+* The API has no circuit breaker or offline read cache for PostgreSQL.
+* A single managed identity has bootstrap and runtime database privilege.
+* Dependency telemetry does not expose Npgsql pool utilization.
+* The SRE runtime cannot perform private data-plane probes from inside the VNet.
+* PostgreSQL auto-grow reduces immediate capacity risk but is not a substitute
+  for growth forecasting, retention policy, or cost controls.
+
+Classify these as contributing factors only when evidence connects them to the
+incident. Do not present a deliberate workshop limitation as the trigger.

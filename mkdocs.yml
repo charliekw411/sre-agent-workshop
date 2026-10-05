@@ -11,7 +11,7 @@ nav:
   - Module 01 - Deploy and Validate: sre/01-deploy-and-validate/index.md
   - Module 02 - Operate the Response Plan: sre/02-operate-response-plan/index.md
   - Module 03 - Respond to High CPU: sre/03-incident-high-cpu/index.md
-  - Module 04 - Respond to Data-Disk Pressure: sre/04-incident-data-disk/index.md
+  - Module 04 - Respond to PostgreSQL Connectivity Loss: sre/04-incident-postgresql/index.md
   - Module 05 - Review and Improve: sre/05-review-and-improve/index.md
   - Module 06 - Preserve Evidence and Clean Up: sre/06-cleanup/index.md
   - About The Authors: sre/29-about-the-authors/index.md

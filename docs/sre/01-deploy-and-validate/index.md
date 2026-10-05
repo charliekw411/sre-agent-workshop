@@ -1,14 +1,14 @@
 ---
 title: Module 01 - Deploy and Validate the Workshop
-description: Deploy the single-VM Orders API workshop and prove that the public API, systemd service, SQLite data disk, telemetry, and restart recovery all work.
-ms.date: 2026-09-25
+description: Deploy the public Orders API and private PostgreSQL workshop, then prove identity, TLS, schema, health, telemetry, and persistence across a VM restart.
+ms.date: 2026-10-06
 ms.topic: how-to
 keywords:
   - azure virtual machines
-  - systemd
-  - sqlite
+  - postgresql flexible server
+  - managed identity
   - azure developer cli
-estimated_reading_time: 18
+estimated_reading_time: 20
 ---
 
 <ul class="sre-meta">
@@ -19,50 +19,75 @@ estimated_reading_time: 18
 
 ## Overview
 
-Deploy one Ubuntu VM that runs the .NET 8 Orders API as a hardened, non-root
-`systemd` service. The application stores orders in SQLite on a separate managed
-data disk mounted at `/var/lib/orders`. It is reachable through a public HTTP
-endpoint on port 8080; SSH and public fault endpoints are not exposed.
+Deploy one Ubuntu VM that runs the .NET 8 Orders API and browser GUI as a
+non-root `systemd` service. The public application reaches a private Azure
+Database for PostgreSQL Flexible Server over a dedicated network path using its
+system-assigned managed identity and TLS hostname verification.
 
 Deployment also creates Log Analytics, workspace-based Application Insights,
-Azure Monitor Agent, three alert rules, and a read-only Azure SRE Agent. The
-`azd up` workflow configures the VM, initializes SQLite, enables the service,
-creates the SRE Agent response plan, and calls the real public API. Provisioning
-a VM is not enough: the live smoke check must pass.
+Azure Monitor Agent, three alert rules, and a read-only Azure SRE Agent. A
+successful resource deployment is not enough. The `azd up` workflow bootstraps
+the schema, starts the service, configures the response plan, and runs a public
+smoke test.
 
 ## Learning objectives
 
-* Prepare the Azure CLI, Azure Developer CLI, Python, and local shell.
-* Deploy the complete workshop into a new Azure resource group.
-* Use the public Orders GUI and verify the absence of destructive HTTP fault routes.
-* Prove that `orders-api` runs under `systemd` and SQLite uses the managed disk.
-* Restart the VM and prove that the service and persisted orders recover.
-* Confirm healthy endpoint activity in VM Metrics and Application Insights.
+* Validate local prerequisites, identity, provider, region, and SKU readiness.
+* Deploy the complete workshop into a new tagged resource group.
+* Explain the private database network and identity boundaries.
+* Exercise the public GUI and `/database` status route.
+* Verify private DNS, TLS, PostgreSQL version, migration, seed, service, and
+  health from the VM.
+* Restart only the VM and prove that an order remains in the separate database.
+* Confirm the telemetry required for later investigations.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
     User[Workshop user] -->|Browser GUI or JSON API<br/>HTTP :8080| IP[Static public IP and DNS]
-    IP --> VM[Ubuntu 24.04 VM]
-    VM --> Service[orders-api systemd service<br/>API and static GUI]
-    Service --> DB[(SQLite orders.db)]
-    DB --> Disk[Managed data disk<br/>/var/lib/orders]
+    IP --> VM[Ubuntu 24.04 VM<br/>Orders subnet 10.240.0.0/27]
+    VM --> Service[orders-api systemd service<br/>.NET 8]
+    Service -->|Private DNS and TCP 5432<br/>TLS VerifyFull<br/>Entra managed identity| PG[(PostgreSQL Flexible Server 16<br/>Delegated subnet 10.240.0.32/27)]
 
     Service --> AI[Application Insights]
     VM --> AMA[Azure Monitor Agent]
+    PG --> Diag[PostgreSQL diagnostics]
     AMA --> LAW[Log Analytics]
     AI --> LAW
-    LAW --> Alerts[Azure Monitor alerts]
+    Diag --> LAW
+    LAW --> Alerts[CPU, PostgreSQL, and HTTP alerts]
     Alerts --> Agent[Azure SRE Agent]
 
-    User -->|Azure RBAC| RC[VM Run Command]
+    Operator[Workshop operator] -->|Azure RBAC| RC[VM Run Command]
     RC --> VM
 ```
 
-The public endpoint is intentionally simple and suitable only for disposable
-synthetic workshop data. Administration and controlled faults use authenticated
-Azure VM Run Command. Do not add SSH access or copy this design into production.
+PostgreSQL settings are fixed for the workshop:
+
+| Setting | Value |
+| --- | --- |
+| Service | Azure Database for PostgreSQL Flexible Server |
+| Engine | PostgreSQL 16 |
+| Compute | `Standard_B1ms`, Burstable |
+| Storage | 32 GiB, auto-grow enabled |
+| High availability | Disabled |
+| Backup | Seven days, locally redundant |
+| Public access | Disabled |
+| Private DNS | `private.postgres.database.azure.com` |
+| Authentication | Microsoft Entra only |
+| Runtime principal | VM system-assigned managed identity |
+| TLS | `VerifyFull` |
+
+The VM identity is also the PostgreSQL Entra administrator. This is a
+credential-free shortcut for a disposable lab. Production should use one
+identity for controlled schema administration and a separate, least-privileged
+runtime identity.
+
+The managed server has a lifecycle separate from the VM, so restarting the VM
+does not restart PostgreSQL. This is better isolation than hosting both
+processes on one VM. It does not provide a production failure domain: the API
+still has one VM, PostgreSQL has no HA, and both resources are in one region.
 
 ## Tasks
 
@@ -76,7 +101,7 @@ You need:
 * Azure CLI 2.60 or later.
 * Python 3.10 or later.
 * Bash with `curl` and `jq`, or PowerShell 7, plus OpenSSH `ssh-keygen`.
-* Permission to run VM Run Command and query Log Analytics.
+* Permission to execute VM Run Command and query Log Analytics.
 
 === "Bash"
 
@@ -98,11 +123,13 @@ You need:
     python -m pip install -r requirements.txt
     ```
 
-The deployment does not require Docker or a local .NET SDK. The VM installs the
-Ubuntu-packaged .NET 8 SDK and builds a checksummed source bundle delivered
-through Run Command.
+Azure deployment does not require Docker or a local .NET SDK. The VM installs
+the .NET 8 SDK and PostgreSQL client and builds the checksummed source bundle
+delivered through Run Command. Local application tests have different
+prerequisites and use PostgreSQL 16 through Testcontainers or
+`ORDERS_TEST_POSTGRES_CONNECTION_STRING`.
 
-### Task 2: Authenticate and choose the subscription
+### Task 2: Authenticate and select the subscription
 
 === "Bash"
 
@@ -110,7 +137,7 @@ through Run Command.
     az login
     az account set --subscription "<subscription-id-or-name>"
     az account show \
-      --query "{Name:name, Subscription:id, Tenant:tenantId}" \
+      --query "{Name:name,Subscription:id,Tenant:tenantId,Identity:user.name}" \
       --output table
     azd auth login
     ```
@@ -121,18 +148,18 @@ through Run Command.
     az login
     az account set --subscription "<subscription-id-or-name>"
     az account show `
-      --query "{Name:name, Subscription:id, Tenant:tenantId}" `
+      --query "{Name:name,Subscription:id,Tenant:tenantId,Identity:user.name}" `
       --output table
     azd auth login
     ```
 
-Use the same identity and tenant for both CLIs. The preflight check rejects
-mismatched logins before creating resources.
+Preflight compares both tools' token principal and tenant. It rejects a mismatch
+before deployment because role assignment and post-provision operations must use
+the same intended identity.
 
-### Task 3: Create a fresh workshop environment
+### Task 3: Create a fresh environment
 
-Use a new environment name. The deployment deliberately refuses to migrate a
-resource group tagged with an older workshop architecture.
+Use a new environment name:
 
 === "Bash"
 
@@ -148,41 +175,45 @@ resource group tagged with an older workshop architecture.
     azd env set AZURE_LOCATION australiaeast
     ```
 
-Optionally configure an alert email before deployment:
+The resource group will be named
+`rg-sre-agent-workshop-<environment>` and tagged:
 
-=== "Bash"
+```text
+workshop-architecture=single-vm-postgresql-v1
+```
 
-    ```bash
-    azd env set ALERT_EMAIL "you@example.com"
-    ```
+If that resource group already exists with another architecture tag, deployment
+stops. Legacy resources and data are not migrated or deleted. Select a new
+environment or remove the old disposable environment explicitly.
 
-=== "PowerShell"
+Optionally configure alert email:
 
-    ```powershell
-    azd env set ALERT_EMAIL "you@example.com"
-    ```
+```bash
+azd env set ALERT_EMAIL "you@example.com"
+```
 
-The default `Standard_D2as_v5` is an x64, two-vCPU, non-burstable VM. If it is
-unavailable within your quota, choose another x64 Generation 2 size with at
-least 4 GiB RAM:
+The default application VM is `Standard_D2as_v5`. If unavailable, set another
+x64 Generation 2 size:
 
-=== "Bash"
+```bash
+azd env set VM_SIZE "<available-x64-vm-size>"
+```
 
-    ```bash
-    azd env set VM_SIZE "<available-x64-vm-size>"
-    ```
+Use at least 4 GiB RAM for the on-VM build and Azure Monitor Agent. Burstable VM
+credit behavior can make the CPU exercise misleading.
 
-=== "PowerShell"
+Preflight checks:
 
-    ```powershell
-    azd env set VM_SIZE "<available-x64-vm-size>"
-    ```
+* Required Azure provider registration.
+* Azure SRE Agent regional advertisement.
+* VM architecture, generation, restrictions, and regional and family quota.
+* PostgreSQL 16 and `Standard_B1ms` availability for the subscription and
+  region.
 
-Preflight reports policy, provider, quota, SKU, or regional availability
-problems explicitly. It never changes your subscription, requests quota, picks a
-different region, or creates policy exemptions.
+It does not request quota, upgrade the subscription, remove spending limits,
+change region, choose a different SKU, or create policy exemptions.
 
-### Task 4: Deploy the workshop
+### Task 4: Deploy
 
 === "Bash"
 
@@ -196,27 +227,44 @@ different region, or creates policy exemptions.
     azd up
     ```
 
-Allow approximately 8 to 15 minutes for a fresh deployment. The workflow:
+Allow approximately 8 to 15 minutes for a fresh run, but treat that as a target
+rather than an Azure SLA. The workflow:
 
-1. Provisions the network, VM, managed disk, monitoring, alerts, and SRE Agent.
-2. Mounts the data disk by UUID at `/var/lib/orders`.
-3. Publishes and bootstraps the Orders API.
-4. Enables `orders-api.service`.
-5. Configures the Sev1/Sev2 SRE Agent response plan in Review mode.
-6. Calls `/orders` and verifies that the retired `/fault/*` routes return 404.
+1. Creates the resource group and architecture tag.
+2. Creates the VNet, Orders subnet, delegated PostgreSQL subnet, NSG, public IP,
+   and private DNS zone and link.
+3. Creates the Ubuntu VM with a system-assigned identity.
+4. Creates PostgreSQL 16 and the `orders` database with Entra-only
+   authentication and public access disabled.
+5. Makes the VM identity the PostgreSQL Entra administrator.
+6. Creates monitoring, alerts, SRE Agent, and read-only agent role assignments.
+7. Uses VM Run Command to install packages, publish the API, and write a
+   password-free connection configuration.
+8. Waits for private DNS and TCP 5432, obtains a managed-identity token, applies
+   schema migration 1, and inserts the five deterministic seed rows.
+9. Enables and starts `orders-api.service`.
+10. Creates and reads back the Sev1/Sev2 Review response plan.
+11. Calls the public `/orders` and `/database` routes and verifies that public
+    fault routes do not exist.
 
-If a later stage fails, correct the reported cause and rerun `azd up`. The
-operation is repeatable: it preserves the disk, existing orders, seed rows, and
-an unchanged application bundle.
+If a later stage fails, read the named stage and preserved evidence under
+`.workshop/<environment>/`, correct the cause, and rerun `azd up`.
 
-### Task 5: Load the deployment outputs
+Repeated deployment is idempotent for schema and seed data. It also reconciles
+the fixed `PostgreSqlFaultInjection` rule to its normal `Allow` state. It does
+not migrate a legacy architecture.
+
+### Task 5: Load and inspect safe outputs
 
 === "Bash"
 
     ```bash
     source .workshop/workshop.env
-    printf 'API: %s\nVM: %s\nResource group: %s\n' \
-      "${SERVICE_ORDERS_API_ENDPOINT_URL}" "${VM_NAME}" "${RESOURCE_GROUP}"
+    printf 'API: %s\nVM: %s\nPostgreSQL: %s\nResource group: %s\n' \
+      "${SERVICE_ORDERS_API_ENDPOINT_URL}" \
+      "${VM_NAME}" \
+      "${POSTGRESQL_SERVER_NAME}" \
+      "${RESOURCE_GROUP}"
     ```
 
 === "PowerShell"
@@ -225,14 +273,45 @@ an unchanged application bundle.
     . ./.workshop/workshop.ps1
     "API: $env:SERVICE_ORDERS_API_ENDPOINT_URL"
     "VM: $env:VM_NAME"
+    "PostgreSQL: $env:POSTGRESQL_SERVER_NAME"
     "Resource group: $env:RESOURCE_GROUP"
     ```
 
-These generated files contain an allowlist of non-secret names, IDs, and
-endpoints. They contain no VM private key, API credential, or administrative
-secret.
+The generated shell files contain an explicit allowlist of non-secret resource
+names, IDs, DNS names, and endpoints. Relevant PostgreSQL outputs include:
 
-### Task 6: Prove the application and storage layout
+* `POSTGRESQL_SERVER_NAME` and `POSTGRESQL_SERVER_RESOURCE_ID`
+* `POSTGRESQL_HOST`, `POSTGRESQL_DATABASE`, and `POSTGRESQL_USER`
+* `POSTGRESQL_SUBNET_RESOURCE_ID`
+* `POSTGRESQL_PRIVATE_DNS_ZONE_NAME` and its resource ID
+* `POSTGRESQL_FAULT_RULE_NAME` and its resource ID
+
+They contain no database password, Entra token, VM private key, or API
+credential.
+
+Inspect the server configuration:
+
+=== "Bash"
+
+    ```bash
+    az postgres flexible-server show \
+      --resource-group "${RESOURCE_GROUP}" \
+      --name "${POSTGRESQL_SERVER_NAME}" \
+      --query "{Name:name,State:state,Version:version,Sku:sku.name,Tier:sku.tier,StorageGiB:storage.storageSizeGb,AutoGrow:storage.autoGrow,HighAvailability:highAvailability.mode,BackupDays:backup.backupRetentionDays,GeoBackup:backup.geoRedundantBackup,PublicAccess:network.publicNetworkAccess}" \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az postgres flexible-server show `
+      --resource-group $env:RESOURCE_GROUP `
+      --name $env:POSTGRESQL_SERVER_NAME `
+      --query "{Name:name,State:state,Version:version,Sku:sku.name,Tier:sku.tier,StorageGiB:storage.storageSizeGb,AutoGrow:storage.autoGrow,HighAvailability:highAvailability.mode,BackupDays:backup.backupRetentionDays,GeoBackup:backup.geoRedundantBackup,PublicAccess:network.publicNetworkAccess}" `
+      --output table
+    ```
+
+### Task 6: Validate the application and private database
 
 === "Bash"
 
@@ -248,29 +327,39 @@ secret.
     python scripts/workshop.py inspect
     ```
 
-`smoke` validates the public URL and persisted order shape. `inspect` runs a
-read-only check through authenticated Run Command and verifies:
+`smoke` verifies:
 
-* `/var/lib/orders` is a separate ext4 filesystem at managed-disk LUN 0.
-* `/var/lib/orders/orders.db` resides on that filesystem.
-* SQLite quick-check returns `ok` and journal mode is `wal`.
-* The five reserved seed orders exist exactly once.
-* `orders-api` is active, enabled, configured to restart, and runs as user
-  `orders`.
+* Public readiness.
+* At least five correctly shaped persisted orders.
+* `/database` reports provider `PostgreSQL`, status `ready`, schema version 1,
+  and a positive database size.
+* `/fault/cpu`, `/fault/postgresql`, and `/fault/reset` do not exist publicly.
 
-Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a browser. The same Orders API process
-serves a responsive interface at the root, without a second Azure service. List
-the seeded orders, create one with synthetic data, open its details, update its
-quantity, and refresh the service-status cards. The terminal checks below remain
-the fallback and the authoritative deployment validation.
+`inspect` uses authenticated VM Run Command and verifies:
 
-The GUI makes one `/orders` request on load or explicit refresh, one
-`/orders/{orderId}` request when details open, and mutations only when you submit
-a form. While the tab is visible, it requests `/health/live`, `/health/ready`,
-and `/storage` every 30 seconds. Hidden tabs pause that status timer, so this
-normal GUI traffic does not replace generated incident load.
+* `orders-api` is active, enabled, set to restart, and runs as user `orders`.
+* The configured PostgreSQL host resolves only to private addresses.
+* The connection has no password and uses managed identity.
+* TLS mode is `verify-full`.
+* The VM can acquire a PostgreSQL access token from its managed identity.
+* `psql` reaches PostgreSQL 16.
+* Migration version 1 and all five deterministic seed rows exist.
+* Local liveness and schema-backed readiness both succeed.
 
-Call the same public endpoints yourself:
+Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a browser. List the seed data, create
+one synthetic order, open its details, update its quantity, and select
+**Refresh status**.
+
+The status cards call `/health/live`, `/health/ready`, and `/database` every 30
+seconds while the tab is visible. `/database` reports:
+
+* `provider`
+* `status`
+* `serverVersion`
+* `schemaVersion`
+* `databaseBytes`
+
+Call the routes directly:
 
 === "Bash"
 
@@ -278,7 +367,7 @@ Call the same public endpoints yourself:
     curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/health/live" | jq .
     curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/health/ready" | jq .
     curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" | jq .
-    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" | jq .
+    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/database" | jq .
     ```
 
 === "PowerShell"
@@ -287,37 +376,10 @@ Call the same public endpoints yourself:
     Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/health/live"
     Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/health/ready"
     Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders"
-    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/storage"
+    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/database"
     ```
 
-Create a synthetic order:
-
-=== "Bash"
-
-    ```bash
-    curl --silent --fail \
-      --request POST "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" \
-      --header 'Content-Type: application/json' \
-      --data '{"customerId":"module-01","productId":"SKU-1002","quantity":2}' | jq .
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    $body = @{
-      customerId = 'module-01'
-      productId  = 'SKU-1002'
-      quantity   = 2
-    } | ConvertTo-Json
-
-    Invoke-RestMethod `
-      -Method Post `
-      -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" `
-      -ContentType 'application/json' `
-      -Body $body
-    ```
-
-### Task 7: Prove restart recovery and persistence
+### Task 7: Prove persistence across a VM restart
 
 === "Bash"
 
@@ -331,33 +393,38 @@ Create a synthetic order:
     python scripts/workshop.py verify-restart
     ```
 
-The command creates or reuses a persistence witness, restarts only the selected
-workshop VM, waits for readiness, and verifies:
+The helper creates or reuses a synthetic order and binds its local witness file
+to `POSTGRESQL_SERVER_RESOURCE_ID`. It then:
 
-* The VM boot ID changed.
-* The managed-disk UUID did not change.
-* `systemd` restarted the API automatically.
-* The witness order is unchanged and readable through the public endpoint.
+1. Records the VM boot ID, PostgreSQL server version, and migration version.
+2. Restarts only the selected VM.
+3. Waits for public schema-backed readiness.
+4. Confirms that the boot ID changed.
+5. Confirms that PostgreSQL version and migration state remain valid.
+6. Reads the unchanged order from the same PostgreSQL server.
+7. Reruns the public smoke check.
 
-### Task 8: Confirm healthy telemetry before the incidents
+A witness from another PostgreSQL resource is rejected. A witness from a
+pre-PostgreSQL workshop is replaced. This prevents unrelated local evidence from
+being mistaken for persistence proof.
 
-Open the Azure portal and select:
+### Task 8: Confirm healthy telemetry
 
-1. **Resource groups** > your workshop resource group.
-2. The virtual machine named `vm-orders-<suffix>`.
-3. **Monitoring** > **Metrics**.
-4. Metric **Percentage CPU**, aggregation **Average**, time granularity
-   **1 minute**, and time range **Last 30 minutes**.
+Open the Azure portal:
 
-Generate two minutes of healthy endpoint activity in another terminal while the
-chart is open:
+1. Select your workshop resource group.
+2. Open `vm-orders-<suffix>`.
+3. Select **Monitoring** > **Metrics**.
+4. Choose **Percentage CPU**, aggregation **Average**, time granularity
+   **1 minute**, and **Last 30 minutes**.
+
+Generate two minutes of healthy traffic:
 
 === "Bash"
 
     ```bash
     for i in $(seq 1 120); do
-      curl --silent --fail \
-        "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
+      curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
       sleep 1
     done
     ```
@@ -366,23 +433,18 @@ chart is open:
 
     ```powershell
     1..120 | ForEach-Object {
-      Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" | Out-Null
+      Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" |
+        Out-Null
       Start-Sleep -Seconds 1
     }
     ```
 
-Refresh the chart after one or two minutes. Confirm that **Percentage CPU** is
-healthy before the saturation incident in Module 03. You do not need to record
-an extended baseline or create a worksheet.
+Refresh the chart. Save the healthy CPU range for comparison in Module 03.
 
-<!-- SCREENSHOT: VM Monitoring Metrics blade showing healthy Percentage CPU while /orders is called -->
+<!-- SCREENSHOT: VM Metrics with a healthy Percentage CPU baseline from an actual workshop environment -->
 
-From the workshop resource group, open `appi-<suffix>` and select
-**Investigate** > **Performance**. Use **Last 30 minutes** and confirm that
-`GET /orders` appears. Application Insights ingestion can lag by several
-minutes.
-
-Finally, verify that the required VM and application signals have arrived:
+Open `appi-<suffix>` > **Investigate** > **Performance** and confirm
+`GET /orders`, `GET /health/ready`, and `GET /database` appear. Then run:
 
 === "Bash"
 
@@ -396,31 +458,44 @@ Finally, verify that the required VM and application signals have arrived:
     python scripts/workshop.py telemetry
     ```
 
-The helper waits for VM heartbeat, guest CPU, data-disk free space, API
-requests, SQLite dependencies, and the SQLite availability result. This short
-check proves that the SRE Agent will have evidence to investigate; deeper
-analysis happens inside the incident modules.
+The helper waits up to ten minutes for:
+
+* VM heartbeat.
+* Guest CPU samples.
+* Orders API request telemetry.
+* `AppDependencies` samples with
+  `DependencyType == "PostgreSQL"`.
+* `AppAvailabilityResults` from the database availability probe.
+
+Exceptions are not required in a healthy baseline. Application Insights and Log
+Analytics can lag by several minutes.
 
 ## Validation
 
-* [x] `azd up` completed through the public smoke stage.
-* [x] The public `/health/ready`, `/orders`, and `/storage` endpoints return 200.
-* [x] The root browser GUI listed and updated synthetic orders and displayed service status.
-* [x] VM inspection reports an active non-root service and valid SQLite WAL database.
-* [x] Restart validation preserves the disk UUID and witness order.
-* [x] You viewed healthy activity in VM Metrics and Application Insights.
-* [x] `python scripts/workshop.py telemetry` confirmed the investigation signals.
+* [x] `azd up` completed through public smoke.
+* [x] The server is PostgreSQL 16 with the documented private, storage, backup,
+  and HA settings.
+* [x] No database credential was emitted.
+* [x] `/health/ready`, `/orders`, and `/database` return HTTP 200.
+* [x] The GUI displays PostgreSQL provider, version, schema, size, and latency.
+* [x] Inspection validates private DNS, TLS, managed identity, schema, seed,
+  service, and health.
+* [x] Restart validation preserves an order in the same PostgreSQL resource.
+* [x] Healthy CPU, request, dependency, and availability signals are visible.
 
 ## Knowledge check
 
-??? question "Why does successful VM provisioning not complete the deployment?"
-    ARM can report a healthy VM even when the application failed to publish, the data disk was not mounted, `systemd` did not start, or the public endpoint is unreachable. The post-provision smoke and inspection checks validate the service that attendees actually use.
+??? question "Why does successful Bicep provisioning not complete the deployment?"
+    Azure can report that resources exist while private DNS, identity propagation, schema bootstrap, service startup, or the public API is still broken. The guest inspection and public smoke checks validate the path attendees actually use.
 
-??? question "Why does the service declare `RequiresMountsFor=/var/lib/orders`?"
-    It prevents the API from silently starting against the OS disk when the managed disk is absent. Failing closed protects persistence and makes a storage problem visible instead of writing data to the wrong filesystem.
+??? question "Why does a VM restart prove more with a managed database?"
+    The VM boot ID changes while the PostgreSQL resource remains separate. Reading the unchanged witness order demonstrates that application-compute restart and database lifecycle are independent.
 
-??? question "Why is the public API HTTP while administration is not exposed publicly?"
-    The public endpoint keeps the disposable workshop easy to exercise and observe. Administrative operations can change VM state, so they remain behind Azure authentication, RBAC, and Run Command. This is a workshop tradeoff, not a production security pattern.
+??? question "Why is making the runtime identity a database administrator acceptable only here?"
+    It removes credential and privilege-bootstrap complexity from a short-lived lab, but it grants the application more authority than it needs. Production should separate migration administration from runtime data access.
+
+??? question "Why choose private Flexible Server instead of a public endpoint?"
+    Private networking avoids exposing the database, provides realistic DNS and TCP dependency evidence, and lets Module 04 isolate one application-to-database path. It costs more and adds network complexity, which the workshop documents rather than hiding.
 
 ## Next steps
 

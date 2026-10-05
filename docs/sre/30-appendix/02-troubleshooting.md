@@ -1,24 +1,21 @@
 ---
 title: Troubleshooting
-description: Diagnose deployment, VM service, SQLite, telemetry, alert, fault, SRE Agent, and cleanup problems in the single-VM workshop.
-ms.date: 2026-09-25
+description: Diagnose deployment, private PostgreSQL, managed identity, schema, NSG fault, telemetry, SRE Agent, and cleanup problems in the workshop.
+ms.date: 2026-10-06
 ms.topic: troubleshooting
 keywords:
   - troubleshooting
-  - azure virtual machines
-  - azure monitor
+  - postgresql flexible server
+  - managed identity
+  - private dns
   - azure sre agent
-estimated_reading_time: 16
+estimated_reading_time: 20
 ---
 
 ## How to use this page
 
-Start with the failed workshop command and its preserved evidence under
-`.workshop/<environment>/`. Do not work around a failure by opening SSH, adding a
-public fault endpoint, moving SQLite to the OS disk, or widening the SRE Agent's
-permissions.
-
-Load the selected environment before using the examples:
+Start with the failed workshop command and its evidence under
+`.workshop/<environment>/`. Load the selected environment:
 
 === "Bash"
 
@@ -32,107 +29,170 @@ Load the selected environment before using the examples:
     . ./.workshop/workshop.ps1
     ```
 
-## Deployment problems
+Do not work around a failure by opening SSH, enabling PostgreSQL public access,
+adding a database password, creating a public fault endpoint, broadening the NSG
+deny, or granting the SRE Agent write access.
 
-### Azure CLI and azd use different identities or subscriptions
+Before diagnosing normal connectivity, check the controlled fault state:
 
-The preflight check compares the identity and tenant used by both tools. Sign in
-again and select the same subscription:
+```bash
+python scripts/workshop.py fault status
+```
+
+If PostgreSQL is `active` with access `Deny` outside Module 04, restore it:
+
+```bash
+python scripts/workshop.py fault reset-postgresql
+```
+
+## Deployment and preflight
+
+### Azure CLI and azd use different identities
+
+Preflight compares principal and tenant claims from both token sources. Sign in
+again with the same intended identity:
+
+```bash
+az login
+az account set --subscription "<subscription-id>"
+az account show \
+  --query "{Subscription:id,Tenant:tenantId,Identity:user.name}" \
+  --output table
+azd auth login
+azd env get-value AZURE_SUBSCRIPTION_ID
+```
+
+Do not bypass this check. Provisioning, role assignment, post-provision, and
+cleanup must target the same subscription and tenant.
+
+### A legacy resource group is rejected
+
+The current architecture requires:
+
+```text
+workshop-architecture=single-vm-postgresql-v1
+```
+
+Inspect the selected group:
 
 === "Bash"
 
     ```bash
-    az login
-    az account set --subscription "<subscription-id>"
-    azd auth login
-    az account show --output table
-    azd env get-value AZURE_SUBSCRIPTION_ID
+    az group show \
+      --name "rg-sre-agent-workshop-${AZURE_ENV_NAME}" \
+      --query "{Name:name,Architecture:tags.\"workshop-architecture\"}" \
+      --output table
     ```
 
 === "PowerShell"
 
     ```powershell
-    az login
-    az account set --subscription "<subscription-id>"
-    azd auth login
-    az account show --output table
-    azd env get-value AZURE_SUBSCRIPTION_ID
+    az group show `
+      --name "rg-sre-agent-workshop-$env:AZURE_ENV_NAME" `
+      --query "{Name:name,Architecture:tags.\"workshop-architecture\"}" `
+      --output table
     ```
 
-Do not bypass the check. A mismatched deployment can create resources under one
-identity and then fail role assignment or post-provision operations under another.
+The deployment rejects a missing or different tag rather than migrating,
+deleting, or combining legacy resources. Create a new environment:
 
-### An existing resource group is rejected
+```bash
+azd env new "<your-alias>-sre-vm-aue"
+azd env set AZURE_LOCATION australiaeast
+azd up
+```
 
-The current workshop requires the resource-group tag
-`workshop-architecture=single-vm`. It does not migrate an earlier architecture.
-Create a fresh azd environment:
+Review and remove the old disposable environment separately. Do not change its
+tag to bypass compatibility checks.
 
-=== "Bash"
+### A required provider is unavailable or unregistered
 
-    ```bash
-    azd env new "<your-alias>-sre-vm-aue"
-    azd env set AZURE_LOCATION australiaeast
-    azd up
-    ```
+Preflight registers all required providers, including
+`Microsoft.DBforPostgreSQL`. Check registration:
 
-=== "PowerShell"
+```bash
+az provider show \
+  --namespace Microsoft.DBforPostgreSQL \
+  --query "{Namespace:namespace,State:registrationState}" \
+  --output table
+```
 
-    ```powershell
-    azd env new "<your-alias>-sre-vm-aue"
-    azd env set AZURE_LOCATION australiaeast
-    azd up
-    ```
+If your identity can register providers:
 
-Review and remove the old environment separately. Do not delete individual
-resources to trick preflight into treating an old group as compatible.
+```bash
+az provider register --namespace Microsoft.DBforPostgreSQL
+```
+
+Registration can take several minutes. Rerun `azd up` after it reaches
+`Registered`. A policy or subscription type can still prevent a resource even
+when the provider is registered.
+
+### PostgreSQL 16 or `Standard_B1ms` is not advertised
+
+Preflight calls:
+
+```bash
+az postgres flexible-server list-skus \
+  --location "${AZURE_LOCATION}" \
+  --subscription "${AZURE_SUBSCRIPTION_ID}" \
+  --output json
+```
+
+It requires PostgreSQL 16 and `Standard_B1ms` in the selected region for the
+subscription. It does not substitute another server SKU or region. If either is
+absent:
+
+1. Confirm `Microsoft.DBforPostgreSQL` is registered.
+2. Check the error for subscription restrictions or regional capability
+   reasons.
+3. Use a permitted subscription or choose another workshop region only after
+   verifying that Azure SRE Agent, the VM SKU, and PostgreSQL are all available
+   there.
+4. Create a fresh environment for a region change.
+
+Do not edit deployment state to pretend the preflight succeeded.
 
 ### The selected VM size is unavailable
 
-Preflight checks x64 Generation 2 compatibility, regional SKU restrictions, and
-quota. It never requests more quota or silently changes size.
+The VM preflight checks x64, Generation 2 support, regional restrictions, and
+quota. Choose an available x64 size:
 
-Choose an available, non-burstable x64 size with at least 4 GiB RAM:
+```bash
+azd env set VM_SIZE "<available-x64-vm-size>"
+azd up
+```
 
-=== "Bash"
+Prefer at least 4 GiB RAM. Burstable application VM credit behavior can distort
+the CPU exercise. The PostgreSQL `Standard_B1ms` tier is separate from the
+application VM size.
 
-    ```bash
-    azd env set VM_SIZE "<available-size>"
-    azd up
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    azd env set VM_SIZE "<available-size>"
-    azd up
-    ```
-
-One-GiB and ARM64 free-tier sizes are not validated. Burstable B-series credit
-behavior can make the CPU incident misleading.
-
-### Policy blocks the deployment
+### Policy blocks private PostgreSQL or the public API
 
 The workshop requires:
 
-* A public Standard IP and inbound TCP 8080.
-* Outbound access for Ubuntu packages, NuGet, and Azure monitoring.
-* Managed disks, VM extensions, Log Analytics, Application Insights, and the
-  preview Azure SRE Agent resource.
+* A public Standard IP and inbound TCP 8080 for the disposable Orders API.
+* A delegated subnet for
+  `Microsoft.DBforPostgreSQL/flexibleServers`.
+* A private DNS zone and VNet link.
+* PostgreSQL public access disabled.
+* Managed identities and role assignments.
+* Outbound access for package retrieval, Azure monitoring, and managed-identity
+  token acquisition.
+* Log Analytics, Application Insights, alert rules, and Azure SRE Agent.
 
-No policy exemptions are created. Use an approved subscription or change the
-workshop design outside this lab; do not add bypass tags or weaken an
-organization's policy.
+No policy exemptions are created. Use an approved subscription or redesign the
+lab through normal review. Do not weaken organizational policy from this
+workshop.
 
 ### SRE Agent is unavailable in the region
 
-The preview service is region constrained. Use the documented default
-`australiaeast` unless preflight confirms another region. Model availability can
-also vary by subscription.
+The preview service has regional and subscription constraints. Use
+`australiaeast` unless preflight confirms another region. Model availability
+can also vary by subscription.
 
 ### `azd up` provisioned resources but failed later
 
-Read the stage named in the error and inspect:
+List the saved evidence:
 
 === "Bash"
 
@@ -146,14 +206,38 @@ Read the stage named in the error and inspect:
     Get-ChildItem ".workshop/$env:AZURE_ENV_NAME"
     ```
 
-Correct the cause and rerun `azd up`. The workflow preserves the existing data
-disk and orders. Do not delete the disk as a generic retry step.
+Read the named deployment stage. Guest logs are available through Run Command:
 
-## VM and application problems
+=== "Bash"
 
-### The public API or Orders GUI is unreachable
+    ```bash
+    az vm run-command invoke \
+      --resource-group "${RESOURCE_GROUP}" \
+      --name "${VM_NAME}" \
+      --command-id RunShellScript \
+      --scripts "tail -n 150 /var/log/orders-deployment.log; journalctl -u orders-api -n 100 --no-pager" \
+      --output json
+    ```
 
-Check the URL, public IP, VM power state, and NSG:
+=== "PowerShell"
+
+    ```powershell
+    az vm run-command invoke `
+      --resource-group $env:RESOURCE_GROUP `
+      --name $env:VM_NAME `
+      --command-id RunShellScript `
+      --scripts "tail -n 150 /var/log/orders-deployment.log; journalctl -u orders-api -n 100 --no-pager" `
+      --output json
+    ```
+
+Correct the reported cause and rerun `azd up`. Schema and seed bootstrap are
+idempotent, and the normal PostgreSQL rule is reconciled to `Allow`.
+
+## Public API and service
+
+### The Orders GUI or API is unreachable
+
+Check the exact URL, VM state, and NSG:
 
 === "Bash"
 
@@ -164,7 +248,10 @@ Check the URL, public IP, VM power state, and NSG:
       --name "${VM_NAME}" \
       --query "instanceView.statuses[].displayStatus" \
       --output table
-    az network nsg list --resource-group "${RESOURCE_GROUP}" --output table
+    az network nsg rule list \
+      --resource-group "${RESOURCE_GROUP}" \
+      --nsg-name "${NETWORK_SECURITY_GROUP_NAME}" \
+      --output table
     ```
 
 === "PowerShell"
@@ -176,261 +263,416 @@ Check the URL, public IP, VM power state, and NSG:
       --name $env:VM_NAME `
       --query "instanceView.statuses[].displayStatus" `
       --output table
-    az network nsg list --resource-group $env:RESOURCE_GROUP --output table
-    ```
-
-Only TCP 8080 is allowed inbound. Port 22 is intentionally blocked.
-
-Open the exact `SERVICE_ORDERS_API_ENDPOINT_URL` value in a browser. If the page
-shell loads but its orders or status cards fail, the VM and static GUI are
-reachable and the underlying JSON requests need diagnosis. If the page itself
-does not load, continue with the VM, NSG, and service checks below.
-
-Run the supported inspection:
-
-=== "Bash"
-
-    ```bash
-    python scripts/workshop.py inspect
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    python scripts/workshop.py inspect
-    ```
-
-If the service itself needs inspection, use authenticated Run Command:
-
-=== "Bash"
-
-    ```bash
-    az vm run-command invoke \
-      --resource-group "${RESOURCE_GROUP}" \
-      --name "${VM_NAME}" \
-      --command-id RunShellScript \
-      --scripts "systemctl status orders-api --no-pager; journalctl -u orders-api -n 100 --no-pager" \
-      --output json
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    az vm run-command invoke `
+    az network nsg rule list `
       --resource-group $env:RESOURCE_GROUP `
-      --name $env:VM_NAME `
-      --command-id RunShellScript `
-      --scripts "systemctl status orders-api --no-pager; journalctl -u orders-api -n 100 --no-pager" `
-      --output json
+      --nsg-name $env:NETWORK_SECURITY_GROUP_NAME `
+      --output table
     ```
 
-Do not expose SSH as a troubleshooting shortcut.
+Only inbound TCP 8080 is allowed. Port 22 is intentionally denied.
 
-### The base URL returns JSON instead of the Orders GUI
+Run:
 
-This is expected from curl, `Invoke-RestMethod`, monitoring probes, and clients
-that do not advertise `Accept: text/html`. The root preserves its JSON service
-descriptor for backward compatibility. A normal browser address-bar navigation
-requests HTML.
+```bash
+python scripts/workshop.py inspect
+python scripts/workshop.py smoke
+```
 
-Verify HTML negotiation explicitly:
+If the GUI shell loads but order or status cards fail, the public web process is
+reachable and the underlying JSON route needs diagnosis. Check browser
+developer tools and call `/health/live`, `/health/ready`, and `/database`
+directly.
 
-=== "Bash"
+### The base URL returns JSON instead of HTML
 
-    ```bash
-    curl --silent --fail \
-      --header 'Accept: text/html' \
-      --output /dev/null \
-      --write-out '%{http_code} %{content_type}\n' \
-      "${SERVICE_ORDERS_API_ENDPOINT_URL}/"
-    ```
+The root uses content negotiation. `curl`, `Invoke-RestMethod`, and probes
+normally receive the JSON descriptor. A browser address-bar navigation requests
+HTML.
 
-=== "PowerShell"
+```bash
+curl --silent --fail \
+  --header 'Accept: text/html' \
+  --output /dev/null \
+  --write-out '%{http_code} %{content_type}\n' \
+  "${SERVICE_ORDERS_API_ENDPOINT_URL}/"
+```
 
-    ```powershell
-    $response = Invoke-WebRequest `
-      -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/" `
-      -Headers @{ Accept = 'text/html' }
-    "$($response.StatusCode) $($response.Headers.'Content-Type')"
-    ```
+Expect HTTP 200 and `text/html`. Rerun `azd up` if the checksummed bundle is
+missing static assets.
 
-Expect HTTP 200 and `text/html`. If the negotiated request fails after a
-deployment, rerun `azd up` so the checksummed application bundle includes the
-static assets. Do not add a second web server or Azure service.
+### Liveness is 200 but readiness is 503
 
-### Readiness returns 503 or inspection reports a missing mount
+This is a meaningful distinction:
 
-`orders-api.service` requires `/var/lib/orders`. Check the mount and disk:
+* `/health/live` checks the API process.
+* `/health/ready` executes a PostgreSQL schema probe.
 
-=== "Bash"
+First inspect fault state:
 
-    ```bash
-    az vm run-command invoke \
-      --resource-group "${RESOURCE_GROUP}" \
-      --name "${VM_NAME}" \
-      --command-id RunShellScript \
-      --scripts "findmnt /var/lib/orders; lsblk -f; systemctl status orders-api --no-pager" \
-      --output json
-    ```
+```bash
+python scripts/workshop.py fault status
+```
 
-=== "PowerShell"
+If access is `Deny`, reset it. If access is `Allow`, continue with private DNS,
+TCP 5432, identity, and schema sections below. Restarting the API does not fix an
+NSG deny or broken private DNS.
 
-    ```powershell
-    az vm run-command invoke `
-      --resource-group $env:RESOURCE_GROUP `
-      --name $env:VM_NAME `
-      --command-id RunShellScript `
-      --scripts "findmnt /var/lib/orders; lsblk -f; systemctl status orders-api --no-pager" `
-      --output json
-    ```
+### `/database` or order operations return HTTP 503
 
-The filesystem must be ext4 on the Azure data disk at LUN 0. Do not point the
-connection string at the OS disk. Rerun `azd up` after correcting an actual
-deployment failure.
+The application maps PostgreSQL connectivity, timeout, and database errors to
+HTTP 503 and records failed dependencies and exceptions.
 
-### SQLite operations return HTTP 503
+```bash
+curl --silent "${SERVICE_ORDERS_API_ENDPOINT_URL}/database" | jq .
+python scripts/workshop.py fault status
+python scripts/workshop.py inspect
+```
 
-The API maps `SqliteException` to HTTP 503 and records dependency and exception
-telemetry. Check:
+Use Application Insights **Failures** and query:
 
-=== "Bash"
+```kusto
+union AppDependencies, AppExceptions
+| where TimeGenerated > ago(30m)
+| where AppRoleName == "orders-api"
+| where DependencyType == "PostgreSQL" or Type == "AppExceptions"
+| project TimeGenerated, Type, DependencyType, Name, Success, ResultCode,
+    ProblemId, OuterMessage
+| order by TimeGenerated desc
+```
 
-    ```bash
-    curl --silent "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" | jq .
-    python scripts/workshop.py fault status
-    python scripts/workshop.py inspect
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/storage"
-    python scripts/workshop.py fault status
-    python scripts/workshop.py inspect
-    ```
-
-If a disk fault is active, reset it:
-
-=== "Bash"
-
-    ```bash
-    python scripts/workshop.py fault reset
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    python scripts/workshop.py fault reset
-    ```
-
-Then use Application Insights **Failures** and query `AppExceptions` for the
-SQLite error code. Do not delete `orders.db` or its WAL files.
+Do not drop or recreate the `orders` database as a generic recovery step.
 
 ### `/fault/*` returns 404
 
-That is expected. Public destructive fault endpoints do not exist in the
-single-VM architecture. Use:
+That is expected. Use authenticated controls:
+
+```bash
+python scripts/workshop.py fault cpu 600 2
+python scripts/workshop.py fault postgresql
+python scripts/workshop.py fault status
+python scripts/workshop.py fault reset-cpu
+python scripts/workshop.py fault reset-postgresql
+```
+
+## Private DNS and TCP 5432
+
+### PostgreSQL private DNS does not resolve
+
+Confirm the configured host and zone:
 
 === "Bash"
 
     ```bash
-    python scripts/workshop.py fault cpu 600 2
-    python scripts/workshop.py fault disk 90 600
-    python scripts/workshop.py fault reset
+    echo "${POSTGRESQL_HOST}"
+    az network private-dns zone show \
+      --resource-group "${RESOURCE_GROUP}" \
+      --name "${POSTGRESQL_PRIVATE_DNS_ZONE_NAME}" \
+      --output table
+    az network private-dns link vnet list \
+      --resource-group "${RESOURCE_GROUP}" \
+      --zone-name "${POSTGRESQL_PRIVATE_DNS_ZONE_NAME}" \
+      --output table
     ```
 
 === "PowerShell"
 
     ```powershell
-    python scripts/workshop.py fault cpu 600 2
-    python scripts/workshop.py fault disk 90 600
-    python scripts/workshop.py fault reset
+    $env:POSTGRESQL_HOST
+    az network private-dns zone show `
+      --resource-group $env:RESOURCE_GROUP `
+      --name $env:POSTGRESQL_PRIVATE_DNS_ZONE_NAME `
+      --output table
+    az network private-dns link vnet list `
+      --resource-group $env:RESOURCE_GROUP `
+      --zone-name $env:POSTGRESQL_PRIVATE_DNS_ZONE_NAME `
+      --output table
     ```
 
-## Fault problems
-
-### Run Command timed out
-
-A client timeout does not prove the guest action failed. Inspect before retrying:
+Resolve from the VM, not from your laptop:
 
 === "Bash"
 
     ```bash
-    python scripts/workshop.py fault status
+    az vm run-command invoke \
+      --resource-group "${RESOURCE_GROUP}" \
+      --name "${VM_NAME}" \
+      --command-id RunShellScript \
+      --scripts "getent ahostsv4 '${POSTGRESQL_HOST}'" \
+      --output json
     ```
 
 === "PowerShell"
 
     ```powershell
-    python scripts/workshop.py fault status
+    az vm run-command invoke `
+      --resource-group $env:RESOURCE_GROUP `
+      --name $env:VM_NAME `
+      --command-id RunShellScript `
+      --scripts "getent ahostsv4 '$env:POSTGRESQL_HOST'" `
+      --output json
     ```
 
-If the requested fault is active, continue the exercise. If state is ambiguous,
-inspect Azure VM Run Command operation history and the saved fault JSON. Do not
-submit duplicate pressure blindly.
+The result must contain only private addresses. Confirm the VNet link targets
+the workshop VNet and the server references the expected private zone. Rerun
+`azd up` to reconcile deployment-managed resources. Do not add a public DNS or
+hosts-file workaround.
 
-### CPU or disk fault says one is already active
+### DNS resolves but TCP 5432 fails
 
-Reset the current transient units:
+Make sure the workshop fault is not active:
+
+```bash
+python scripts/workshop.py fault status
+python scripts/workshop.py fault reset-postgresql
+```
+
+Verify the exact rule:
+
+```bash
+az network nsg rule show \
+  --resource-group "${RESOURCE_GROUP}" \
+  --nsg-name "${NETWORK_SECURITY_GROUP_NAME}" \
+  --name "${POSTGRESQL_FAULT_RULE_NAME}" \
+  --query "{Access:access,Priority:priority,Direction:direction,Protocol:protocol,Source:sourceAddressPrefix,Destination:destinationAddressPrefix,Port:destinationPortRange}" \
+  --output table
+```
+
+Healthy values are `Allow`, priority 100, outbound TCP, source
+`10.240.0.0/27`, destination `10.240.0.32/27`, and port 5432.
+
+Probe from the VM after reset:
 
 === "Bash"
 
     ```bash
-    python scripts/workshop.py fault reset
-    python scripts/workshop.py fault status
+    az vm run-command invoke \
+      --resource-group "${RESOURCE_GROUP}" \
+      --name "${VM_NAME}" \
+      --command-id RunShellScript \
+      --scripts "timeout 5 bash -c 'exec 3<>/dev/tcp/${POSTGRESQL_HOST}/5432'; echo tcp_exit=\$?" \
+      --output json
     ```
 
 === "PowerShell"
 
     ```powershell
-    python scripts/workshop.py fault reset
-    python scripts/workshop.py fault status
+    $script = "timeout 5 bash -c 'exec 3<>/dev/tcp/$env:POSTGRESQL_HOST/5432'; " +
+      'echo tcp_exit=$?'
+    az vm run-command invoke `
+      --resource-group $env:RESOURCE_GROUP `
+      --name $env:VM_NAME `
+      --command-id RunShellScript `
+      --scripts $script `
+      --output json
     ```
 
-The fault implementation rejects overlapping units so the resulting chart has
-one bounded cause.
+Healthy access returns exit code 0. If rule shape drift is reported, use
+`azd up` to restore the deployment-owned definition.
 
-### Disk pressure is refused
+## Managed identity and TLS
 
-The safety checks reject an unexpected mount, wrong device, existing ballast,
-invalid target, or allocation that would violate the recovery reserve. Run:
+### The VM cannot obtain or use a PostgreSQL token
+
+`python scripts/workshop.py inspect` obtains a token from the VM metadata
+endpoint for:
+
+```text
+https://ossrdbms-aad.database.windows.net
+```
+
+It uses the token with `psql` without printing or persisting it. Do not run a
+debug command that writes the token to terminal output.
+
+Compare the VM identity and PostgreSQL Entra administrator:
 
 === "Bash"
 
     ```bash
-    python scripts/workshop.py inspect
-    python scripts/workshop.py fault status
+    az vm show \
+      --resource-group "${RESOURCE_GROUP}" \
+      --name "${VM_NAME}" \
+      --query "{Vm:name,PrincipalId:identity.principalId,IdentityType:identity.type}" \
+      --output table
+
+    az postgres flexible-server ad-admin list \
+      --resource-group "${RESOURCE_GROUP}" \
+      --server-name "${POSTGRESQL_SERVER_NAME}" \
+      --query "[].{Name:principalName,ObjectId:objectId,Type:principalType,Tenant:tenantId}" \
+      --output table
     ```
 
 === "PowerShell"
 
     ```powershell
-    python scripts/workshop.py inspect
-    python scripts/workshop.py fault status
+    az vm show `
+      --resource-group $env:RESOURCE_GROUP `
+      --name $env:VM_NAME `
+      --query "{Vm:name,PrincipalId:identity.principalId,IdentityType:identity.type}" `
+      --output table
+
+    az postgres flexible-server ad-admin list `
+      --resource-group $env:RESOURCE_GROUP `
+      --server-name $env:POSTGRESQL_SERVER_NAME `
+      --query "[].{Name:principalName,ObjectId:objectId,Type:principalType,Tenant:tenantId}" `
+      --output table
     ```
 
-Resolve the stated condition. Never edit `faults.py` to remove mount or reserve
-checks on a deployed environment.
+The administrator object ID must match the VM principal ID and its principal
+name should match `POSTGRESQL_USER`. Entra administrator propagation can take
+time after initial provisioning. The guest installer retries bootstrap.
 
-## Telemetry and portal problems
+The combined administrator/runtime identity is intentional only for this
+disposable workshop. Do not fix an authentication failure by enabling password
+authentication or adding a password to `/etc/orders-api.env`.
 
-### The VM CPU chart has no recent data
+### TLS or hostname verification fails
 
-Confirm the VM is running and the chart uses:
+Inspection requires:
 
-* VM resource > **Monitoring** > **Metrics**
-* Metric **Percentage CPU**
-* Aggregation **Average**
-* Time range **Last 30 minutes**
-* Time granularity **1 minute**
+```text
+SSL Mode=VerifyFull
+```
 
-Platform metrics can lag. Generate endpoint traffic, wait two minutes, and
-refresh. Verify the selected portal subscription and resource group.
+The host must be the full `*.postgres.database.azure.com` name so certificate
+hostname validation succeeds. Do not replace it with the resolved private IP
+and do not downgrade TLS verification.
+
+Rerun `azd up` to rewrite the deployment-managed application configuration. If
+certificate validation still fails, confirm system time and the installed CA
+certificate package through Run Command.
+
+## Schema bootstrap
+
+### Bootstrap reports missing schema or seed rows
+
+The bootstrap:
+
+* Takes a PostgreSQL advisory transaction lock.
+* Applies migration version 1 transactionally.
+* Creates `orders` and `order_requests`.
+* Inserts five deterministic negative-ID seed rows with conflict-safe writes.
+* Synchronizes the positive identity sequence.
+
+Run:
+
+```bash
+python scripts/workshop.py inspect
+```
+
+Then inspect the guest deployment and service logs. Common causes are:
+
+* Private DNS or TCP 5432 not ready.
+* The PostgreSQL fault rule left at `Deny`.
+* Entra administrator propagation incomplete.
+* Token acquisition or TLS failure.
+* A partially modified schema outside the supported deployment path.
+
+After correcting infrastructure or propagation, rerun:
+
+```bash
+azd up
+```
+
+Do not manually mark a migration complete, delete seed rows, or recreate the
+server. Preserve the reported state for diagnosis.
+
+### Readiness says the schema is unavailable
+
+Readiness requires migration version 1 and both required tables. A running
+server alone is insufficient.
+
+Query recent telemetry:
+
+```kusto
+AppDependencies
+| where TimeGenerated > ago(30m)
+| where AppRoleName == "orders-api"
+| where DependencyType == "PostgreSQL"
+| project TimeGenerated, Name, Success, ResultCode, Data
+| order by TimeGenerated desc
+```
+
+Use `azd up` for the supported schema bootstrap after connectivity and identity
+are healthy.
+
+## Fault controls
+
+### VM Run Command times out
+
+A timeout does not prove that the guest CPU action failed. Run:
+
+```bash
+python scripts/workshop.py fault status
+```
+
+If CPU is active, continue the exercise or run `fault reset-cpu`. Do not submit
+another CPU fault blindly.
+
+### The PostgreSQL rule is stuck at `Deny`
+
+Run the idempotent reset and read-back:
+
+```bash
+python scripts/workshop.py fault reset-postgresql
+python scripts/workshop.py fault status
+```
+
+Expected PostgreSQL state is `inactive` and access `Allow`. Confirm the child
+rule directly with `az network nsg rule show`.
+
+If reset failed:
+
+1. Read `.workshop/<environment>/fault-reset-postgresql.json` or
+   `fault-reset-postgresql-partial.json` when present.
+2. Check Azure CLI authentication and write permission on the rule.
+3. Check for an in-progress `orders-postgresql-fault` resource-group
+   deployment.
+4. Rerun reset after the operation completes.
+5. Run `azd up` if the rule shape drifted; deployment reconciles all fixed
+   properties and `Allow`.
+
+Do not delete the rule. Its explicit normal `Allow` state and fixed scope are
+part of the safety model.
+
+### PostgreSQL access is denied but requests still succeed
+
+Existing Npgsql pooled connections and Azure's stateful flow handling can delay
+the first failed new connection. Confirm the rule is `Deny`, keep the Module 04
+sample calls running, and record the first failure.
+
+Do not broaden the deny, deny all outbound traffic, restart PostgreSQL, or alter
+data to force an immediate failure. If no dependency fails after the documented
+observation window, preserve the evidence and report the environment behavior.
+
+### PostgreSQL fault or reset reports unexpected rule properties
+
+The helper refuses to operate unless every bounded property matches:
+
+* Priority 100.
+* Outbound TCP.
+* Source `10.240.0.0/27`.
+* Destination `10.240.0.32/27`.
+* Destination port 5432.
+
+Run `azd up` to reconcile the deployment-owned rule. Do not modify the helper to
+accept a broader scope.
+
+### Browser rule update is interrupted
+
+The browser performs GET, conditional PUT with `If-Match`, then GET read-back.
+An interrupted response can be ambiguous. Select **Check fault status** before
+retrying. Another writer can produce an ETag conflict, which protects against
+silently overwriting a concurrent change.
+
+## Telemetry and alerts
 
 ### `python scripts/workshop.py telemetry` times out
 
-The command reports missing signals. Check Azure Monitor Agent and the data
-collection rule association:
+The command waits up to ten minutes for heartbeat, guest CPU, API requests,
+PostgreSQL dependencies, and availability results. It reports missing signal
+names.
+
+Check Azure Monitor Agent and the Data Collection Rule association:
 
 === "Bash"
 
@@ -438,13 +680,13 @@ collection rule association:
     az vm extension list \
       --resource-group "${RESOURCE_GROUP}" \
       --vm-name "${VM_NAME}" \
-      --query "[].{Name:name, State:provisioningState}" \
+      --query "[].{Name:name,State:provisioningState}" \
       --output table
 
     az rest \
       --method get \
       --uri "https://management.azure.com${VM_RESOURCE_ID}/providers/Microsoft.Insights/dataCollectionRuleAssociations?api-version=2023-03-11" \
-      --query "value[].{Name:name, Rule:properties.dataCollectionRuleId}" \
+      --query "value[].{Name:name,Rule:properties.dataCollectionRuleId}" \
       --output table
     ```
 
@@ -454,79 +696,82 @@ collection rule association:
     az vm extension list `
       --resource-group $env:RESOURCE_GROUP `
       --vm-name $env:VM_NAME `
-      --query "[].{Name:name, State:provisioningState}" `
+      --query "[].{Name:name,State:provisioningState}" `
       --output table
 
     az rest `
       --method get `
       --uri "https://management.azure.com$($env:VM_RESOURCE_ID)/providers/Microsoft.Insights/dataCollectionRuleAssociations?api-version=2023-03-11" `
-      --query "value[].{Name:name, Rule:properties.dataCollectionRuleId}" `
+      --query "value[].{Name:name,Rule:properties.dataCollectionRuleId}" `
       --output table
     ```
 
-Call `/orders` and `/storage`, wait for ingestion, and retry. Application
-Insights and guest `Perf` commonly arrive later than the VM platform metric.
+Generate deterministic application samples:
 
-### Application Insights has no requests
+```bash
+curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
+curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/database" > /dev/null
+```
 
-Opening the Orders GUI and selecting **Refresh orders** and **Refresh status**
-generates the same underlying API operations. Use the commands below when you
-need a small, deterministic troubleshooting sample:
+Wait several minutes and retry. Application Insights, workspace tables, and
+alert evaluation are asynchronous. Do not treat a portal delay as proof that
+the application emitted no telemetry.
 
-=== "Bash"
+### PostgreSQL dependencies do not appear
 
-    ```bash
-    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
-    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/storage" > /dev/null
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" | Out-Null
-    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/storage" | Out-Null
-    ```
-
-Wait several minutes, then query:
+Query the exact type:
 
 ```kusto
-AppRequests
-| where AppRoleName == "orders-api"
+AppDependencies
 | where TimeGenerated > ago(30m)
+| where AppRoleName == "orders-api"
+| summarize Samples=sum(ItemCount), Failures=sumif(ItemCount, Success == false)
+  by DependencyType, Name
+| order by Samples desc
+```
+
+The required type is `PostgreSQL`. Call `/orders`, `/health/ready`, and
+`/database`, wait for ingestion, and verify that you selected this workshop's
+`appi-<suffix>` and workspace.
+
+### The PostgreSQL connectivity alert does not fire
+
+The rule `alert-orders-postgresql-connectivity` requires at least one failed
+PostgreSQL dependency in the last five minutes. Query its source:
+
+```kusto
+AppDependencies
+| where TimeGenerated > ago(30m)
+| where AppRoleName == "orders-api"
+| where DependencyType == "PostgreSQL" and Success == false
+| project TimeGenerated, Name, ResultCode, ItemCount
 | order by TimeGenerated desc
 ```
 
-Check that you opened the `appi-<suffix>` resource from the selected workshop
-group, not another Application Insights instance.
-
-### The data-disk alert does not fire
-
-The DCR samples once per minute and the rule evaluates a five-minute window.
-Confirm the exact dimension:
-
-```kusto
-Perf
-| where TimeGenerated > ago(30m)
-| where ObjectName == "Logical Disk"
-| where CounterName == "% Free Space"
-| summarize Samples=count(), Minimum=min(CounterValue) by InstanceName
-```
-
-The expected `InstanceName` is `/var/lib/orders`. If it never falls below 15,
-inspect the fault state and `/storage` rather than lowering the alert threshold
-during the exercise.
+If this query is empty, the alert has no qualifying evidence. Confirm the NSG
+rule is `Deny` and follow Module 04 without broadening the fault. If failures are
+present, allow for ingestion and the one-minute evaluation cycle, then inspect
+the alert rule state.
 
 ### The CPU alert does not fire
 
-Confirm the VM **Percentage CPU** chart stayed above 80 percent for a five-minute
-average. A burst shorter than the evaluation window should not fire. Use the
-documented ten-minute fault and enough workers for the selected VM size.
+Confirm the VM **Percentage CPU** average stayed above 80 percent across the
+five-minute window. A shorter burst should not fire. Use the documented
+ten-minute, two-worker fault, adjusted only within the helper's validated worker
+range when the selected VM size requires it.
 
-## Azure SRE Agent problems
+### An HTTP 5xx alert also fires during Module 04
+
+This can be expected when more than ten database-backed requests return 5xx in
+five minutes. The HTTP alert demonstrates customer impact; the PostgreSQL
+dependency alert identifies the failing boundary. Verify timing before treating
+them as one incident.
+
+## Azure SRE Agent
 
 ### The response plan is missing
 
-Check the local configuration evidence:
+Read:
 
 === "Bash"
 
@@ -540,68 +785,103 @@ Check the local configuration evidence:
     Get-Content ".workshop/$env:AZURE_ENV_NAME/sre-agent-configuration.json"
     ```
 
-Rerun `azd up` to reconcile deployment-managed configuration. Do not create a
-second broad response plan manually.
+Rerun `azd up` to reconcile `workshop-sev1-sev2-review`. Do not create a second
+overlapping catch-all plan.
 
 ### An alert fired but no investigation appears
 
 Confirm:
 
-* The alert severity is Sev1 or Sev2.
-* `workshop-sev1-sev2-review` is enabled for Azure Monitor.
-* The alert belongs to the workshop resource group.
-* The response plan is not filtered to another resource.
+* Alert severity is Sev1 or Sev2.
+* The response plan is enabled for Azure Monitor.
+* The alert belongs to this workshop resource group.
+* The response-plan filter does not target another resource.
 
-Allow for service propagation, then refresh the SRE Agent incident view. Keep
-investigating from Azure Monitor and raw telemetry while routing is delayed.
+Allow for service propagation. Continue investigating with raw telemetry and
+Activity Log while routing catches up.
 
-### The agent can see resources but cannot query telemetry
+### The agent can read resources but not telemetry
 
-Review both agent identities and their resource/workspace role assignments.
-They need resource read access and Log Analytics read access, not Contributor.
-Role propagation can take several minutes.
+Review both SRE Agent identities. They need resource read and Log Analytics read
+access. Role propagation can take several minutes. They do not need VM Run
+Command or NSG write access.
 
-### The agent proposes but does not execute a mitigation
+### The agent proposes but does not execute reset
 
-That is expected. The workshop uses Review mode and read-only Azure RBAC.
-Execute an approved reset through your own authenticated session:
+That is expected. The workshop uses Review mode and read-only runtime roles. A
+human uses a separate authenticated identity:
+
+```bash
+python scripts/workshop.py fault reset-cpu        # CPU incident
+python scripts/workshop.py fault reset-postgresql # PostgreSQL incident
+```
+
+Do not grant workload write access to make the demonstration automatic.
+
+## Documentation-site Azure connection
+
+### Environment discovery returns no resource group
+
+The browser discovers only groups whose name uses the workshop prefix and whose
+architecture tag is `single-vm-postgresql-v1`. Confirm the participant can read
+the subscription, group, VM, workspace, NSG, PostgreSQL server, and optional SRE
+Agent resource.
+
+### CPU works but PostgreSQL control returns 403
+
+VM Run Command permission does not grant network rule write. The participant
+also needs read and write actions for the exact
+`POSTGRESQL_FAULT_RULE_RESOURCE_ID`. The deployment does not create this
+assignment.
+
+Prefer a custom role assigned at the narrowest supported scope. Do not use a
+broad subscription-level Network Contributor assignment as a shortcut.
+
+### The graph is empty but controls work
+
+The CPU graph uses Azure Monitor Metrics. The PostgreSQL graph uses Log
+Analytics `Data.Read`. Confirm the SPA has the delegated Log Analytics API
+permission, tenant admin consent is complete, the participant can query the
+workspace, and dependency samples have arrived.
+
+## Cleanup
+
+### `azd down --purge --force` stalls
+
+Check state and locks:
 
 === "Bash"
 
     ```bash
-    python scripts/workshop.py fault reset
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    python scripts/workshop.py fault reset
-    ```
-
-Do not grant write access merely to make the demonstration automatic.
-
-## Cleanup problems
-
-### `azd down --purge` stalls
-
-Check resource-group state and locks:
-
-=== "Bash"
-
-    ```bash
-    az group show --name "${RESOURCE_GROUP}" --query properties.provisioningState
+    az group show \
+      --name "${RESOURCE_GROUP}" \
+      --query properties.provisioningState
     az lock list --resource-group "${RESOURCE_GROUP}" --output table
     ```
 
 === "PowerShell"
 
     ```powershell
-    az group show --name $env:RESOURCE_GROUP --query properties.provisioningState
+    az group show `
+      --name $env:RESOURCE_GROUP `
+      --query properties.provisioningState
     az lock list --resource-group $env:RESOURCE_GROUP --output table
     ```
 
-Review policy errors in the Activity Log. Delete only the confirmed workshop
-scope; do not use broad or wildcard deletion commands.
+Private DNS links, delegated subnets, and PostgreSQL can make deletion ordering
+visible while Azure completes the resource-group operation. Review Activity Log
+and policy failures. Delete only the confirmed workshop scope.
+
+Reset before another cleanup attempt:
+
+```bash
+python scripts/workshop.py fault reset
+azd down --purge --force
+```
+
+Reset does not stop billing. Only complete resource deletion removes the VM,
+PostgreSQL, private DNS and network resources, monitoring, alerts, and SRE
+Agent.
 
 <div class="sre-nav" markdown>
 [:material-arrow-left: Workshop Variables](01-variables.md)

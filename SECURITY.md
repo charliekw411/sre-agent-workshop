@@ -1,106 +1,172 @@
 ---
 title: Security
-description: Security policy for the Azure SRE Agent workshop, including vulnerability reporting, controlled VM faults, and deliberate workshop compromises.
-ms.date: 2026-09-24
+description: Security policy for the Azure SRE Agent workshop, including private PostgreSQL, controlled faults, and deliberate lab compromises.
+ms.date: 2026-10-06
 ms.topic: reference
 keywords:
   - security
   - vulnerability reporting
+  - managed identity
+  - postgresql
 ---
 
 # Security
 
 ## Reporting security issues
 
-Do not report security vulnerabilities through public GitHub issues.
+Do not report security vulnerabilities through public GitHub issues. Use
+[GitHub private vulnerability reporting](https://github.com/charliekw411/sre-agent-workshop/security/advisories/new).
 
-Use [GitHub private vulnerability reporting](https://github.com/charliekw411/sre-agent-workshop/security/advisories/new)
-instead.
+Include:
 
-Include as much of the following as possible:
-
-* The issue type, such as injection, privilege escalation, or credential
-  exposure.
-* Full paths and affected lines.
-* The tag, branch, commit, or direct URL.
+* The issue type and expected security impact.
+* Affected paths, lines, tag, branch, or commit.
 * Required configuration and reproduction steps.
-* A proof of concept where appropriate.
-* The expected security impact.
+* A proof of concept when appropriate.
 
-## Intentionally disruptive workshop behavior
+## Controlled workshop incidents
 
-The repository includes two bounded fault actions that deliberately reduce the
-availability margin of the disposable workshop VM.
+The repository includes two operations that deliberately reduce the
+availability margin of a disposable environment.
 
-| Action | Behavior | Workshop use |
+| Action | Behavior | Control plane |
 | --- | --- | --- |
-| `fault cpu` | Runs a limited number of CPU-bound workers in a transient systemd unit | Module 03 saturation incident |
-| `fault disk` | Allocates a temporary ballast file on the managed SQLite filesystem | Module 04 capacity incident |
+| `fault cpu` | Runs a bounded number of CPU workers in a transient `systemd` unit | Azure VM Run Command |
+| `fault postgresql` | Changes the fixed `PostgreSqlFaultInjection` NSG child rule from `Allow` to `Deny` | Authenticated Azure Resource Manager deployment or conditional rule PUT |
 
-These are control-plane operations, not public application endpoints. The
-public API exposes order and health operations only. Deployment smoke tests
-verify that retired `/fault/*` routes return HTTP 404.
+The public Orders API exposes order, health, and database-status operations
+only. Deployment smoke tests verify that retired `/fault/*` routes return HTTP
+404.
 
-Controls applied to the faults:
+CPU controls include:
 
-* The caller authenticates to Azure and must be authorized to execute VM Run
-  Command.
-* The guest script requires root and a correlated request ID.
-* CPU duration is limited to 10 through 1800 seconds and worker count to 1
-  through 8.
-* The CPU unit has a 256 MiB memory limit, lower scheduling priority, and a hard
-  runtime limit.
-* Disk duration is limited to 30 through 1800 seconds and target utilization to
-  50 through 97 percent.
-* Disk pressure refuses to run unless `/var/lib/orders` is the expected separate
-  Azure managed disk at LUN 0.
-* Disk allocation retains at least 128 MiB for recovery.
-* The ballast is a dedicated single-link file created with no-follow semantics
-  and removed on stop, expiry, or reset.
-* Reset never deletes `orders.db`.
-* Overlapping CPU or disk fault units are rejected.
+* Root execution through authenticated VM Run Command.
+* A correlated request ID.
+* Duration from 10 through 1800 seconds and worker count from 1 through 8.
+* A 256 MiB memory limit, lower scheduling priority, and a hard runtime limit.
+* Rejection of a second active CPU fault.
 
-Run faults only against the disposable workshop environment. Do not copy these
-scripts into a system that serves real traffic.
+PostgreSQL controls include:
 
-## Security choices in the workshop infrastructure
+* One rule named `PostgreSqlFaultInjection`, priority 100, outbound TCP only.
+* Source `10.240.0.0/27`, destination `10.240.0.32/27`, and destination port
+  `5432`.
+* Only two valid states: normal `Allow` and incident `Deny`.
+* Read-back validation of every fixed property and the final access state.
+* Browser updates protected by the rule's current ETag.
+* API-only recycle after rule read-back to drain stateful Npgsql connections.
+* Controlled liveness/readiness/order verification before inject or reset
+  reports success.
+* PostgreSQL-only reset and `azd up` reconciliation to `Allow`.
 
-Where a secure choice does not compromise the learning objective, the workshop
-uses it:
+The PostgreSQL incident does not alter rows or schema, stop or reconfigure the
+server, enable public access, or deny unrelated network traffic. The application
+returns a controlled HTTP 503 when it cannot open the private dependency.
+Because NSGs do not terminate established flows, the control restarts only
+`orders-api`; the VM and PostgreSQL remain running. CPU and PostgreSQL
+scenario-specific resets do not modify each other.
 
-* The NSG exposes only TCP 8080. Inbound SSH is denied.
-* Administration and inspection use authenticated Azure VM Run Command.
-* The API runs under a system account named `orders` with no login shell.
-* The `systemd` unit enables `NoNewPrivileges`, a private temporary directory,
-  strict system protection, a restrictive umask, and explicit writable paths.
-* The SQLite filesystem is mounted with `nodev`, `nosuid`, and `noexec`.
-* `/var/lib/orders` is owned by the service account with mode `0750`.
-* The application environment file is owned by `root:orders` with mode `0640`.
-* SQLite statements are parameterized and request fields are validated.
-* Azure SRE Agent identities receive resource and telemetry read access, not
-  workload write or VM administration roles.
-* The response plan runs in Review mode; a human executes approved mitigation
-  through a separate identity.
-* Generated workshop exports use an explicit non-secret allowlist.
-* Deployment compares the Azure CLI and azd identity and tenant before
-  provisioning.
-* Redeployment preserves the managed disk and inserts only missing deterministic
-  seed rows.
+Run either incident only against this disposable workshop.
 
-## Deliberate workshop compromises
+## Infrastructure security choices
 
-The workload favors accessibility and observable failure modes over production
-hardening:
+Where it does not prevent the learning objective, the deployment:
+
+* Allows inbound TCP 8080 only and denies public SSH.
+* Uses authenticated Azure VM Run Command for guest administration.
+* Places the VM in `10.240.0.0/27` and PostgreSQL in the dedicated delegated
+  subnet `10.240.0.32/27`.
+* Disables PostgreSQL public network access and links the private DNS zone
+  `private.postgres.database.azure.com`.
+* Enables PostgreSQL Microsoft Entra authentication, disables password
+  authentication, and emits no database credential.
+* Uses the VM's system-assigned managed identity for runtime database tokens.
+* Requires TLS certificate and hostname verification with `VerifyFull`.
+* Runs the API as the `orders` system account with no login shell.
+* Uses `NoNewPrivileges`, a private temporary directory, strict system
+  protection, a restrictive umask, and an explicit writable state directory.
+* Stores the application environment as `root:orders` with mode `0640`.
+* Parameterizes PostgreSQL commands and validates request fields.
+* Gives SRE Agent identities resource and telemetry read access rather than
+  workload mutation roles.
+* Runs the response plan in Review mode so a human verifies and executes a
+  proposed mitigation.
+* Exports only an explicit allowlist of non-secret deployment values.
+* Compares Azure CLI and azd principal and tenant before provisioning.
+* Rejects resource groups not tagged
+  `workshop-architecture=single-vm-postgresql-v1`.
+
+## Browser participant permissions
+
+The public documentation site has no server component or client secret. MSAL
+Browser uses delegated tokens, and Azure RBAC remains authoritative.
+
+A participant who uses all inline controls needs:
+
+* Read access for subscription and tagged resource-group discovery.
+* Read access to the selected VM, PostgreSQL server, NSG, Azure Monitor data,
+  and Log Analytics workspace.
+* `Microsoft.Compute/virtualMachines/runCommand/action` on the workshop VM for
+  CPU operations, status, and the Orders API-only PostgreSQL pool drain.
+* Read and write access to the specific
+  `PostgreSqlFaultInjection` NSG security-rule resource for the PostgreSQL
+  incident and reset.
+
+The infrastructure deployment does not create these participant assignments.
+Use a custom role and the narrowest supported assignment scope. Do not grant
+subscription-wide Contributor or Network Contributor only to make the browser
+demonstration work.
+
+## Deliberate lab compromises
+
+The workshop favors accessibility, cost, and observable failure modes over
+production hardening:
 
 * The public Orders API uses unauthenticated HTTP on port 8080.
-* The VM and SQLite database are single-instance.
-* The workshop does not configure a database backup or disaster-recovery path.
-* The internal SQLite availability probe is not an independent external uptime
-  check.
-* Outbound access is required for Ubuntu packages, NuGet, and Azure monitoring.
+* The API has one VM and no application-tier high availability.
+* PostgreSQL Flexible Server uses `Standard_B1ms` with no HA.
+* The VM and database are in one region.
+* The VM identity is both PostgreSQL Entra administrator and the application
+  runtime identity.
+* The availability probe runs on the VM rather than from an independent region.
+* Seven-day backups are locally redundant, not a cross-region disaster-recovery
+  design.
+* Outbound access is required for Ubuntu packages, NuGet, Azure monitoring, and
+  managed-identity token acquisition.
 
-Use only synthetic data. Do not deploy this application, or any part of it, to
-an environment that serves real traffic.
+Using the VM identity as both administrator and runtime principal avoids a
+second identity and a separate privilege-bootstrap mechanism in a short-lived
+lab. Production should separate schema administration from runtime access and
+grant the runtime principal only required database privileges.
+
+The managed database gives better lifecycle separation than PostgreSQL on the
+same VM, but the remaining single-instance components and no-HA database are
+intentional cost and failure-domain tradeoffs, not recommendations.
+
+Use only synthetic data. Do not deploy this application or its fault controls
+to an environment that serves real traffic.
+
+## Cleanup
+
+Reset both incident controls before collecting final evidence:
+
+```bash
+python scripts/workshop.py fault reset
+```
+
+The unqualified reset is explicitly the all-scenarios cleanup. During an
+incident module, use `fault reset-cpu` or `fault reset-postgresql` so recovery
+does not mutate the other scenario.
+
+Then remove the complete workshop:
+
+```bash
+azd down --purge --force
+```
+
+Resetting a fault does not stop billing. Cleanup deletes the resource group,
+including the VM, private network and DNS resources, PostgreSQL server and
+backups, monitoring, alerts, and SRE Agent.
 
 ## Supported versions
 
