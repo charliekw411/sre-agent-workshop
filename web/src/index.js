@@ -54,7 +54,7 @@ class WorkshopApplication {
         continue;
       }
       const scenario = root.dataset.sreIncident;
-      if (scenario !== "cpu" && scenario !== "disk") {
+      if (scenario !== "cpu" && scenario !== "postgresql") {
         continue;
       }
       const launcher = new IncidentLauncher(root, this, scenario);
@@ -191,7 +191,7 @@ class WorkshopApplication {
     const candidates = await this.azure.discoverEnvironments();
     if (!candidates.length) {
       throw new WorkshopError(
-        "No accessible resource group has the single-vm workshop tag. Check the " +
+        "No accessible resource group has the PostgreSQL workshop tag. Check the " +
           "subscription and participant RBAC assignments.",
       );
     }
@@ -286,21 +286,21 @@ class WorkshopApplication {
       throw new WorkshopError("Connect to an Azure workshop environment first.");
     }
     if (this.state.operation) {
-      throw new WorkshopError("Wait for the current VM Run Command operation to finish.");
+      throw new WorkshopError("Wait for the current Azure fault operation to finish.");
     }
     this.setState({
       operation: { action },
     });
     try {
       const result = await this.azure.runFault(this.state.environment, action);
-      if (action === "reset") {
-        this.setState({ requiresStatusCheck: false });
-      } else if (action === "status") {
+      if (action === "status" || action.startsWith("reset")) {
         const inactive = new Set(["inactive", "failed"]);
+        const connectivity = String(result.postgresqlConnectivity || "").toLowerCase();
         this.setState({
           requiresStatusCheck:
             !inactive.has(String(result.cpu || "").toLowerCase()) ||
-            !inactive.has(String(result.disk || "").toLowerCase()),
+            !inactive.has(String(result.postgresql || "").toLowerCase()) ||
+            Boolean(connectivity && connectivity !== "ready"),
         });
       }
       return result;
@@ -320,7 +320,7 @@ class WorkshopApplication {
     }
     return scenario === "cpu"
       ? this.azure.cpuSeries(this.state.environment)
-      : this.azure.diskSeries(this.state.environment);
+      : this.azure.postgresqlSeries(this.state.environment);
   }
 
   incidentLinks(scenario) {

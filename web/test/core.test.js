@@ -4,12 +4,15 @@ import { readFileSync } from "node:fs";
 
 import {
   buildCpuMetricsUrl,
-  buildDiskQuery,
+  buildPostgresqlQuery,
   createFaultScript,
   isWorkshopResourceGroup,
-  parseLogSeries,
   parseMetricSeries,
+  parsePostgresqlFaultRule,
+  parsePostgresqlSeries,
   parseRunCommandResult,
+  postgresqlFaultRuleBody,
+  postgresqlFaultRuleUrl,
   selectEnvironmentResources,
   sreAgentIncidentsUrl,
   validateConfig,
@@ -21,6 +24,12 @@ const REQUEST = "a".repeat(32);
 const VM_ID =
   "/subscriptions/33333333-3333-4333-8333-333333333333/resourceGroups/" +
   "rg-sre-agent-workshop-demo/providers/Microsoft.Compute/virtualMachines/vm-orders-demo";
+const NSG_ID =
+  "/subscriptions/33333333-3333-4333-8333-333333333333/resourceGroups/" +
+  "rg-sre-agent-workshop-demo/providers/Microsoft.Network/networkSecurityGroups/nsg-orders-demo";
+const POSTGRESQL_ID =
+  "/subscriptions/33333333-3333-4333-8333-333333333333/resourceGroups/" +
+  "rg-sre-agent-workshop-demo/providers/Microsoft.DBforPostgreSQL/flexibleServers/psql-orders-demo";
 
 test("site configuration requires a tenant-bound SPA", () => {
   const unconfigured = validateConfig({ tenantId: "", clientId: "" });
@@ -48,13 +57,13 @@ test("environment discovery accepts only tagged workshop resource groups", () =>
   const config = {
     resourceGroupPrefix: "rg-sre-agent-workshop-",
     environmentTagName: "workshop-architecture",
-    environmentTagValue: "single-vm",
+    environmentTagValue: "single-vm-postgresql-v1",
   };
   assert.equal(
     isWorkshopResourceGroup(
       {
         name: "rg-sre-agent-workshop-demo",
-        tags: { "Workshop-Architecture": "single-vm" },
+        tags: { "Workshop-Architecture": "single-vm-postgresql-v1" },
       },
       config,
     ),
@@ -86,11 +95,23 @@ test("environment inventory requires one bounded VM and workspace", () => {
       name: "sre-demo",
       type: "Microsoft.App/agents",
     },
+    {
+      id: NSG_ID,
+      name: "nsg-orders-demo",
+      type: "Microsoft.Network/networkSecurityGroups",
+    },
+    {
+      id: POSTGRESQL_ID,
+      name: "psql-orders-demo",
+      type: "Microsoft.DBforPostgreSQL/flexibleServers",
+    },
   ];
   const selected = selectEnvironmentResources(resources);
   assert.equal(selected.virtualMachine.name, "vm-orders-demo");
   assert.equal(selected.workspace.name, "law-demo");
   assert.equal(selected.sreAgent.name, "sre-demo");
+  assert.equal(selected.networkSecurityGroup.name, "nsg-orders-demo");
+  assert.equal(selected.postgresqlServer.name, "psql-orders-demo");
   assert.equal(
     sreAgentIncidentsUrl(selected.sreAgent.id),
     `https://sre.azure.com/agents${selected.sreAgent.id}/views/incidents`,
@@ -105,8 +126,20 @@ test("fault commands preserve fixed safety parameters and correlation", () => {
       "/usr/bin/python3 /opt/orders-api/faults.py cpu 600 2 " +
       `--request-id ${REQUEST}`,
   );
-  assert.match(createFaultScript("disk", REQUEST), /disk 90 600/);
+  assert.throws(() => createFaultScript("postgresql", REQUEST), /not supported/);
   assert.match(createFaultScript("reset", REQUEST), /faults\.py reset --request-id/);
+  assert.match(
+    createFaultScript("postgresql-denied", REQUEST),
+    /faults\.py postgresql-denied --request-id/,
+  );
+  assert.match(
+    createFaultScript("postgresql-ready", REQUEST),
+    /faults\.py postgresql-ready --request-id/,
+  );
+  assert.match(
+    createFaultScript("postgresql-status", REQUEST),
+    /faults\.py postgresql-status --request-id/,
+  );
   assert.throws(() => createFaultScript("shell", REQUEST), /not supported/);
   assert.throws(() => createFaultScript("cpu", "unsafe"), /request ID/);
   assert.throws(
@@ -170,12 +203,12 @@ test("CPU metrics request is a 30-minute one-minute Average query", () => {
   );
 });
 
-test("disk query is scoped to the selected VM and managed mount", () => {
-  const query = buildDiskQuery(VM_ID);
+test("PostgreSQL query returns a one-minute dependency failure rate", () => {
+  const query = buildPostgresqlQuery();
   assert.match(query, /ago\(30m\)/);
   assert.match(query, /bin\(TimeGenerated, 1m\)/);
-  assert.match(query, /InstanceName == '\/var\/lib\/orders'/);
-  assert.ok(query.includes(VM_ID));
+  assert.match(query, /DependencyType == 'PostgreSQL'/);
+  assert.match(query, /FailurePercent/);
 });
 
 test("metric and log responses produce ordered numeric chart samples", () => {
@@ -199,10 +232,10 @@ test("metric and log responses produce ordered numeric chart samples", () => {
   );
 
   assert.deepEqual(
-    parseLogSeries({
+    parsePostgresqlSeries({
       tables: [
         {
-          columns: [{ name: "TimeGenerated" }, { name: "AverageFreeSpace" }],
+          columns: [{ name: "TimeGenerated" }, { name: "FailurePercent" }],
           rows: [
             ["2026-09-25T00:02:00Z", 9.5],
             ["2026-09-25T00:01:00Z", 47.2],
@@ -215,6 +248,34 @@ test("metric and log responses produce ordered numeric chart samples", () => {
   );
 });
 
+test("PostgreSQL NSG fault rule is exact, bounded, and concurrency-addressable", () => {
+  const url = new URL(postgresqlFaultRuleUrl(NSG_ID));
+  assert.equal(url.hostname, "management.azure.com");
+  assert.match(url.pathname, /securityRules\/PostgreSqlFaultInjection$/);
+  assert.equal(url.searchParams.get("api-version"), "2024-05-01");
+
+  const properties = postgresqlFaultRuleBody("Deny").properties;
+  assert.deepEqual(
+    parsePostgresqlFaultRule({
+      etag: 'W/"current"',
+      properties,
+    }),
+    {
+      postgresql: "active",
+      postgresqlAccess: "Deny",
+      etag: 'W/"current"',
+    },
+  );
+  assert.throws(
+    () =>
+      parsePostgresqlFaultRule({
+        properties: { ...properties, destinationPortRange: "*" },
+      }),
+    /destinationPortRange/,
+  );
+  assert.throws(() => postgresqlFaultRuleBody("Delete"), /access value/);
+});
+
 test("both incident modules keep inline launchers and terminal fallbacks", () => {
   for (const [scenario, path, command] of [
     [
@@ -223,9 +284,9 @@ test("both incident modules keep inline launchers and terminal fallbacks", () =>
       "python scripts/workshop.py fault cpu 600 2",
     ],
     [
-      "disk",
-      "../../docs/sre/04-incident-data-disk/index.md",
-      "python scripts/workshop.py fault disk 90 600",
+      "postgresql",
+      "../../docs/sre/04-incident-postgresql/index.md",
+      "python scripts/workshop.py fault postgresql",
     ],
   ]) {
     const source = readFileSync(new URL(path, import.meta.url), "utf8");

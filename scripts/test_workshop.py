@@ -26,14 +26,27 @@ def load_module(name, path):
 HERE = Path(__file__).parent
 workshop = load_module("workshop", HERE / "workshop.py")
 faults = load_module("vm_faults", HERE / "vm" / "faults.py")
+inspection = load_module("vm_inspection", HERE / "vm" / "inspect.py")
 VALUES = {
     "AZURE_ENV_NAME": "sre-vm-test",
     "AZURE_LOCATION": "australiaeast",
     "AZURE_SUBSCRIPTION_ID": "00000000-0000-0000-0000-000000000001",
     "RESOURCE_GROUP": "rg-sre-agent-workshop-sre-vm-test",
     "VM_NAME": "vm-orders-test",
+    "NETWORK_SECURITY_GROUP_NAME": "nsg-orders-test",
+    "POSTGRESQL_FAULT_RULE_NAME": "PostgreSqlFaultInjection",
+    "POSTGRESQL_SERVER_RESOURCE_ID": (
+        "/subscriptions/00000000-0000-0000-0000-000000000001/"
+        "resourceGroups/rg-sre-agent-workshop-sre-vm-test/"
+        "providers/Microsoft.DBforPostgreSQL/flexibleServers/psql-orders-test"
+    ),
+    "POSTGRESQL_HOST": "psql-orders-test.postgres.database.azure.com",
+    "POSTGRESQL_DATABASE": "orders",
+    "POSTGRESQL_USER": "vm-orders-test",
     "ORDERS_API_FQDN": "orders-test.australiaeast.cloudapp.azure.com",
     "SERVICE_ORDERS_API_ENDPOINT_URL": "http://orders-test.australiaeast.cloudapp.azure.com:8080",
+    "LOG_ANALYTICS_ID": "/workspace",
+    "SRE_AGENT_RESOURCE_ID": "/agent",
     "SRE_AGENT_ENDPOINT": "https://sre-test.australiaeast.azuresre.ai",
 }
 ORDER = {
@@ -54,6 +67,7 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_no_legacy_resource_providers(self):
         self.assertIn("Microsoft.Compute", workshop.PROVIDERS)
+        self.assertIn("Microsoft.DBforPostgreSQL", workshop.PROVIDERS)
         for namespace in ("Microsoft.Sql", "Microsoft.ContainerRegistry", "Microsoft.KeyVault"):
             self.assertNotIn(namespace, workshop.PROVIDERS)
 
@@ -63,31 +77,65 @@ class ConfigurationTests(unittest.TestCase):
         self.assertNotIn("knowledge.yaml", source)
         self.assertNotIn("incident-filters.yaml", source)
 
-    def test_service_fails_closed_without_disk_and_runs_unprivileged(self):
+    def test_service_runs_unprivileged_without_a_database_mount(self):
         service = (HERE / "vm" / "orders-api.service").read_text()
         for setting in (
-            "RequiresMountsFor=/var/lib/orders",
-            "ExecStartPre=/usr/bin/mountpoint --quiet /var/lib/orders",
             "Restart=always", "User=orders", "Group=orders",
             "WantedBy=multi-user.target", "ProtectSystem=strict", "NoNewPrivileges=true",
+            "StateDirectory=contoso-orders",
         ):
             self.assertIn(setting, service)
         self.assertNotIn("User=root", service)
+        self.assertNotIn("RequiresMountsFor=", service)
+        self.assertNotIn("mountpoint", service)
 
-    def test_install_uses_lun_and_uuid_and_preserves_existing_filesystem(self):
+    def test_install_uses_managed_identity_postgresql_and_no_local_server(self):
         source = (HERE / "vm" / "install.sh").read_text()
         for expected in (
-            "/dev/disk/azure/scsi1/lun0", "UUID=${disk_uuid}",
-            "Refusing to overwrite a non-ext4 data disk",
-            "Refusing to format a disk with partitions",
-            "Refusing to format a disk with existing signatures",
-            "Refusing to adopt an unrelated ext4 data disk",
+            "postgresql-client",
+            "OrdersDatabase__Authentication=ManagedIdentity",
+            "SSL Mode=VerifyFull",
+            "metadata/identity/oauth2/token",
+            "ossrdbms-aad.database.windows.net",
+            "/dev/tcp/${postgresql_host}/5432",
             '[[ ! -f "${release}/OrdersApi.dll" ]]',
             "export HOME=/root DOTNET_CLI_HOME=/root",
             "--bootstrap",
         ):
             self.assertIn(expected, source)
-        self.assertNotIn("/dev/sda", source)
+        for forbidden in ("mkfs", "mount /", "postgresql-16 postgresql"):
+            self.assertNotIn(forbidden, source)
+
+    def test_inspection_uses_system_ca_roots_for_libpq(self):
+        database = {
+            "host": "psql-orders-test.postgres.database.azure.com",
+            "port": "5432",
+            "database": "orders",
+            "username": "vm-orders-test",
+        }
+        with patch.object(inspection, "access_token", return_value="token"):
+            environment = inspection.postgresql_environment(database)
+        self.assertEqual(environment["PGSSLMODE"], "verify-full")
+        self.assertEqual(environment["PGSSLROOTCERT"], "system")
+        self.assertEqual(environment["PGPASSWORD"], "token")
+
+    def test_inspection_reports_and_redacts_subprocess_errors(self):
+        secret = "managed-identity-token"
+        failure = subprocess.CalledProcessError(
+            2,
+            ["psql"],
+            stderr=f"connection failed for {secret}",
+        )
+        with patch.object(inspection.subprocess, "run", side_effect=failure), \
+                self.assertRaisesRegex(
+                    RuntimeError, "psql exited with code 2"
+                ) as raised:
+            inspection.command(
+                "psql",
+                environment={"PGPASSWORD": secret},
+            )
+        self.assertIn("<redacted>", str(raised.exception))
+        self.assertNotIn(secret, str(raised.exception))
 
     def test_payload_is_deterministic_and_excludes_build_outputs_and_secrets(self):
         first, digest = workshop.bundle()
@@ -144,7 +192,9 @@ class PreflightTests(unittest.TestCase):
         self.assertNotIn("delete", str(az.call_args_list))
 
     def test_existing_vm_group_can_be_redeployed(self):
-        with patch.object(workshop, "az", side_effect=[True, {"workshop-architecture": "single-vm"}]):
+        with patch.object(workshop, "az", side_effect=[
+            True, {"workshop-architecture": "single-vm-postgresql-v1"},
+        ]):
             workshop.check_resource_group(VALUES)
 
     def test_benchmark_rejects_even_an_existing_vm_group(self):
@@ -208,8 +258,8 @@ class PreflightTests(unittest.TestCase):
 
     def test_stage_reports_permanent_failure_with_stage_name(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(workshop, "ROOT", Path(temporary)):
-            with self.assertRaisesRegex(workshop.DeploymentError, r"\[sqlite\] invalid schema"):
-                with workshop.stage(VALUES, "sqlite"):
+            with self.assertRaisesRegex(workshop.DeploymentError, r"\[postgresql\] invalid schema"):
+                with workshop.stage(VALUES, "postgresql"):
                     raise workshop.DeploymentError("invalid schema")
             report = json.loads((workshop.state_directory(VALUES) / "deployment.json").read_text())
             self.assertEqual(report["stages"][0]["status"], "failed")
@@ -231,6 +281,16 @@ class CapacityTests(unittest.TestCase):
     def quotas(self, used=0, limit=4):
         return [{"name": {"value": name}, "currentValue": used, "limit": limit}
                 for name in ("cores", "standardDASv5Family")]
+
+    def postgresql_capabilities(self, version="16", sku="Standard_B1ms"):
+        return [{
+            "name": "FlexibleServer",
+            "supportedServerVersions": [{"name": version}],
+            "supportedServerEditions": [{
+                "name": "Burstable",
+                "supportedServerSkus": [{"name": sku}],
+            }],
+        }]
 
     def test_selected_size_needs_both_regional_and_family_quota(self):
         with patch.object(workshop, "az", side_effect=[[self.sku()], self.quotas()]) as az:
@@ -300,6 +360,30 @@ class CapacityTests(unittest.TestCase):
         with patch.object(workshop, "az", side_effect=[False, [self.sku()], self.quotas()]) as az:
             workshop.check_vm_capacity(values)
         self.assertIn("list-usage", str(az.call_args_list))
+
+    def test_postgresql_version_and_sku_are_preflighted(self):
+        with patch.object(
+                workshop, "az",
+                return_value=self.postgresql_capabilities()) as az:
+            workshop.check_postgresql_capacity(VALUES)
+        self.assertEqual(
+            az.call_args.args[:3],
+            ("postgres", "flexible-server", "list-skus"),
+        )
+        self.assertIn("--subscription", az.call_args.args)
+
+    def test_postgresql_unavailable_sku_fails_without_deployment(self):
+        for capabilities in (
+            self.postgresql_capabilities(version="15"),
+            self.postgresql_capabilities(sku="Standard_D2s_v3"),
+            {"unexpected": "shape"},
+        ):
+            with self.subTest(capabilities=capabilities), \
+                    patch.object(workshop, "az", return_value=capabilities):
+                with self.assertRaisesRegex(
+                        workshop.DeploymentError,
+                        "PostgreSQL Flexible Server capabilities|not advertised"):
+                    workshop.check_postgresql_capacity(VALUES)
 
 
 class RunCommandTests(unittest.TestCase):
@@ -372,10 +456,7 @@ class RunCommandTests(unittest.TestCase):
 class DeploymentSequenceTests(unittest.TestCase):
     def test_postprovision_deploys_then_smokes_before_exporting_success(self):
         events = []
-        values = {
-            **VALUES, "VM_RESOURCE_ID": "/vm", "DATA_DISK_RESOURCE_ID": "/disk",
-            "LOG_ANALYTICS_ID": "/workspace", "SRE_AGENT_RESOURCE_ID": "/agent",
-        }
+        values = {**VALUES, "VM_RESOURCE_ID": "/vm"}
         with tempfile.TemporaryDirectory() as temporary, patch.object(workshop, "ROOT", Path(temporary)), \
                 patch.object(workshop, "environment", return_value=values), \
                 patch.object(workshop, "deploy_vm", side_effect=lambda _: events.append("configure")), \
@@ -394,10 +475,10 @@ class DeploymentSequenceTests(unittest.TestCase):
     def test_vm_configuration_failure_prevents_smoke_and_success_output(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(workshop, "ROOT", Path(temporary)), \
                 patch.object(workshop, "environment", return_value=VALUES), \
-                patch.object(workshop, "deploy_vm", side_effect=workshop.DeploymentError("mount failed")), \
+                patch.object(workshop, "deploy_vm", side_effect=workshop.DeploymentError("database failed")), \
                 patch.object(workshop, "ensure_sre_response_plan") as agent, \
                 patch.object(workshop, "smoke") as smoke, patch.object(workshop, "export_values") as export:
-            with self.assertRaisesRegex(workshop.DeploymentError, r"\[vm-configuration\] mount failed"):
+            with self.assertRaisesRegex(workshop.DeploymentError, r"\[vm-configuration\] database failed"):
                 workshop.postprovision()
         agent.assert_not_called()
         smoke.assert_not_called()
@@ -498,14 +579,18 @@ class SreAgentTests(unittest.TestCase):
 
 
 class RestartTests(unittest.TestCase):
-    def inspection(self, boot_id, disk_uuid="current-disk"):
+    def inspection(self, boot_id):
         return {
             "ok": True,
             "bootId": boot_id,
-            "storage": {"uuid": disk_uuid},
+            "database": {
+                "provider": "PostgreSQL",
+                "serverVersion": "16.4",
+                "migrationVersion": 1,
+            },
         }
 
-    def test_legacy_witness_is_replaced_and_bound_to_current_disk(self):
+    def test_old_witness_is_replaced_and_bound_to_postgresql_server(self):
         order = {
             **ORDER,
             "orderId": 1,
@@ -534,14 +619,17 @@ class RestartTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(witness["orderId"], 1)
-        self.assertEqual(witness["diskUuid"], "current-disk")
+        self.assertEqual(
+            witness["postgresqlServerResourceId"],
+            VALUES["POSTGRESQL_SERVER_RESOURCE_ID"],
+        )
         self.assertEqual(az.call_args.args[:2], ("vm", "restart"))
 
-    def test_missing_order_on_same_disk_is_a_persistence_failure(self):
+    def test_missing_order_on_same_server_is_a_persistence_failure(self):
         witness = {
             "orderId": 1,
             "order": {**ORDER, "orderId": 1},
-            "diskUuid": "current-disk",
+            "postgresqlServerResourceId": VALUES["POSTGRESQL_SERVER_RESOURCE_ID"],
         }
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(workshop, "ROOT", Path(temporary)), \
@@ -560,11 +648,13 @@ class RestartTests(unittest.TestCase):
                 workshop.verify_restart(VALUES)
         az.assert_not_called()
 
-    def test_witness_for_another_disk_fails_before_restart(self):
+    def test_witness_for_another_server_fails_before_restart(self):
         witness = {
             "orderId": 1,
             "order": {**ORDER, "orderId": 1},
-            "diskUuid": "old-disk",
+            "postgresqlServerResourceId": (
+                VALUES["POSTGRESQL_SERVER_RESOURCE_ID"] + "-other"
+            ),
         }
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(workshop, "ROOT", Path(temporary)), \
@@ -578,7 +668,8 @@ class RestartTests(unittest.TestCase):
                 workshop.state_directory(VALUES) / "persistence-witness.json",
                 witness,
             )
-            with self.assertRaisesRegex(workshop.DeploymentError, "different managed data disk"):
+            with self.assertRaisesRegex(
+                    workshop.DeploymentError, "different PostgreSQL server"):
                 workshop.verify_restart(VALUES)
         request.assert_not_called()
         az.assert_not_called()
@@ -602,8 +693,20 @@ class SmokeTests(unittest.TestCase):
                 workshop.validate_order({**ORDER, key: value})
 
     def test_smoke_is_read_only_and_rejects_http_fault_routes(self):
-        results = [(200, {"status": "ready"}), (200, [ORDER] * 5)] + [
-            workshop.HttpError(404, path) for path in ("/fault/cpu", "/fault/storage", "/fault/reset")]
+        results = [
+            (200, {"status": "ready"}),
+            (200, [ORDER] * 5),
+            (200, {
+                "provider": "PostgreSQL",
+                "status": "ready",
+                "serverVersion": "16.4",
+                "schemaVersion": 1,
+                "databaseBytes": 1024,
+            }),
+        ] + [
+            workshop.HttpError(404, path)
+            for path in ("/fault/cpu", "/fault/postgresql", "/fault/reset")
+        ]
         with tempfile.TemporaryDirectory() as temporary, patch.object(workshop, "ROOT", Path(temporary)), \
                 patch.object(workshop, "request_json", side_effect=results) as request:
             result = workshop.smoke(VALUES)
@@ -646,34 +749,68 @@ class FaultTests(unittest.TestCase):
     def test_fault_limits_are_validated_before_run_command(self):
         for action, args in (
             ("cpu", ["0"]), ("cpu", ["1801"]), ("cpu", ["60", "9"]),
-            ("disk", ["98"]), ("disk", ["90", "0"]), ("disk", ["bad"]),
-            ("status", ["1"]), ("errors", []), ("reset", ["1"]),
+            ("postgresql", ["1"]), ("status", ["1"]), ("unknown", []),
+            ("reset", ["1"]), ("reset-cpu", ["1"]),
+            ("reset-postgresql", ["1"]),
         ):
-            with self.subTest(action=action, args=args), patch.object(workshop, "run_vm") as run:
+            with self.subTest(action=action, args=args), \
+                    patch.object(workshop, "run_vm") as run, \
+                    patch.object(workshop, "az") as az:
                 with self.assertRaises(workshop.DeploymentError):
                     workshop.fault(VALUES, action, args)
                 run.assert_not_called()
+                az.assert_not_called()
 
     def test_faults_use_control_plane_and_bounded_defaults(self):
-        with tempfile.TemporaryDirectory() as temporary, patch.object(workshop, "ROOT", Path(temporary)), \
-                patch.object(workshop, "run_vm", return_value={"ok": True}) as run, \
-                patch.object(workshop, "request_json") as http:
-            workshop.fault(VALUES, "cpu", [])
-            self.assertIn("cpu 300 2 --request-id", run.call_args.args[1])
-            workshop.fault(VALUES, "disk", [])
-            self.assertIn("disk 90 300 --request-id", run.call_args.args[1])
-        http.assert_not_called()
+        events = []
 
-    def test_disk_allocation_preserves_recovery_reserve(self):
-        total = 8 * 1024**3
-        available = 7 * 1024**3
-        amount = faults.allocation_size(total, available, 90)
-        self.assertAlmostEqual(total - available + amount, total * 0.9, delta=1)
-        self.assertGreaterEqual(available - amount, faults.RESERVE_BYTES)
-        with self.assertRaisesRegex(RuntimeError, "reserve"):
-            faults.allocation_size(1024**3, 300 * 1024**2, 97)
-        with self.assertRaisesRegex(RuntimeError, "already"):
-            faults.allocation_size(total, 100 * 1024**2, 90)
+        def vm_result(_values, action, numbers=()):
+            events.append(f"vm:{action}")
+            if action == "postgresql-denied":
+                return {
+                    "ok": True,
+                    "cpu": "inactive",
+                    "apiRecycled": True,
+                    "postgresqlConnectivity": "unavailable",
+                    "readinessStatusCode": 503,
+                    "ordersStatusCode": 503,
+                }
+            return {"ok": True, "cpu": "inactive"}
+
+        def deploy_result(_values, inject):
+            events.append("postgresql:deny" if inject else "postgresql:allow")
+            return {
+                "postgresql": "active" if inject else "inactive",
+                "postgresqlAccess": "Deny" if inject else "Allow",
+            }
+
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(workshop, "ROOT", Path(temporary)), \
+                patch.object(workshop, "vm_fault", side_effect=vm_result) as vm, \
+                patch.object(workshop, "postgresql_fault_status",
+                             return_value={
+                                 "postgresql": "inactive",
+                                 "postgresqlAccess": "Allow",
+                             }), \
+                patch.object(workshop, "deploy_postgresql_fault",
+                             side_effect=deploy_result) as deploy:
+            workshop.fault(VALUES, "cpu", [])
+            result = workshop.fault(VALUES, "postgresql", [])
+        self.assertEqual(
+            vm.call_args_list,
+            [
+                call(VALUES, "cpu", [300, 2]),
+                call(VALUES, "status"),
+                call(VALUES, "postgresql-denied"),
+            ],
+        )
+        deploy.assert_called_once_with(VALUES, inject=True)
+        self.assertEqual(
+            events,
+            ["vm:cpu", "vm:status", "postgresql:deny", "vm:postgresql-denied"],
+        )
+        self.assertTrue(result["apiRecycled"])
+        self.assertEqual(result["postgresqlConnectivity"], "unavailable")
 
     def test_cpu_failure_terminates_only_its_owned_processes(self):
         from unittest.mock import Mock
@@ -686,23 +823,237 @@ class FaultTests(unittest.TestCase):
         child.terminate.assert_called_once()
         child.wait.assert_called_once_with(timeout=10)
 
-    def test_disk_worker_cleans_ballast_when_allocation_fails(self):
-        with patch.object(faults, "usage", return_value=(8 * 1024**3, 7 * 1024**3)), \
-                patch.object(faults.signal, "signal"), patch.object(faults.os, "open", return_value=42), \
-                patch.object(faults.os, "O_NOFOLLOW", 0, create=True), \
-                patch.object(faults.os, "posix_fallocate", side_effect=OSError("no space"), create=True), \
-                patch.object(faults.os, "close") as close, patch.object(faults.Path, "unlink") as unlink:
-            with self.assertRaises(OSError):
-                faults.disk_worker(90, 30)
-        close.assert_called_once_with(42)
-        unlink.assert_called_once_with(missing_ok=True)
-
-    def test_systemd_faults_have_ttl_and_disk_cleanup(self):
+    def test_cpu_fault_has_a_systemd_ttl(self):
         source = (HERE / "vm" / "faults.py").read_text()
-        self.assertEqual(source.count('"--property=RuntimeMaxSec="'), 2)
-        self.assertIn("ExecStopPost=/usr/bin/rm -f -- ", source)
-        self.assertIn("os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW", source)
-        self.assertNotEqual(faults.BALLAST.name, "orders.db")
+        self.assertEqual(source.count('"--property=RuntimeMaxSec="'), 1)
+        self.assertIn("orders-cpu-fault.service", source)
+
+    def test_database_status_requires_consistent_controlled_responses(self):
+        with patch.object(faults, "request_json", side_effect=[
+                    (200, {"status": "live"}),
+                    (503, {"title": "Orders database unavailable"}),
+                    (503, {"title": "Orders database unavailable"}),
+                ]), patch.object(faults, "api_pid", return_value=42), \
+                patch.object(faults, "cpu_status",
+                             return_value={"ok": True, "cpu": "inactive"}):
+            result = faults.database_status()
+        self.assertEqual(result["postgresqlConnectivity"], "unavailable")
+        self.assertEqual(result["liveStatusCode"], 200)
+        self.assertEqual(result["readinessStatusCode"], 503)
+        self.assertEqual(result["ordersStatusCode"], 503)
+
+        with patch.object(faults, "request_json", side_effect=[
+                    (200, {"status": "live"}),
+                    (503, {"title": "Orders database unavailable"}),
+                    (200, []),
+                ]):
+            with self.assertRaisesRegex(RuntimeError, "inconsistent"):
+                faults.database_status()
+
+    def test_postgresql_denial_recycles_until_the_pool_is_drained(self):
+        with patch.object(faults, "api_pid", return_value=10), \
+                patch.object(faults, "command") as command, \
+                patch.object(faults, "wait_for_api_live") as wait_for_live, \
+                patch.object(faults, "database_status", side_effect=[
+                    {
+                        "ok": True,
+                        "cpu": "inactive",
+                        "apiPid": 20,
+                        "postgresqlConnectivity": "ready",
+                    },
+                    {
+                        "ok": True,
+                        "cpu": "inactive",
+                        "apiPid": 21,
+                        "postgresqlConnectivity": "unavailable",
+                    },
+                ]), patch.object(faults.time, "sleep"):
+            result = faults.verify_postgresql_denied()
+        self.assertEqual(result["apiRecycleAttempts"], 2)
+        self.assertEqual(result["previousApiPid"], 10)
+        self.assertTrue(result["apiRecycled"])
+        self.assertEqual(wait_for_live.call_count, 2)
+        self.assertEqual(
+            command.call_args_list,
+            [
+                call("systemctl", "restart", "orders-api.service"),
+                call("systemctl", "restart", "orders-api.service"),
+            ],
+        )
+
+    def test_postgresql_recovery_does_not_mutate_the_cpu_fault(self):
+        with patch.object(faults, "reset_cpu") as reset, patch.object(
+                    faults, "recycle_api_and_verify",
+                    return_value={
+                        "ok": True,
+                        "cpu": "active",
+                        "postgresqlConnectivity": "ready",
+                    }) as recycle:
+            result = faults.verify_postgresql_ready()
+        reset.assert_not_called()
+        recycle.assert_called_once_with("ready")
+        self.assertEqual(result["cpu"], "active")
+        self.assertEqual(result["postgresqlConnectivity"], "ready")
+
+    def test_postgresql_rule_status_requires_exact_bounded_scope(self):
+        rule = {
+            "priority": 100,
+            "direction": "Outbound",
+            "protocol": "Tcp",
+            "sourceAddressPrefix": "10.240.0.0/27",
+            "sourcePortRange": "*",
+            "destinationAddressPrefix": "10.240.0.32/27",
+            "destinationPortRange": "5432",
+            "access": "Deny",
+        }
+        with patch.object(workshop, "az", return_value=rule):
+            self.assertEqual(
+                workshop.postgresql_fault_status(VALUES)["postgresql"], "active")
+        for key in ("sourceAddressPrefix", "destinationPortRange", "protocol"):
+            with self.subTest(key=key), \
+                    patch.object(workshop, "az",
+                                 return_value={**rule, key: "unexpected"}):
+                with self.assertRaises(workshop.DeploymentError):
+                    workshop.postgresql_fault_status(VALUES)
+
+    def test_explicit_all_scenarios_reset_restores_postgresql_then_cpu(self):
+        events = []
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(workshop, "ROOT", Path(temporary)), \
+                patch.object(workshop, "vm_fault",
+                             side_effect=lambda _values, action: (
+                                 events.append(f"vm:{action}"), {
+                                     "ok": True,
+                                     "cpu": "inactive",
+                                     "apiRecycled": True,
+                                     "postgresqlConnectivity": "ready",
+                                 }
+                             )[1]) as vm, \
+                patch.object(workshop, "deploy_postgresql_fault",
+                             side_effect=lambda *_args, **_kwargs: (
+                                 events.append("postgresql"),
+                                 {
+                                     "postgresql": "inactive",
+                                     "postgresqlAccess": "Allow",
+                                 },
+                             )[1]) as deploy:
+            result = workshop.fault(VALUES, "reset", [])
+        deploy.assert_called_once_with(VALUES, inject=False)
+        self.assertEqual(
+            events,
+            ["postgresql", "vm:postgresql-ready", "vm:reset"],
+        )
+        self.assertEqual(
+            vm.call_args_list,
+            [
+                call(VALUES, "postgresql-ready"),
+                call(VALUES, "reset"),
+            ],
+        )
+        self.assertEqual(result["postgresql"], "inactive")
+        self.assertEqual(result["postgresqlConnectivity"], "ready")
+
+    def test_scenario_specific_resets_do_not_mutate_the_other_fault(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(workshop, "ROOT", Path(temporary)), \
+                patch.object(
+                    workshop, "vm_fault",
+                    return_value={
+                        "ok": True,
+                        "cpu": "active",
+                        "apiRecycled": True,
+                        "postgresqlConnectivity": "ready",
+                    }) as vm, patch.object(
+                    workshop, "deploy_postgresql_fault",
+                    return_value={
+                        "postgresql": "inactive",
+                        "postgresqlAccess": "Allow",
+                    }) as deploy:
+            postgresql = workshop.fault(
+                VALUES, "reset-postgresql", [])
+        vm.assert_called_once_with(VALUES, "postgresql-ready")
+        deploy.assert_called_once_with(VALUES, inject=False)
+        self.assertEqual(postgresql["cpu"], "active")
+
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(workshop, "ROOT", Path(temporary)), \
+                patch.object(
+                    workshop, "vm_fault",
+                    return_value={"ok": True, "cpu": "inactive"}) as vm, \
+                patch.object(
+                    workshop, "postgresql_fault_status",
+                    return_value={
+                        "postgresql": "active",
+                        "postgresqlAccess": "Deny",
+                    }) as status, patch.object(
+                    workshop, "deploy_postgresql_fault") as deploy:
+            cpu = workshop.fault(VALUES, "reset-cpu", [])
+        vm.assert_called_once_with(VALUES, "reset")
+        status.assert_called_once_with(VALUES)
+        deploy.assert_not_called()
+        self.assertEqual(cpu["postgresql"], "active")
+
+    def test_injection_records_partial_state_when_recycle_verification_fails(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(workshop, "ROOT", Path(temporary)), \
+                patch.object(workshop, "vm_fault", side_effect=[
+                    {"ok": True, "cpu": "inactive"},
+                    workshop.DeploymentError("run command interrupted"),
+                ]), patch.object(
+                    workshop, "deploy_postgresql_fault",
+                    return_value={
+                        "postgresql": "active",
+                        "postgresqlAccess": "Deny",
+                    }):
+            with self.assertRaisesRegex(
+                    workshop.DeploymentError, "operation is partial"):
+                workshop.fault(VALUES, "postgresql", [])
+            partial = json.loads(
+                (workshop.state_directory(VALUES)
+                 / "fault-postgresql-partial.json").read_text())
+        self.assertFalse(partial["ok"])
+        self.assertEqual(partial["postgresqlAccess"], "Deny")
+        self.assertEqual(partial["verification"], "failed")
+
+    def test_status_reads_the_rule_before_probing_application_connectivity(self):
+        events = []
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(workshop, "ROOT", Path(temporary)), \
+                patch.object(
+                    workshop, "postgresql_fault_status",
+                    side_effect=lambda _values: (
+                        events.append("rule"),
+                        {
+                            "postgresql": "active",
+                            "postgresqlAccess": "Deny",
+                        },
+                    )[1]), patch.object(
+                    workshop, "vm_fault",
+                    side_effect=lambda _values, action: (
+                        events.append(action),
+                        {
+                            "ok": True,
+                            "cpu": "inactive",
+                            "postgresqlConnectivity": "unavailable",
+                        },
+                    )[1]):
+            result = workshop.fault(VALUES, "status", [])
+        self.assertEqual(events, ["rule", "postgresql-status"])
+        self.assertEqual(result["postgresqlConnectivity"], "unavailable")
+
+    def test_fault_template_matches_normal_deployment_scope(self):
+        normal = (workshop.ROOT / "infra" / "network.bicep").read_text()
+        fault = (workshop.ROOT / "infra" / "fault.bicep").read_text()
+        for expected in (
+            "PostgreSqlFaultInjection",
+            "10.240.0.0/27",
+            "10.240.0.32/27",
+            "destinationPortRange: '5432'",
+        ):
+            self.assertIn(expected, normal)
+            self.assertIn(expected, fault)
+        self.assertIn("access: 'Allow'", normal)
+        self.assertIn("injectPostgresqlFault ? 'Deny' : 'Allow'", fault)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 ---
 title: About The Authors
 description: Contributors to the Azure SRE Agent workshop and guidance on how to get involved.
-ms.date: 2026-09-24
+ms.date: 2026-10-06
 ms.topic: overview
 keywords:
   - contributors
@@ -31,7 +31,8 @@ Contributions are welcome. The highest-value contributions are, in order:
 1. Screenshots. The module pages contain `<!-- SCREENSHOT: ... -->` markers where captures belong, and the workshop reads far better with them.
 2. Corrections to commands that no longer work as Azure services evolve.
 3. Additional safe failure scenarios that use authenticated Azure control-plane
-   operations and teach something the CPU and data-disk incidents do not.
+   operations and teach something the CPU and PostgreSQL connectivity incidents
+   do not.
 4. Improvements to the visual correlation between endpoint activity, VM
    metrics, application telemetry, alerts, and SRE Agent investigations.
 

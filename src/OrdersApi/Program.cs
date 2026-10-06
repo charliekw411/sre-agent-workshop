@@ -16,15 +16,18 @@ public partial class Program
     public static WebApplication CreateApplication(WebApplicationBuilder builder)
     {
         var serviceName = builder.Configuration["SERVICE_NAME"] ?? "orders-api";
-        var database = new OrdersDatabase(builder.Configuration.GetConnectionString("OrdersDb"));
+        var database = new OrdersDatabase(
+            builder.Configuration.GetConnectionString("OrdersDb"),
+            builder.Configuration["OrdersDatabase:Authentication"],
+            builder.Configuration["OrdersDatabase:ManagedIdentityClientId"]);
 
         builder.Services.AddApplicationInsightsTelemetry();
         builder.Services.AddSingleton<ITelemetryInitializer>(new CloudRoleNameInitializer(serviceName));
-        builder.Services.AddSingleton(database);
+        builder.Services.AddSingleton<OrdersDatabase>(_ => database);
         builder.Services.AddSingleton<OrdersRepository>();
         builder.Services.AddHostedService<DatabaseAvailabilityService>();
         builder.Services.AddProblemDetails();
-        builder.Services.AddExceptionHandler<SqliteExceptionHandler>();
+        builder.Services.AddExceptionHandler<PostgreSqlExceptionHandler>();
 
         var app = builder.Build();
         app.UseExceptionHandler();
@@ -63,7 +66,7 @@ public partial class Program
             {
                 service = serviceName,
                 description = "Contoso Order Services - orders API",
-                endpoints = new[] { "/orders", "/orders/{orderId}", "/orders/{orderId}/quantity", "/storage", "/health/live", "/health/ready" }
+                endpoints = new[] { "/orders", "/orders/{orderId}", "/orders/{orderId}/quantity", "/database", "/health/live", "/health/ready" }
             });
         });
 
@@ -158,8 +161,8 @@ public partial class Program
                 : Results.NotFound();
         });
 
-        app.MapGet("/storage", async (OrdersRepository repository, CancellationToken cancellationToken) =>
-            Results.Ok(await repository.GetStorageUsageAsync(cancellationToken)));
+        app.MapGet("/database", async (OrdersRepository repository, CancellationToken cancellationToken) =>
+            Results.Ok(await repository.GetDatabaseStatusAsync(cancellationToken)));
 
         return app;
     }

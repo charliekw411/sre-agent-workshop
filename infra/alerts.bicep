@@ -1,4 +1,4 @@
-metadata description = 'VM CPU, SQLite filesystem free-space, and Orders API HTTP 5xx alerts.'
+metadata description = 'VM CPU, PostgreSQL dependency, and Orders API HTTP 5xx alerts.'
 
 targetScope = 'resourceGroup'
 
@@ -18,11 +18,6 @@ param alertEmail string = ''
 @minValue(1)
 @maxValue(100)
 param cpuPercentThreshold int = 80
-
-@description('Average free-space percentage below which the SQLite data disk is considered critical.')
-@minValue(1)
-@maxValue(100)
-param diskFreePercentThreshold int = 15
 
 @description('Number of HTTP 5xx responses in five minutes above which the alert fires.')
 @minValue(0)
@@ -93,14 +88,14 @@ resource cpuAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
   }
 }
 
-resource diskSpaceAlert 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
-  name: 'alert-orders-data-disk-free'
+resource postgresqlDependencyAlert 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
+  name: 'alert-orders-postgresql-connectivity'
   location: location
   tags: tags
   kind: 'LogAlert'
   properties: {
-    displayName: 'Orders data disk low free space'
-    description: 'The SQLite filesystem at /var/lib/orders has less than the configured free-space percentage.'
+    displayName: 'Orders PostgreSQL dependency failures'
+    description: 'Orders API cannot complete one or more PostgreSQL dependency operations.'
     severity: 1
     enabled: true
     evaluationFrequency: 'PT1M'
@@ -114,17 +109,17 @@ resource diskSpaceAlert 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
       allOf: [
         {
           query: '''
-Perf
+AppDependencies
 | where TimeGenerated > ago(5m)
-| where ObjectName == "Logical Disk" and CounterName == "% Free Space"
-| where InstanceName == "/var/lib/orders"
-| project TimeGenerated, CounterValue, _ResourceId
+| where AppRoleName == "orders-api"
+| where DependencyType == "PostgreSQL" and Success == false
+| extend FailureCount = coalesce(ItemCount, 1)
+| project TimeGenerated, FailureCount
 '''
-          metricMeasureColumn: 'CounterValue'
-          resourceIdColumn: '_ResourceId'
-          timeAggregation: 'Average'
-          operator: 'LessThan'
-          threshold: diskFreePercentThreshold
+          metricMeasureColumn: 'FailureCount'
+          timeAggregation: 'Total'
+          operator: 'GreaterThan'
+          threshold: 0
           failingPeriods: {
             numberOfEvaluationPeriods: 1
             minFailingPeriodsToAlert: 1

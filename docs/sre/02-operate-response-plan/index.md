@@ -1,7 +1,7 @@
 ---
 title: Module 02 - Operate the SRE Agent Response Plan
 description: Verify the read-only Azure SRE Agent, inspect its Azure Monitor response plan, and rehearse the human review workflow before an alert fires.
-ms.date: 2026-09-25
+ms.date: 2026-10-06
 ms.topic: how-to
 keywords:
   - azure sre agent
@@ -42,7 +42,7 @@ fault commands, restart the VM, change the API, or delete resources.
 * Verify the enabled Sev1/Sev2 response plan and Review mode.
 * Explain the identities and least-privilege boundary.
 * Inspect the alert rules that feed the response plan.
-* Tie healthy Orders GUI activity to API telemetry.
+* Tie healthy Orders GUI activity to API and PostgreSQL dependency telemetry.
 * Rehearse a healthy-state agent assessment and verify it visually.
 
 ## Response workflow
@@ -51,6 +51,7 @@ fault commands, restart the VM, change the API, or delete resources.
 sequenceDiagram
     participant GUI as Orders browser GUI
     participant API as Orders API and VM
+    participant DB as Private PostgreSQL
     participant Monitor as Azure Monitor
     participant Plan as Response plan
     participant Agent as Azure SRE Agent
@@ -58,14 +59,17 @@ sequenceDiagram
 
     Human->>GUI: Browse orders or refresh status
     GUI->>API: Customer and health requests
-    API->>Monitor: Metrics and telemetry
+    API->>DB: Entra-authenticated TLS queries
+    API->>Monitor: Requests and dependency telemetry
+    DB->>Monitor: Resource diagnostics
     Monitor->>Plan: Sev1 or Sev2 alert
     Plan->>Agent: Start or merge investigation
     Agent->>Monitor: Read resources, metrics, logs, and traces
     Agent-->>Human: Findings and proposed response
     Human->>Monitor: Verify charts and raw evidence
-    Human->>API: Run approved mitigation through Azure RBAC
-    API->>Monitor: Recovery signals
+    Human->>API: Run approved CPU reset through Azure RBAC
+    Human->>Monitor: Restore the scoped PostgreSQL NSG rule when required
+    API->>Monitor: Recovery requests and dependencies
     Human-->>Agent: Accept, correct, or reject conclusions
 ```
 
@@ -177,14 +181,14 @@ resource and connector access. Review the assignments:
     ```
 
 The intended grants are resource read access and Log Analytics read access.
-Neither identity should have `Owner`, `Contributor`, VM administration, or fault
-execution rights.
+Neither identity should have `Owner`, `Contributor`, VM administration, NSG
+write, or fault execution rights.
 
 !!! important "Configuration access is not runtime authority"
     You receive an agent-scoped administrator role so deployment can configure
     the response plan. That does not grant the agent runtime permission to change
-    the VM. The human operator and the read-only agent have different identities
-    and responsibilities.
+    the VM or the PostgreSQL fault rule. The human operator and the read-only
+    agent have different identities and responsibilities.
 
 ### Task 4: Inspect the alert inputs
 
@@ -194,19 +198,22 @@ to the workshop resource group. Confirm these enabled rules:
 | Alert | Severity | Condition |
 | --- | --- | --- |
 | `alert-orders-high-cpu` | Sev2 | VM average Percentage CPU above 80 percent for 5 minutes |
-| `alert-orders-data-disk-free` | Sev1 | `/var/lib/orders` average free space below 15 percent |
+| `alert-orders-postgresql-connectivity` | Sev1 | Any failed `PostgreSQL` application dependency in 5 minutes |
 | `alert-orders-http-5xx` | Sev1 | More than 10 HTTP 5xx responses in 5 minutes |
 
-The CPU and data-disk exercises deliberately trigger the first two rules. The
-HTTP 5xx rule remains a production-style safety signal; there is no public HTTP
-endpoint that fabricates errors.
+The CPU and PostgreSQL exercises deliberately trigger the first two rules. The
+PostgreSQL exercise can also trigger the HTTP 5xx rule when repeated
+database-backed requests return 503. The dependency rule identifies the
+underlying boundary, while the 5xx rule captures customer-facing impact. There
+is no public HTTP endpoint that fabricates errors.
 
 ### Task 5: Tie a healthy request to visual evidence
 
 Open the workshop VM's **Monitoring** > **Metrics** blade and configure the
 **Percentage CPU** chart exactly as in Module 01. Open
 `SERVICE_ORDERS_API_ENDPOINT_URL` in another tab, confirm that all three status
-cards are healthy, and select **Refresh orders** once.
+cards are healthy, and select **Refresh orders** once. The third status card is
+PostgreSQL and calls `/database`.
 
 The GUI establishes the customer view. Run the loop below as well because it
 creates a fixed, repeatable sample for the telemetry exercise:
@@ -235,6 +242,18 @@ Refresh the VM chart after one or two minutes. Also open Application Insights
 **Performance** and verify that the `GET /health/ready` and `GET /orders`
 operations are visible for the same time range.
 
+In Log Analytics **Logs**, verify healthy PostgreSQL dependencies:
+
+```kusto
+AppDependencies
+| where TimeGenerated > ago(30m)
+| where AppRoleName == "orders-api"
+| where DependencyType == "PostgreSQL"
+| summarize Samples = sum(ItemCount), Failures = sumif(ItemCount, Success == false)
+  by Name, bin(TimeGenerated, 5m)
+| order by TimeGenerated asc
+```
+
 The GUI calls those same API routes, so its requests use the same operation
 names. Requests for `/`, `/app.js`, and `/app.css` load the interface itself;
 focus the investigation on the underlying customer and status operations.
@@ -249,17 +268,19 @@ Open the agent's chat experience and enter:
 ```text
 Describe the workload in this resource group using only current Azure resource
 configuration and telemetry. Identify the public request path, the process that
-runs the API, the data store and its mount, the monitoring data sources, and the
-current alert state. State which facts are directly observed and which are inferred.
+runs the API, the private PostgreSQL resource and network path, the workload
+identity, the monitoring data sources, and the current alert state. State which
+facts are directly observed and which are inferred.
 ```
 
 Then ask:
 
 ```text
 For the last 30 minutes, summarize Orders API request volume, success rate, P95
-duration, and VM CPU. State the current Azure Monitor alert state. Cite the
-metric or table behind each value. Do not propose a change unless you first
-identify an active incident.
+duration, PostgreSQL dependency success, availability results, and VM CPU.
+State the current Azure Monitor alert state. Cite the metric or table behind
+each value. Do not propose a change unless you first identify an active
+incident.
 ```
 
 Compare the answer with:
@@ -276,9 +297,10 @@ incidents.
 
 * [x] The SRE Agent is provisioned and connected to this workshop's telemetry.
 * [x] `workshop-sev1-sev2-review` is enabled for Sev1 and Sev2 in Review mode.
-* [x] The three alert rules are enabled.
+* [x] The CPU, PostgreSQL connectivity, and HTTP 5xx alert rules are enabled.
 * [x] The agent identities have no workload write role.
-* [x] Healthy Orders GUI activity appeared under the expected API operation names.
+* [x] Healthy Orders GUI activity appeared under the expected API operation
+  names and `PostgreSQL` dependency type.
 * [x] A healthy endpoint call appears in the VM and Application Insights views.
 * [x] The agent's healthy-state assessment agrees with independently viewed evidence.
 
@@ -288,7 +310,7 @@ incidents.
     The agent can investigate and present a proposed response, but a human reviews the evidence and decides what action to execute. It is not permission to mutate the VM, and the Azure RBAC boundary remains authoritative even if a prompt asks for a change.
 
 ??? question "Why can several alerts be merged into one incident?"
-    One underlying failure can cross multiple thresholds. Merging related alerts within a bounded window reduces duplicate investigations and lets the agent reason about CPU, request, and storage evidence as one event. The human must still verify that the alerts actually share a cause.
+    One underlying failure can cross multiple thresholds. PostgreSQL connectivity loss can produce both failed dependencies and HTTP 503 responses. Merging related alerts within a bounded window reduces duplicate investigations, but the human must still verify that their times, resources, and operations support one cause.
 
 ??? question "Why retain an HTTP 5xx alert without an error-injection endpoint?"
     Real applications can fail without a planned exercise. The alert covers genuine server errors while the workshop avoids placing a destructive unauthenticated control on the public API.

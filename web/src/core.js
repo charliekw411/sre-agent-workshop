@@ -6,7 +6,18 @@ export const LOG_ANALYTICS_SCOPE = "https://api.loganalytics.io/Data.Read";
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const REQUEST_ID = /^[0-9a-f]{32}$/;
 const RESOURCE_ID =
-  /^\/subscriptions\/[0-9a-f-]+\/resourceGroups\/[a-z0-9._()-]+\/providers\/[a-z0-9.]+\/[a-z0-9.]+\/[a-z0-9._()-]+$/i;
+  /^\/subscriptions\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/resourceGroups\/[a-z0-9._()-]+\/providers\/[a-z0-9.]+(?:\/[a-z0-9.]+\/[a-z0-9._()-]+)+$/i;
+
+export const POSTGRESQL_FAULT_RULE_NAME = "PostgreSqlFaultInjection";
+export const POSTGRESQL_FAULT_RULE_PROPERTIES = Object.freeze({
+  priority: 100,
+  direction: "Outbound",
+  protocol: "Tcp",
+  sourceAddressPrefix: "10.240.0.0/27",
+  sourcePortRange: "*",
+  destinationAddressPrefix: "10.240.0.32/27",
+  destinationPortRange: "5432",
+});
 
 export const SCENARIOS = Object.freeze({
   cpu: Object.freeze({
@@ -19,15 +30,15 @@ export const SCENARIOS = Object.freeze({
     threshold: 80,
     thresholdLabel: "Alert threshold: 80%",
   }),
-  disk: Object.freeze({
-    id: "disk",
-    action: "disk",
-    arguments: Object.freeze([90, 600]),
-    runLabel: "Run disk incident",
-    chartTitle: "/var/lib/orders free space",
-    unitLabel: "free space",
-    threshold: 15,
-    thresholdLabel: "Alert threshold: 15% free",
+  postgresql: Object.freeze({
+    id: "postgresql",
+    action: "postgresql",
+    arguments: Object.freeze([]),
+    runLabel: "Block PostgreSQL access",
+    chartTitle: "PostgreSQL dependency failure rate",
+    unitLabel: "failed dependencies",
+    threshold: 0,
+    thresholdLabel: "Alert condition: any failure",
   }),
 });
 
@@ -46,7 +57,9 @@ export function validateConfig(raw) {
     redirectUri: "",
     resourceGroupPrefix: String(raw?.resourceGroupPrefix || "rg-sre-agent-workshop-"),
     environmentTagName: String(raw?.environmentTagName || "workshop-architecture"),
-    environmentTagValue: String(raw?.environmentTagValue || "single-vm"),
+    environmentTagValue: String(
+      raw?.environmentTagValue || "single-vm-postgresql-v1",
+    ),
     refreshSeconds: Number(raw?.refreshSeconds) || 60,
   };
   const invalid = (error, cause) => ({ ...defaults, error, cause });
@@ -125,6 +138,14 @@ export function selectEnvironmentResources(resources) {
     /^law-[a-z0-9]+$/i,
   );
   const agents = matching("microsoft.app/agents", /^sre-[a-z0-9]+$/i);
+  const networkSecurityGroups = matching(
+    "microsoft.network/networksecuritygroups",
+    /^nsg-orders-[a-z0-9]+$/i,
+  );
+  const postgresqlServers = matching(
+    "microsoft.dbforpostgresql/flexibleservers",
+    /^psql-orders-[a-z0-9]+$/i,
+  );
 
   if (virtualMachines.length !== 1) {
     throw new WorkshopError(
@@ -139,7 +160,23 @@ export function selectEnvironmentResources(resources) {
   if (agents.length > 1) {
     throw new WorkshopError(`Expected at most one SRE Agent, but found ${agents.length}.`);
   }
-  for (const resource of [...virtualMachines, ...workspaces, ...agents]) {
+  if (networkSecurityGroups.length !== 1) {
+    throw new WorkshopError(
+      `Expected exactly one workshop network security group, but found ${networkSecurityGroups.length}.`,
+    );
+  }
+  if (postgresqlServers.length !== 1) {
+    throw new WorkshopError(
+      `Expected exactly one workshop PostgreSQL server, but found ${postgresqlServers.length}.`,
+    );
+  }
+  for (const resource of [
+    ...virtualMachines,
+    ...workspaces,
+    ...agents,
+    ...networkSecurityGroups,
+    ...postgresqlServers,
+  ]) {
     if (!RESOURCE_ID.test(String(resource.id || ""))) {
       throw new WorkshopError("Azure returned an unexpected workshop resource ID.");
     }
@@ -148,6 +185,8 @@ export function selectEnvironmentResources(resources) {
     virtualMachine: virtualMachines[0],
     workspace: workspaces[0],
     sreAgent: agents[0] || null,
+    networkSecurityGroup: networkSecurityGroups[0],
+    postgresqlServer: postgresqlServers[0],
   };
 }
 
@@ -156,14 +195,21 @@ export function createFaultScript(action, requestId) {
     throw new WorkshopError("The fault request ID is invalid.");
   }
   let argumentsList;
-  if (action === "status" || action === "reset") {
+  if (
+    [
+      "status",
+      "reset",
+      "postgresql-denied",
+      "postgresql-ready",
+      "postgresql-status",
+    ].includes(action)
+  ) {
     argumentsList = [];
   } else {
-    const scenario = SCENARIOS[action];
-    if (!scenario) {
+    if (action !== "cpu") {
       throw new WorkshopError("The requested workshop fault is not supported.");
     }
-    argumentsList = scenario.arguments;
+    argumentsList = SCENARIOS.cpu.arguments;
   }
   const argumentsText = argumentsList.length ? ` ${argumentsList.join(" ")}` : "";
   return (
@@ -253,18 +299,15 @@ export function buildCpuMetricsUrl(vmResourceId, now = new Date()) {
   return `${ARM_ENDPOINT}${vmResourceId}/providers/Microsoft.Insights/metrics?${parameters}`;
 }
 
-export function buildDiskQuery(vmResourceId) {
-  if (!RESOURCE_ID.test(vmResourceId)) {
-    throw new WorkshopError("The selected VM resource ID is invalid.");
-  }
-  const escapedId = vmResourceId.replaceAll("'", "''");
-  return `Perf
+export function buildPostgresqlQuery() {
+  return `AppDependencies
 | where TimeGenerated > ago(30m)
-| where _ResourceId =~ '${escapedId}'
-| where ObjectName == 'Logical Disk'
-| where CounterName == '% Free Space'
-| where InstanceName == '/var/lib/orders'
-| summarize AverageFreeSpace = avg(CounterValue) by bin(TimeGenerated, 1m)
+| where AppRoleName == 'orders-api' and DependencyType == 'PostgreSQL'
+| extend Samples = tolong(coalesce(ItemCount, 1))
+| summarize Total = sum(Samples), Failed = sumif(Samples, Success == false)
+    by bin(TimeGenerated, 1m)
+| extend FailurePercent = 100.0 * todouble(Failed) / todouble(Total)
+| project TimeGenerated, FailurePercent
 | order by TimeGenerated asc`;
 }
 
@@ -295,7 +338,7 @@ export function parseMetricSeries(payload) {
     }));
 }
 
-export function parseLogSeries(payload) {
+export function parsePostgresqlSeries(payload) {
   const tables = payload?.tables;
   if (!Array.isArray(tables) || tables.length !== 1) {
     throw new WorkshopError("Log Analytics returned an unexpected query result.");
@@ -306,10 +349,13 @@ export function parseLogSeries(payload) {
   }
   const columns = table.columns.map((column) => String(column?.name || "").toLowerCase());
   const timeIndex = columns.indexOf("timegenerated");
-  const valueIndex = columns.indexOf("averagefreespace");
+  const valueIndex = columns.indexOf("failurepercent");
   if (timeIndex < 0 || valueIndex < 0) {
-    throw new WorkshopError("Log Analytics did not return the expected disk columns.");
+    throw new WorkshopError(
+      "Log Analytics did not return the expected PostgreSQL dependency columns.",
+    );
   }
+
   return table.rows
     .map((row) => {
       const rawTimestamp = row[timeIndex];
@@ -324,6 +370,63 @@ export function parseLogSeries(payload) {
         Number.isFinite(sample.timestamp.getTime()) && Number.isFinite(sample.value),
     )
     .sort((left, right) => left.timestamp - right.timestamp);
+}
+
+export function postgresqlFaultRuleUrl(networkSecurityGroupId) {
+  if (
+    !RESOURCE_ID.test(networkSecurityGroupId) ||
+    !/\/providers\/Microsoft\.Network\/networkSecurityGroups\/[^/]+$/i.test(
+      networkSecurityGroupId,
+    )
+  ) {
+    throw new WorkshopError(
+      "The selected workshop network security group ID is invalid.",
+    );
+  }
+  return (
+    `${ARM_ENDPOINT}${networkSecurityGroupId}/securityRules/` +
+    `${POSTGRESQL_FAULT_RULE_NAME}?api-version=2024-05-01`
+  );
+}
+
+export function parsePostgresqlFaultRule(payload) {
+  const properties = payload?.properties;
+  if (!properties || typeof properties !== "object") {
+    throw new WorkshopError("Azure returned an invalid PostgreSQL fault rule.");
+  }
+  for (const [name, expected] of Object.entries(
+    POSTGRESQL_FAULT_RULE_PROPERTIES,
+  )) {
+    if (properties[name] !== expected) {
+      throw new WorkshopError(
+        `The PostgreSQL fault rule has an unexpected ${name}.`,
+      );
+    }
+  }
+  if (properties.access !== "Allow" && properties.access !== "Deny") {
+    throw new WorkshopError(
+      "The PostgreSQL fault rule has an unexpected access state.",
+    );
+  }
+  return Object.freeze({
+    postgresql: properties.access === "Deny" ? "active" : "inactive",
+    postgresqlAccess: properties.access,
+    etag: typeof payload.etag === "string" ? payload.etag : "",
+  });
+}
+
+export function postgresqlFaultRuleBody(access) {
+  if (access !== "Allow" && access !== "Deny") {
+    throw new WorkshopError("The PostgreSQL fault rule access value is invalid.");
+  }
+  return {
+    properties: {
+      ...POSTGRESQL_FAULT_RULE_PROPERTIES,
+      access,
+      description:
+        "Workshop toggle for VM-to-PostgreSQL connectivity; azd up reconciles this rule to Allow.",
+    },
+  };
 }
 
 export function portalResourceUrl(tenantId, resourceId, suffix = "overview") {

@@ -1,7 +1,7 @@
 ---
 title: Module 06 - Preserve Evidence and Clean Up
 description: Capture final portal evidence, stop all workshop activity, preserve investigation artifacts, delete the Azure environment, and verify removal.
-ms.date: 2026-09-25
+ms.date: 2026-10-06
 ms.topic: how-to
 keywords:
   - cleanup
@@ -19,19 +19,21 @@ estimated_reading_time: 12
 
 ## Overview
 
-The workshop VM, managed disks, public IP, monitoring resources, and Azure SRE
-Agent continue to incur charges until deleted. This module captures the final
-visual evidence, stops every synthetic activity, preserves your notes, removes
-the Azure environment, and verifies that the resource group is gone.
+The workshop VM, PostgreSQL Flexible Server, private DNS and network resources,
+public IP, monitoring resources, and Azure SRE Agent continue to incur charges
+until deleted. Resetting an incident does not stop billing. This module captures
+final evidence, stops synthetic activity, restores the normal NSG state,
+preserves notes, removes the Azure environment, and verifies that the resource
+group is gone.
 
-Deleting the resource group permanently removes the SQLite database and its
-managed disk. Preserve only synthetic evidence appropriate for your
-organization's data-handling policy.
+Deleting the resource group permanently removes the PostgreSQL server, its
+locally redundant backups, and all synthetic orders. Preserve only evidence
+appropriate for your organization's data-handling policy.
 
 ## Learning objectives
 
-* Capture final healthy Orders GUI, CPU, and API views after both incidents.
-* Stop load generation and reset bounded faults.
+* Capture final healthy Orders GUI, CPU, PostgreSQL dependency, and API views.
+* Stop load generation and reset CPU and PostgreSQL fault controls.
 * Preserve notes, charts, alert history, and agent findings.
 * Review the exact Azure scope before deletion.
 * Delete and verify the workshop environment.
@@ -91,8 +93,10 @@ Before deleting anything:
 5. Open Application Insights **Performance** and confirm current endpoint
    traffic.
 6. Open **Monitor** > **Alerts**, include resolved alerts, and capture the CPU
-   and data-disk alert history.
+   and PostgreSQL connectivity alert history.
 7. Save the final SRE Agent investigation summaries.
+8. In Log Analytics, capture the PostgreSQL dependency failure and recovery
+   window from Module 04.
 
 <!-- SCREENSHOT: Final VM CPU chart showing baseline, incident spike, and recovered state -->
 
@@ -118,8 +122,12 @@ Then verify the guest fault state:
     python scripts/workshop.py fault status
     ```
 
-Both `cpu` and `disk` should report inactive and `ballastBytes` should be zero.
-The reset is safe to repeat and does not delete SQLite data.
+CPU should report `inactive`. PostgreSQL should report `inactive` with
+`postgresqlAccess` equal to `Allow` and `postgresqlConnectivity` equal to
+`ready`. Reset is safe to repeat. It stops the transient CPU unit, restores and
+reads back the fixed NSG rule, recycles only `orders-api`, and verifies
+readiness plus an order read; it does not alter database rows or restart the VM
+or PostgreSQL.
 
 ### Task 3: Preserve the evidence worth keeping
 
@@ -148,7 +156,7 @@ Keep:
 
 * Baseline values and portal screenshots.
 * The final healthy Orders GUI screenshot.
-* CPU and data-disk timelines.
+* CPU and PostgreSQL dependency timelines.
 * Alert and response-plan timestamps.
 * Agent drafts and your corrections.
 * The final incident review and improvement backlog.
@@ -186,10 +194,13 @@ evidence. Copy them only if they are useful and permitted by your organization.
 
 Expect resources for:
 
-* The Ubuntu VM, OS disk, managed data disk, NIC, public IP, VNet, and NSG.
+* The Ubuntu VM, its compute resources, NIC, public IP, VNet, both subnets, and
+  NSG.
+* PostgreSQL Flexible Server, the `orders` database, private DNS zone, and VNet
+  link.
 * Log Analytics, Application Insights, Azure Monitor Agent, and the data
   collection rule.
-* CPU, data-disk, and HTTP 5xx alert rules.
+* CPU, PostgreSQL connectivity, and HTTP 5xx alert rules.
 * Azure SRE Agent, its connectors, and managed identity.
 
 Stop if the selected resource group is not the workshop group you intend to
@@ -200,18 +211,18 @@ delete.
 === "Bash"
 
     ```bash
-    azd down --purge
+    azd down --purge --force
     ```
 
 === "PowerShell"
 
     ```powershell
-    azd down --purge
+    azd down --purge --force
     ```
 
 Read the interactive confirmation carefully. This removes the resource group,
-VM, both disks, public endpoint, telemetry, alert history, response plan, and
-SRE Agent. There is no database backup.
+VM, private network and DNS resources, PostgreSQL server and backups, public
+endpoint, telemetry, alert history, response plan, and SRE Agent.
 
 Allow Azure several minutes to finish deletion.
 
@@ -296,7 +307,7 @@ Do not delete the repository or your copied review artifacts.
 * [x] All load generation and faults were stopped.
 * [x] Notes and screenshots were copied outside deployment state.
 * [x] You reviewed the resource inventory before deletion.
-* [x] `azd down --purge` completed.
+* [x] `azd down --purge --force` completed.
 * [x] The resource group no longer exists and no suffix-matched resources remain.
 
 ## Knowledge check
@@ -314,8 +325,8 @@ Do not delete the repository or your copied review artifacts.
 
 You deployed and validated a persistent single-VM workload, used its customer
 GUI, confirmed healthy telemetry, operated an SRE Agent response plan, handled
-CPU and disk-capacity incidents, verified automated findings, and converted the
-evidence into an improvement backlog.
+CPU and PostgreSQL connectivity incidents, verified automated findings, and
+converted the evidence into an improvement backlog.
 
 [Return to workshop home :material-home:](../../index.md){ .md-button .md-button--primary }
 [Troubleshooting](../30-appendix/02-troubleshooting.md){ .md-button }

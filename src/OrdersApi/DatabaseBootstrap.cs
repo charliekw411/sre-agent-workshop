@@ -1,10 +1,14 @@
-using System.Globalization;
-using Microsoft.Data.Sqlite;
+using System.Data;
+using Npgsql;
+using NpgsqlTypes;
 
 namespace OrdersApi;
 
 internal static class DatabaseBootstrap
 {
+    internal const long MigrationLockId = 5_923_776_303_211_813_724;
+    internal const long CurrentMigrationVersion = 1;
+
     public static async Task<int> RunAsync(string[] args)
     {
         try
@@ -15,20 +19,28 @@ internal static class DatabaseBootstrap
                 .AddCommandLine(args)
                 .Build();
 
-            var database = new OrdersDatabase(configuration.GetConnectionString("OrdersDb"));
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await using var database = new OrdersDatabase(
+                configuration.GetConnectionString("OrdersDb"),
+                configuration["OrdersDatabase:Authentication"],
+                configuration["OrdersDatabase:ManagedIdentityClientId"]);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             await InitializeAsync(database, timeout.Token);
-            Console.WriteLine("Orders SQLite database bootstrap completed.");
+            Console.WriteLine("Orders PostgreSQL database bootstrap completed.");
             return 0;
         }
         catch (InvalidOperationException ex)
         {
             Console.Error.WriteLine($"Orders database bootstrap failed: {ex.Message}");
         }
-        catch (SqliteException ex)
+        catch (PostgresException ex)
         {
             Console.Error.WriteLine(
-                $"Orders database bootstrap failed (SQLite error {ex.SqliteErrorCode}/{ex.SqliteExtendedErrorCode}): {ex.Message}");
+                $"Orders database bootstrap failed (PostgreSQL SQLSTATE {ex.SqlState}).");
+        }
+        catch (NpgsqlException ex)
+        {
+            Console.Error.WriteLine(
+                $"Orders database bootstrap failed (PostgreSQL connectivity; transient={ex.IsTransient}).");
         }
         catch (OperationCanceledException)
         {
@@ -38,72 +50,184 @@ internal static class DatabaseBootstrap
         return 1;
     }
 
-    internal static async Task InitializeAsync(OrdersDatabase database, CancellationToken cancellationToken)
+    internal static async Task InitializeAsync(
+        OrdersDatabase database, CancellationToken cancellationToken)
     {
-        await using var connection = database.CreateConnection(allowCreate: true);
-        await connection.OpenAsync(cancellationToken);
-        await OrdersDatabase.ConfigureConnectionAsync(connection, cancellationToken);
-
-        await using (var journal = connection.CreateCommand())
+        await using var connection = await database.OpenConnectionAsync(cancellationToken);
+        await using (var lockCommand = connection.CreateCommand())
         {
-            journal.CommandText = "PRAGMA journal_mode = WAL;";
-            var mode = Convert.ToString(await journal.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
-            if (!string.Equals(mode, "wal", StringComparison.OrdinalIgnoreCase))
+            lockCommand.CommandText = "SELECT pg_advisory_lock(@lock_id);";
+            lockCommand.Parameters.AddWithValue("lock_id", MigrationLockId);
+            await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        try
+        {
+            await using var transaction = await connection.BeginTransactionAsync(
+                IsolationLevel.Serializable, cancellationToken);
+
+            await ExecuteAsync(
+                connection,
+                transaction,
+                """
+                CREATE TABLE IF NOT EXISTS orders_schema_migrations
+                (
+                    version    bigint PRIMARY KEY,
+                    applied_at timestamptz NOT NULL DEFAULT now()
+                );
+                """,
+                null,
+                cancellationToken);
+
+            var applied = new HashSet<long>();
+            await using (var command = connection.CreateCommand())
             {
-                throw new InvalidOperationException("The orders database must support SQLite WAL mode.");
+                command.Transaction = transaction;
+                command.CommandText =
+                    "SELECT version FROM orders_schema_migrations ORDER BY version;";
+                await using var reader =
+                    await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    applied.Add(reader.GetInt64(0));
+                }
             }
-        }
 
-        await using var transaction = connection.BeginTransaction();
-        await using (var schema = connection.CreateCommand())
+            if (!applied.Contains(1))
+            {
+                await ApplyInitialSchemaAsync(connection, transaction, cancellationToken);
+                await ExecuteAsync(
+                    connection,
+                    transaction,
+                    "INSERT INTO orders_schema_migrations (version) VALUES (1);",
+                    null,
+                    cancellationToken);
+            }
+
+            await SeedAsync(connection, transaction, cancellationToken);
+            await SynchronizeIdentitySequenceAsync(
+                connection, transaction, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        finally
         {
-            schema.Transaction = transaction;
-            schema.CommandText = """
-                CREATE TABLE IF NOT EXISTS Orders
-                (
-                    OrderId    INTEGER PRIMARY KEY AUTOINCREMENT,
-                    CustomerId TEXT NOT NULL CHECK (length(CustomerId) BETWEEN 1 AND 64 AND length(trim(CustomerId)) > 0),
-                    ProductId  TEXT NOT NULL CHECK (length(ProductId) BETWEEN 1 AND 64 AND length(trim(ProductId)) > 0),
-                    Quantity   INTEGER NOT NULL CHECK (Quantity BETWEEN 1 AND 1000),
-                    UnitPrice  TEXT NOT NULL,
-                    CreatedUtc TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS IX_Orders_CreatedUtc ON Orders (CreatedUtc DESC, OrderId DESC);
-
-                CREATE TABLE IF NOT EXISTS OrderRequests
-                (
-                    RequestId  TEXT PRIMARY KEY CHECK (length(RequestId) BETWEEN 1 AND 128),
-                    CustomerId TEXT NOT NULL,
-                    ProductId  TEXT NOT NULL,
-                    Quantity   INTEGER NOT NULL,
-                    UnitPrice  TEXT NOT NULL,
-                    OrderId    INTEGER UNIQUE,
-                    FOREIGN KEY (OrderId) REFERENCES Orders (OrderId)
-                );
-                """;
-            await schema.ExecuteNonQueryAsync(cancellationToken);
+            await using var unlockCommand = connection.CreateCommand();
+            unlockCommand.CommandText = "SELECT pg_advisory_unlock(@lock_id);";
+            unlockCommand.Parameters.AddWithValue("lock_id", MigrationLockId);
+            await unlockCommand.ExecuteNonQueryAsync(CancellationToken.None);
         }
+    }
 
+    private static async Task ApplyInitialSchemaAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteAsync(
+            connection,
+            transaction,
+            """
+            CREATE TABLE orders
+            (
+                order_id    bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                customer_id varchar(64) NOT NULL
+                    CHECK (length(customer_id) BETWEEN 1 AND 64 AND length(btrim(customer_id)) > 0),
+                product_id  varchar(64) NOT NULL
+                    CHECK (length(product_id) BETWEEN 1 AND 64 AND length(btrim(product_id)) > 0),
+                quantity    integer NOT NULL CHECK (quantity BETWEEN 1 AND 1000),
+                unit_price  numeric(12,2) NOT NULL CHECK (unit_price >= 0),
+                created_utc timestamptz NOT NULL
+            );
+
+            CREATE INDEX ix_orders_created_utc
+                ON orders (created_utc DESC, order_id DESC);
+
+            CREATE TABLE order_requests
+            (
+                request_id  varchar(128) PRIMARY KEY,
+                customer_id varchar(64) NOT NULL,
+                product_id  varchar(64) NOT NULL,
+                quantity    integer NOT NULL,
+                unit_price  numeric(12,2) NOT NULL,
+                order_id    bigint UNIQUE REFERENCES orders (order_id),
+                CHECK (length(request_id) BETWEEN 1 AND 128)
+            );
+            """,
+            null,
+            cancellationToken);
+    }
+
+    private static async Task SeedAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
         for (var index = 0; index < SampleProducts.All.Count; index++)
         {
             var product = SampleProducts.All[index];
-            await using var seed = connection.CreateCommand();
-            seed.Transaction = transaction;
-            // Ignore only an existing seed ID; do not mask other constraint or storage errors.
-            seed.CommandText = """
-                INSERT INTO Orders (OrderId, CustomerId, ProductId, Quantity, UnitPrice, CreatedUtc)
-                VALUES (@OrderId, @CustomerId, @ProductId, @Quantity, @UnitPrice, @CreatedUtc)
-                ON CONFLICT(OrderId) DO NOTHING;
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO orders
+                    (order_id, customer_id, product_id, quantity, unit_price, created_utc)
+                VALUES
+                    (@order_id, @customer_id, @product_id, @quantity, @unit_price, @created_utc)
+                ON CONFLICT (order_id) DO NOTHING;
                 """;
-            seed.Parameters.AddWithValue("@OrderId", -(index + 1));
-            seed.Parameters.AddWithValue("@CustomerId", "workshop-seed");
-            seed.Parameters.AddWithValue("@ProductId", product.ProductId);
-            seed.Parameters.AddWithValue("@Quantity", 1);
-            seed.Parameters.AddWithValue("@UnitPrice", product.Price);
-            seed.Parameters.AddWithValue("@CreatedUtc", "2026-01-01T00:00:00.0000000Z");
-            await seed.ExecuteNonQueryAsync(cancellationToken);
+            command.Parameters.AddWithValue("order_id", -(index + 1L));
+            command.Parameters.AddWithValue("customer_id", "workshop-seed");
+            command.Parameters.AddWithValue("product_id", product.ProductId);
+            command.Parameters.AddWithValue("quantity", 1);
+            command.Parameters.AddWithValue("unit_price", product.Price);
+            command.Parameters.AddWithValue(
+                "created_utc",
+                NpgsqlDbType.TimestampTz,
+                new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+            await command.ExecuteNonQueryAsync(cancellationToken);
         }
+    }
 
-        await transaction.CommitAsync(cancellationToken);
+    private static Task SynchronizeIdentitySequenceAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(
+            connection,
+            transaction,
+            """
+            WITH sequence_state AS
+            (
+                SELECT last_value, is_called
+                FROM orders_order_id_seq
+            ),
+            positive_orders AS
+            (
+                SELECT MAX(order_id) AS max_order_id
+                FROM orders
+                WHERE order_id > 0
+            )
+            SELECT setval(
+                pg_get_serial_sequence('orders', 'order_id'),
+                GREATEST(
+                    COALESCE((SELECT max_order_id FROM positive_orders), 1),
+                    COALESCE((SELECT last_value FROM sequence_state), 1)),
+                (SELECT max_order_id IS NOT NULL FROM positive_orders)
+                    OR (SELECT is_called FROM sequence_state));
+            """,
+            null,
+            cancellationToken);
+
+    private static async Task ExecuteAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string sql,
+        Action<NpgsqlCommand>? configure,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        configure?.Invoke(command);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }

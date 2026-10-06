@@ -45,6 +45,23 @@ jobs:
   dotnet-build:
     name: Build and test Orders API
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      ORDERS_TEST_POSTGRES_CONNECTION_STRING: >-
+        Host=127.0.0.1;Port=5432;Database=postgres;Username=postgres;Password=ci-only-postgres;SSL Mode=Disable
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set up .NET
@@ -53,10 +70,12 @@ jobs:
           dotnet-version: "8.0.x"
       - name: Build Orders API
         run: dotnet build src/OrdersApi/OrdersApi.csproj --configuration Release
-      - name: Test SQLite persistence and HTTP contract
+      - name: Test PostgreSQL persistence and HTTP contract
         run: dotnet test src/OrdersApi.Tests/OrdersApi.Tests.csproj --configuration Release
       - name: Check application formatting
-        run: dotnet format src/OrdersApi/OrdersApi.csproj --verify-no-changes --no-restore
+        run: |
+          dotnet format src/OrdersApi/OrdersApi.csproj --verify-no-changes --no-restore
+          dotnet format src/OrdersApi.Tests/OrdersApi.Tests.csproj --verify-no-changes --no-restore
 
   deployment-hooks:
     name: Deployment hooks (${{ matrix.os }})

@@ -1,14 +1,15 @@
 ---
 title: Module 05 - Review and Improve the Response
-description: Compare the CPU and data-disk investigations, build an evidence-backed root cause analysis, and turn response gaps into specific monitoring and workflow improvements.
-ms.date: 2026-09-25
+description: Compare CPU saturation and PostgreSQL connectivity investigations, grade SRE Agent claims, and produce an evidence-backed improvement plan.
+ms.date: 2026-10-06
 ms.topic: how-to
 keywords:
   - root cause analysis
   - post incident review
   - azure sre agent
+  - postgresql
   - observability
-estimated_reading_time: 20
+estimated_reading_time: 21
 ---
 
 <ul class="sre-meta">
@@ -19,51 +20,59 @@ estimated_reading_time: 20
 
 ## Overview
 
-The two incidents produced different shapes:
+The two incidents affected different layers:
 
-* CPU pressure created a resource-saturation signal with possible request
-  latency or timeouts.
-* Data-disk pressure created a leading capacity signal that should be handled
-  before requests fail.
+* CPU pressure saturated application compute and could increase latency or
+  produce timeouts.
+* The PostgreSQL fault denied only new TCP 5432 connections from the Orders
+  subnet, leaving the process and database resource running while
+  database-backed routes returned HTTP 503.
 
-This module compares Orders GUI observations, portal charts, alert history, SRE
-Agent findings, and raw telemetry. You will correct unsupported claims, write a
-concise two-incident analysis, and define improvements that are owned and
-testable.
+This module aligns customer observations, resource state, dependency telemetry,
+alerts, Activity Log, and SRE Agent findings on one UTC timeline. You will
+remove unsupported claims and turn response gaps into specific, owned, testable
+improvements.
 
 ## Learning objectives
 
-* Compare incident windows visually instead of relying on memory.
-* Separate observation, inference, cause, mitigation, and remediation.
-* Critique SRE Agent claims against specific evidence.
-* Measure detection and recovery times.
-* Convert response gaps into alerting, telemetry, and workflow improvements.
+* Compare incident and recovery windows using a consistent UTC range.
+* Separate observation, inference, cause, mitigation, and durable remediation.
+* Verify SRE Agent statements against source telemetry and configuration.
+* Measure detection, mitigation, recovery, and alert-resolution delay.
+* Distinguish a resource saturation incident from a scoped dependency outage.
+* Propose improvements with an owner and verification method.
 
 ## Evidence model
 
 ```mermaid
 flowchart LR
-    GUI[Orders GUI observations] --> O[Observations]
-    Charts[Portal charts] --> O
-    Logs[Queries and Activity Log] --> O
-    Agent[SRE Agent findings] --> C{Claim review}
-    O --> C
-    C -->|Supported| RCA[Final analysis]
-    C -->|Unsupported| Fix[Correct or remove]
-    RCA --> Actions[Owned and testable actions]
+    GUI[Orders GUI and API samples] --> O[Observed customer behavior]
+    Resource[VM and PostgreSQL resource state] --> O
+    Telemetry[Requests, dependencies, availability, metrics] --> O
+    Change[Activity Log and NSG rule state] --> O
+    Agent[SRE Agent claims] --> Review{Claim review}
+    O --> Review
+    Review -->|Supported| RCA[Final incident analysis]
+    Review -->|Partial| Qualify[Qualify uncertainty]
+    Review -->|Unsupported| Remove[Correct or remove]
+    RCA --> Actions[Owned and testable improvements]
 ```
 
 ## Tasks
 
-### Task 1: Confirm the environment is healthy now
+### Task 1: Restore and validate the normal state
+
+Reset before collecting post-incident evidence:
 
 === "Bash"
 
     ```bash
     source .workshop/workshop.env
     python scripts/workshop.py fault reset
+    python scripts/workshop.py fault status
     python scripts/workshop.py smoke
     python scripts/workshop.py inspect
+    curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/database" | jq .
     ```
 
 === "PowerShell"
@@ -71,16 +80,17 @@ flowchart LR
     ```powershell
     . ./.workshop/workshop.ps1
     python scripts/workshop.py fault reset
+    python scripts/workshop.py fault status
     python scripts/workshop.py smoke
     python scripts/workshop.py inspect
+    Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/database"
     ```
 
-Open `SERVICE_ORDERS_API_ENDPOINT_URL` in the Orders GUI, select **Refresh
-orders** and **Refresh status**, and confirm the current customer view is
-healthy. This closes the incident narrative from the participant's perspective;
-the traffic loop below creates the fixed comparison segment for telemetry.
+Confirm CPU is inactive and PostgreSQL access is `Allow`. Open the Orders GUI,
+select **Refresh orders** and **Refresh status**, and confirm liveness, readiness,
+and PostgreSQL are healthy.
 
-Generate a short healthy segment:
+Generate a one-minute recovered segment:
 
 === "Bash"
 
@@ -101,63 +111,82 @@ Generate a short healthy segment:
     }
     ```
 
-Open the VM's **Monitoring** > **Metrics** blade, select **Percentage CPU**, and
-set the time range wide enough to show the Module 03 spike and the current
-healthy segment. Record the contrast between incident and recovery.
+This recovered segment is evidence. It does not erase the earlier incident or
+prove a durable production fix.
 
-<!-- SCREENSHOT: VM Percentage CPU chart showing the incident spike and healthy recovered traffic -->
+### Task 2: Rebuild both visual timelines
 
-### Task 2: Rebuild the two visual timelines
+Use UTC and one time range that includes both incidents and the recovered
+segment.
 
-Use portal time ranges that include both incidents.
+For the CPU incident:
 
-For CPU:
+1. Open the VM **Percentage CPU** metric with one-minute granularity.
+2. Record baseline, first threshold breach, maximum, reset, and return to
+   baseline.
+3. Open Application Insights **Performance** for the same range.
+4. Compare request success and duration with your Orders GUI or terminal notes.
+5. Open `alert-orders-high-cpu`, including its resolution history.
 
-1. Open the VM **Percentage CPU** chart.
-2. Note baseline, first threshold breach, maximum, mitigation, and recovery.
-3. Open Application Insights **Performance** for the same range and compare
-   request duration.
-4. Compare those timestamps with any slow, timeout, failure, and recovery state
-   you recorded from the Orders GUI in Module 03.
+For the PostgreSQL incident:
 
-For disk:
+1. Open Log Analytics **Logs** and run:
 
-1. Open Log Analytics **Logs**.
-2. Run the `/var/lib/orders` free-space timechart from Module 04.
-3. Note baseline, first value below 15 percent, minimum, reset, and recovery.
-4. Open Application Insights **Failures** and determine whether customer errors
-   occurred in the same interval.
-5. Compare the telemetry with the Orders GUI's low-capacity and recovery states.
+    ```kusto
+    AppDependencies
+    | where TimeGenerated > ago(6h)
+    | where AppRoleName == "orders-api"
+    | where DependencyType == "PostgreSQL"
+    | extend Samples = tolong(coalesce(ItemCount, 1))
+    | summarize
+        Total = sum(Samples),
+        Failed = sumif(Samples, Success == false)
+      by bin(TimeGenerated, 1m)
+    | extend FailurePercent = 100.0 * todouble(Failed) / todouble(Total)
+    | order by TimeGenerated asc
+    | render timechart
+    ```
 
-For alert handling:
+2. Record the rule update, first failed dependency, first HTTP 503, alert start,
+   reset, first recovered dependency, and alert resolution.
+3. Compare `GET /health/live` with `GET /health/ready`, `GET /database`, and
+   order operations.
+4. Open `alert-orders-postgresql-connectivity` and any related HTTP 5xx alert.
+5. Compare the application evidence with the PostgreSQL server state and
+   `PostgreSqlFaultInjection` Activity Log entries.
 
-1. Open **Monitor** > **Alerts**.
-2. Include resolved alerts in the filter.
-3. Compare alert start and resolution times with your visual timelines.
-4. Open the corresponding SRE Agent investigations.
+Record the API-only recycle after the rule-change read-back. It drains stateful
+pooled connections so the injector can verify controlled HTTP 503 responses
+before reporting success; do not misclassify that deliberate recycle as the
+root cause. Likewise, reset does not complete on an `Allow` read-back alone.
+Use the first successful dependency and request after the verified recovery.
 
-Do not compare charts with different time zones or time ranges. Use UTC in the
-written timeline.
+<!-- SCREENSHOT: One actual workshop timeline showing CPU, PostgreSQL dependency, and recovered request evidence -->
 
-### Task 3: Ask the agent for a two-incident review
+### Task 3: Ask for a two-incident review
 
-In SRE Agent, ask:
+In the SRE Agent experience, ask:
 
 ```text
-Produce an evidence-backed review of the high-CPU and data-disk alerts for this
-resource group.
+Produce an evidence-backed review of the high-CPU and PostgreSQL-connectivity
+alerts for this resource group.
 
 For each event:
-- Separate degradation start, alert start, mitigation, recovery, and alert resolution.
-- Quantify customer impact by operation and do not infer failures from a capacity
-  threshold alone.
-- Identify the triggering control-plane event and the affected resource.
+- Separate the control-plane change, first telemetry deviation, alert start,
+  mitigation, measured recovery, and alert resolution.
+- Quantify customer impact by API operation.
+- Identify the affected resource and dependency boundary.
+- Distinguish direct observations from inferences.
+- Check the alternative cause represented by the other incident.
 - Distinguish immediate mitigation from durable remediation.
-- Cite the Azure metric, Application Insights table, Log Analytics query, or
-  Activity Log event supporting every material claim.
+- Cite the Azure metric, Application Insights table, Log Analytics query,
+  resource configuration, or Activity Log event behind every material claim.
 
-Then identify common response gaps and rank three improvements by risk reduced
-relative to effort.
+For the PostgreSQL event, verify that the server stayed running and private,
+private DNS remained configured, and only the fixed outbound TCP 5432 rule
+changed. Do not claim data loss without row-level evidence.
+
+Rank three shared improvements by risk reduction relative to effort.
 ```
 
 Save the response verbatim to `.workshop/notes/agent-review.md`.
@@ -168,21 +197,31 @@ Use this rubric:
 
 | Check | Question |
 | --- | --- |
-| Time | Does the claim use the first telemetry deviation or merely the alert time? |
-| Scope | Does it name the correct VM, filesystem, and API operations? |
-| Impact | Do Orders GUI observations and measured API operations agree, without inferring impact from infrastructure state alone? |
-| Trigger | Is there a correlated Run Command operation or only temporal coincidence? |
-| Exclusion | Were CPU, storage, API, and SQLite alternatives checked where relevant? |
-| Recovery | Does the evidence show the signal returned to baseline? |
+| Time | Does the claim distinguish change, impact, alert, reset, recovery, and resolution? |
+| Scope | Does it name the correct VM, PostgreSQL server, NSG rule, subnet path, and API operations? |
+| Impact | Do measured requests support the stated customer impact? |
+| Trigger | Is there a correlated Run Command or security-rule write? |
+| Dependency | Does the PostgreSQL claim use `DependencyType == "PostgreSQL"` evidence? |
+| Exclusion | Were process, CPU, DNS, server state, authentication, and unrelated network alternatives checked where relevant? |
+| Data safety | Is a no-data-loss statement supported by the witness order rather than inferred from recovery? |
+| Recovery | Do successful requests and dependencies occur after reset? |
 | Action | Does the recommendation name an owner and a verification method? |
 
-Mark each claim **supported**, **partially supported**, or **unsupported**.
-Challenge at least one weak claim by pasting the contradictory metric or query
-result back into the investigation and asking the agent to revise it.
+Mark each material claim **supported**, **partially supported**, or
+**unsupported**. Paste at least one weak or contradictory source result back
+into the investigation and ask for a revision.
 
-### Task 5: Verify the cross-incident telemetry
+Examples of claims to reject unless directly supported:
 
-View request behavior across the full period:
+* "The database was down" when Azure reports it remained ready.
+* "DNS failed" when the name continued to resolve to a private address.
+* "Data was corrupted" when the witness order is unchanged.
+* "The CPU fault caused the PostgreSQL alert" when the windows do not overlap.
+* "Reset fixed the service" before successful recovery samples arrive.
+
+### Task 5: Query cross-incident evidence
+
+Compare request behavior:
 
 === "Bash"
 
@@ -193,11 +232,12 @@ View request behavior across the full period:
     AppRequests
     | where TimeGenerated > ago(6h)
     | where AppRoleName == 'orders-api'
+    | extend Samples = tolong(coalesce(ItemCount, 1))
     | summarize
-        Requests = sum(ItemCount),
-        Failures = sumif(ItemCount, Success == false),
+        Requests = sum(Samples),
+        Failures = sumif(Samples, Success == false),
         P95Ms = round(percentile(DurationMs, 95), 1)
-      by Name, bin(TimeGenerated, 5m)
+      by Name, ResultCode, bin(TimeGenerated, 5m)
     | order by TimeGenerated asc, Name asc
     " \
       --output table
@@ -210,11 +250,12 @@ View request behavior across the full period:
     AppRequests
     | where TimeGenerated > ago(6h)
     | where AppRoleName == 'orders-api'
+    | extend Samples = tolong(coalesce(ItemCount, 1))
     | summarize
-        Requests = sum(ItemCount),
-        Failures = sumif(ItemCount, Success == false),
+        Requests = sum(Samples),
+        Failures = sumif(Samples, Success == false),
         P95Ms = round(percentile(DurationMs, 95), 1)
-      by Name, bin(TimeGenerated, 5m)
+      by Name, ResultCode, bin(TimeGenerated, 5m)
     | order by TimeGenerated asc, Name asc
     '@
 
@@ -224,7 +265,7 @@ View request behavior across the full period:
       --output table
     ```
 
-Check whether SQLite actually failed:
+Compare PostgreSQL dependency and availability results:
 
 === "Bash"
 
@@ -232,11 +273,20 @@ Check whether SQLite actually failed:
     az monitor log-analytics query \
       --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
       --analytics-query "
-    union AppExceptions, AppDependencies
+    union
+      (AppDependencies
+       | where AppRoleName == 'orders-api'
+       | where DependencyType == 'PostgreSQL'
+       | extend Samples = tolong(coalesce(ItemCount, 1))
+       | summarize Samples=sum(Samples), Failures=sumif(Samples, Success == false)
+         by Signal='PostgreSQL dependency', bin(TimeGenerated, 5m)),
+      (AppAvailabilityResults
+       | where AppRoleName == 'orders-api'
+       | where Name == 'orders-api-postgresql'
+       | extend Samples = tolong(coalesce(ItemCount, 1))
+       | summarize Samples=sum(Samples), Failures=sumif(Samples, Success == false)
+         by Signal='PostgreSQL availability', bin(TimeGenerated, 5m))
     | where TimeGenerated > ago(6h)
-    | where AppRoleName == 'orders-api'
-    | where (DependencyType == 'SQLite' and Success == false) or Type == 'AppExceptions'
-    | project TimeGenerated, Type, DependencyType, Name, Success, ResultCode, ProblemId, OuterMessage
     | order by TimeGenerated asc
     " \
       --output table
@@ -246,11 +296,20 @@ Check whether SQLite actually failed:
 
     ```powershell
     $query = @'
-    union AppExceptions, AppDependencies
+    union
+      (AppDependencies
+       | where AppRoleName == 'orders-api'
+       | where DependencyType == 'PostgreSQL'
+       | extend Samples = tolong(coalesce(ItemCount, 1))
+       | summarize Samples=sum(Samples), Failures=sumif(Samples, Success == false)
+         by Signal='PostgreSQL dependency', bin(TimeGenerated, 5m)),
+      (AppAvailabilityResults
+       | where AppRoleName == 'orders-api'
+       | where Name == 'orders-api-postgresql'
+       | extend Samples = tolong(coalesce(ItemCount, 1))
+       | summarize Samples=sum(Samples), Failures=sumif(Samples, Success == false)
+         by Signal='PostgreSQL availability', bin(TimeGenerated, 5m))
     | where TimeGenerated > ago(6h)
-    | where AppRoleName == 'orders-api'
-    | where (DependencyType == 'SQLite' and Success == false) or Type == 'AppExceptions'
-    | project TimeGenerated, Type, DependencyType, Name, Success, ResultCode, ProblemId, OuterMessage
     | order by TimeGenerated asc
     '@
 
@@ -260,13 +319,34 @@ Check whether SQLite actually failed:
       --output table
     ```
 
-An empty exception result during the disk exercise supports the conclusion that
-the alert was preventative. It is not missing evidence that should be filled in
-with a guess.
+List both control-plane changes:
+
+=== "Bash"
+
+    ```bash
+    az monitor activity-log list \
+      --resource-group "${RESOURCE_GROUP}" \
+      --offset 6h \
+      --query "[?contains(operationName.localizedValue, 'Run Command') || contains(resourceId, 'PostgreSqlFaultInjection')].{Time:eventTimestamp,Operation:operationName.localizedValue,Status:status.value,Caller:caller,Resource:resourceId}" \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az monitor activity-log list `
+      --resource-group $env:RESOURCE_GROUP `
+      --offset 6h `
+      --query "[?contains(operationName.localizedValue, 'Run Command') || contains(resourceId, 'PostgreSqlFaultInjection')].{Time:eventTimestamp,Operation:operationName.localizedValue,Status:status.value,Caller:caller,Resource:resourceId}" `
+      --output table
+    ```
+
+An empty failure interval outside Module 04 is useful evidence. Do not fill
+missing telemetry with an assumed narrative.
 
 ### Task 6: Write the final review
 
-Create `.workshop/notes/final-review.md` with this structure:
+Create `.workshop/notes/final-review.md`:
 
 ```markdown
 # Workshop incident review
@@ -278,50 +358,52 @@ Create `.workshop/notes/final-review.md` with this structure:
 | Event | UTC time | Evidence |
 | --- | --- | --- |
 | Fault requested | | |
-| Degradation began | | |
+| CPU departed baseline | | |
+| Customer degradation began | | |
 | Alert fired | | |
-| Mitigation | | |
-| Recovery | | |
+| Reset | | |
+| Measured recovery | | |
+| Alert resolved | | |
 
-Impact:
+Observed impact:
 
-Orders GUI evidence:
+Trigger and causal evidence:
 
-Trigger:
+Alternative causes checked:
 
-Contributing factors:
-
-Mitigation:
+Immediate mitigation:
 
 Durable remediation:
 
-## Incident 2: SQLite data-disk pressure
+## Incident 2: PostgreSQL connectivity loss
 
 | Event | UTC time | Evidence |
 | --- | --- | --- |
-| Fault requested | | |
-| Free space crossed 15 percent | | |
+| Rule changed to Deny | | |
+| First failed dependency | | |
+| First HTTP 503 | | |
 | Alert fired | | |
-| Mitigation | | |
-| Recovery | | |
+| Rule restored to Allow | | |
+| First successful dependency and request | | |
+| Alert resolved | | |
 
-Observed customer impact:
+Observed impact:
 
-Orders GUI evidence:
+Trigger and causal evidence:
 
-Risk if left unresolved:
+Server, DNS, identity, and data checks:
 
-Trigger:
+Alternative causes checked:
 
-Mitigation:
+Immediate mitigation:
 
 Durable remediation:
 
 ## Agent assessment
 
-What it got right:
+Supported claims:
 
-What required correction:
+Corrected or qualified claims:
 
 Unsupported claims removed:
 
@@ -334,51 +416,56 @@ Unsupported claims removed:
 | P2 | | | |
 ```
 
-The final version should be shorter than the agent draft and contain more direct
-evidence references.
+The final review should be shorter than the raw agent response and contain more
+direct evidence references.
 
 ### Task 7: Improve the response design
 
-Choose at least one improvement from each category:
+Choose at least one improvement from each relevant category:
 
 | Category | Example improvement |
 | --- | --- |
-| Visualization | Pin the CPU, request-duration, and disk-free-space charts to an operator dashboard with one UTC time picker. |
-| Detection | Tune thresholds only after measuring a longer baseline; keep capacity alerts ahead of customer failure. |
-| Telemetry | Add an external availability test and business-level order-submission SLI. |
-| Investigation | Require control-plane change correlation and explicit observed-versus-inferred labels. |
-| Response plan | Use narrower service or alert-title filters when a production estate has multiple owning teams. |
-| Remediation | Add capacity forecasting and a tested VM/application recovery procedure. |
+| Visualization | Place CPU, request duration, PostgreSQL dependency failures, and availability on one UTC dashboard. |
+| Detection | Alert on failed PostgreSQL dependencies and separately measure customer-facing order success. |
+| Telemetry | Add an external availability test and a business-level order-submission SLI. |
+| Network diagnosis | Document a private DNS and TCP 5432 decision tree that does not require public access. |
+| Investigation | Require exact control-plane change correlation and observed-versus-inferred labels. |
+| Response plan | Narrow filters by owning service and alert title in a larger production estate. |
+| Identity | Separate migration administration from least-privileged application runtime. |
+| Resilience | Evaluate multiple API instances, PostgreSQL HA, connection retry policy, and regional recovery against service objectives and cost. |
 
-Do not change the deployed response plan merely to finish the exercise. Record
-the proposed change, its risk, and how you would test it before production use.
+Do not change the deployed response plan only to finish the exercise. Record the
+proposed change, owner, risk, and validation approach.
 
 ## Validation
 
-* [x] You viewed the recovered CPU line alongside the incident spike.
-* [x] The current Orders GUI view is healthy and its incident observations were reconciled with telemetry.
-* [x] You compared CPU, disk, request, and alert timelines in the portal.
-* [x] Every material agent claim was graded.
+* [x] The environment was reset to CPU inactive and PostgreSQL `Allow` before
+  recovered evidence was collected.
+* [x] CPU, request, dependency, availability, alert, and control-plane timelines
+  use the same UTC range.
+* [x] Every material SRE Agent claim was graded.
 * [x] At least one weak claim was challenged and revised or removed.
-* [x] The final review distinguishes observed impact from future risk.
+* [x] The review distinguishes a live process from dependency-backed readiness.
+* [x] The PostgreSQL analysis proves rule scope and witness persistence without
+  claiming the server stopped or data was lost.
 * [x] Improvements have owners and verification methods.
 
 ## Knowledge check
 
 ??? question "Why is a well-formatted agent report not sufficient evidence?"
-    Formatting demonstrates presentation quality, not factual support. A defensible report links each material claim to a metric, query, configuration, or control-plane event and states where evidence is incomplete.
+    Presentation quality does not establish factual support. A defensible report links each material claim to a metric, query, resource setting, API sample, or control-plane event and states where evidence is incomplete.
 
-??? question "Why should the disk event not automatically be called an outage?"
-    The workshop alert fires on a leading capacity threshold. If API requests, SQLite dependencies, and availability remain successful, the event is an incident requiring action but has no demonstrated customer outage.
+??? question "Why are reset and recovery different timestamps?"
+    Reset records the intended mitigation. Azure rule propagation, connection retry, telemetry ingestion, and alert evaluation happen later. The first successful dependency and customer request establish measured recovery.
 
-??? question "What is the most useful improvement to carry into a real service?"
-    A shared visual timeline that joins resource saturation, customer operations, alerts, and changes. It reduces context switching and makes unsupported causal stories easier to detect, regardless of whether the investigator is human or automated.
+??? question "Why does an unchanged order matter if `/database` is healthy again?"
+    Health proves current connectivity and schema availability. Reading the pre-incident witness proves that the controlled network fault and reset did not replace or remove that application data.
 
 ## Next steps
 
 [Next: Module 06 - Preserve Evidence and Clean Up :material-arrow-right:](../06-cleanup/index.md){ .md-button .md-button--primary }
 
 <div class="sre-nav" markdown>
-[:material-arrow-left: Module 04 - Respond to Data-Disk Pressure](../04-incident-data-disk/index.md)
+[:material-arrow-left: Module 04 - Respond to PostgreSQL Connectivity Loss](../04-incident-postgresql/index.md)
 [Module 06 - Preserve Evidence and Clean Up :material-arrow-right:](../06-cleanup/index.md)
 </div>

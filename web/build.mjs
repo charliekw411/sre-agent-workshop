@@ -43,7 +43,7 @@ const workshopConfig = Object.freeze({
   redirectUri: redirect.href,
   resourceGroupPrefix: "rg-sre-agent-workshop-",
   environmentTagName: "workshop-architecture",
-  environmentTagValue: "single-vm",
+  environmentTagValue: "single-vm-postgresql-v1",
   refreshSeconds: 60,
 });
 

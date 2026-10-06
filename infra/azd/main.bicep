@@ -1,4 +1,4 @@
-metadata description = 'Azure Developer CLI entry point for a fresh single-VM Azure SRE Agent workshop environment.'
+metadata description = 'Azure Developer CLI entry point for the Orders VM and private PostgreSQL Azure SRE Agent workshop.'
 
 targetScope = 'subscription'
 
@@ -28,11 +28,6 @@ param vmSshPublicKey string
 @description('VM size override. The default supplies two non-burstable x64 vCPUs.')
 param vmSize string = 'Standard_D2as_v5'
 
-@description('Separate SQLite data disk capacity in GiB; keep unchanged on redeployment unless growing the disk.')
-@minValue(4)
-@maxValue(1023)
-param dataDiskSizeGiB int = 8
-
 @description('Optional email address for workshop alert notifications.')
 param alertEmail string = ''
 
@@ -42,7 +37,7 @@ var tags = {
   workload: 'sre-agent-workshop'
   environment: envName
   'azd-env-name': envName
-  'workshop-architecture': 'single-vm'
+  'workshop-architecture': 'single-vm-postgresql-v1'
 }
 
 resource workshopResourceGroup 'Microsoft.Resources/resourceGroups@2024-03-01' = {
@@ -61,7 +56,6 @@ module workshop '../main.bicep' = {
     deployerPrincipalType: deployerPrincipalType
     vmSshPublicKey: vmSshPublicKey
     vmSize: vmSize
-    dataDiskSizeGiB: dataDiskSizeGiB
     alertEmail: alertEmail
     tags: tags
   }
@@ -77,8 +71,6 @@ output VM_NAME string = workshop.outputs.vmName
 output VM_RESOURCE_ID string = workshop.outputs.vmResourceId
 output VM_PRINCIPAL_ID string = workshop.outputs.vmPrincipalId
 output VM_ADMIN_USERNAME string = workshop.outputs.vmAdminUsername
-output DATA_DISK_NAME string = workshop.outputs.dataDiskName
-output DATA_DISK_RESOURCE_ID string = workshop.outputs.dataDiskResourceId
 output ORDERS_API_FQDN string = workshop.outputs.ordersApiFqdn
 output SERVICE_ORDERS_API_ENDPOINT_URL string = workshop.outputs.ordersApiEndpoint
 output LOG_ANALYTICS_NAME string = workshop.outputs.workspaceName
@@ -88,6 +80,18 @@ output APP_INSIGHTS_NAME string = workshop.outputs.appInsightsName
 output APP_INSIGHTS_RESOURCE_ID string = workshop.outputs.appInsightsResourceId
 output VIRTUAL_NETWORK_NAME string = workshop.outputs.virtualNetworkName
 output VIRTUAL_NETWORK_RESOURCE_ID string = workshop.outputs.virtualNetworkResourceId
+output NETWORK_SECURITY_GROUP_NAME string = workshop.outputs.networkSecurityGroupName
+output NETWORK_SECURITY_GROUP_RESOURCE_ID string = workshop.outputs.networkSecurityGroupResourceId
+output POSTGRESQL_SUBNET_RESOURCE_ID string = workshop.outputs.postgresqlSubnetResourceId
+output POSTGRESQL_FAULT_RULE_NAME string = workshop.outputs.postgresqlFaultRuleName
+output POSTGRESQL_FAULT_RULE_RESOURCE_ID string = workshop.outputs.postgresqlFaultRuleResourceId
+output POSTGRESQL_SERVER_NAME string = workshop.outputs.postgresqlServerName
+output POSTGRESQL_SERVER_RESOURCE_ID string = workshop.outputs.postgresqlServerResourceId
+output POSTGRESQL_HOST string = workshop.outputs.postgresqlHost
+output POSTGRESQL_DATABASE string = workshop.outputs.postgresqlDatabase
+output POSTGRESQL_USER string = workshop.outputs.postgresqlUser
+output POSTGRESQL_PRIVATE_DNS_ZONE_NAME string = workshop.outputs.postgresqlPrivateDnsZoneName
+output POSTGRESQL_PRIVATE_DNS_ZONE_RESOURCE_ID string = workshop.outputs.postgresqlPrivateDnsZoneResourceId
 output PUBLIC_IP_ADDRESS string = workshop.outputs.publicIpAddress
 output PUBLIC_IP_RESOURCE_ID string = workshop.outputs.publicIpResourceId
 output DATA_COLLECTION_RULE_NAME string = workshop.outputs.dataCollectionRuleName

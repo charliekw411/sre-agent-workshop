@@ -32,7 +32,8 @@ def check(template):
         "microsoft.containerregistry/", "microsoft.sql/", "microsoft.keyvault/",
         "microsoft.app/containerapps", "microsoft.app/managedenvironments",
         "microsoft.app/jobs", "microsoft.network/privateendpoints",
-        "microsoft.network/privatednszones", "microsoft.resources/deploymentscripts",
+        "microsoft.resources/deploymentscripts", "microsoft.compute/disks",
+        "microsoft.dbforpostgresql/flexibleservers/firewallrules",
     )
     for resource_type in by_type:
         if resource_type.startswith(forbidden):
@@ -42,13 +43,18 @@ def check(template):
     profile = vm["properties"]
     if profile["osProfile"]["linuxConfiguration"]["disablePasswordAuthentication"] is not True:
         raise ValueError("VM password authentication must remain disabled.")
-    disks = profile["storageProfile"]["dataDisks"]
-    if len(disks) != 1 or disks[0]["lun"] != 0 or disks[0]["createOption"] != "Attach":
-        raise ValueError("SQLite requires one separately provisioned managed disk at LUN 0.")
-    if disks[0].get("deleteOption") != "Detach":
-        raise ValueError("VM replacement must not implicitly delete the SQLite disk.")
-    exactly_one("Microsoft.Compute/disks")
-    exactly_one("Microsoft.Network/virtualNetworks")
+    if profile["storageProfile"]["dataDisks"]:
+        raise ValueError("Orders data must not use an attached VM data disk.")
+    network = exactly_one("Microsoft.Network/virtualNetworks")
+    subnets = {subnet["name"]: subnet["properties"]
+               for subnet in network["properties"]["subnets"]}
+    if set(subnets) != {"orders", "postgresql"}:
+        raise ValueError("The VNet requires exactly the Orders and PostgreSQL subnets.")
+    delegation = subnets["postgresql"].get("delegations", [])
+    if (len(delegation) != 1
+            or delegation[0]["properties"].get("serviceName")
+            != "Microsoft.DBforPostgreSQL/flexibleServers"):
+        raise ValueError("The PostgreSQL subnet must have only the Flexible Server delegation.")
     exactly_one("Microsoft.Network/networkInterfaces")
     public_ip = exactly_one("Microsoft.Network/publicIPAddresses")
     if public_ip["properties"]["publicIPAllocationMethod"] != "Static":
@@ -62,6 +68,66 @@ def check(template):
         raise ValueError("The NSG may allow only the public Orders API port 8080.")
     if inbound[0].get("protocol", "").lower() != "tcp":
         raise ValueError("The public API rule must be TCP only.")
+    fault_rules = [
+        rule["properties"] for rule in nsg["properties"]["securityRules"]
+        if rule["name"] == "PostgreSqlFaultInjection"
+    ]
+    if len(fault_rules) != 1:
+        raise ValueError("The NSG requires exactly one PostgreSQL fault rule.")
+    fault = fault_rules[0]
+    expected_fault = {
+        "priority": 100,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "10.240.0.0/27",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "10.240.0.32/27",
+        "destinationPortRange": "5432",
+    }
+    for key, value in expected_fault.items():
+        if fault.get(key) != value:
+            raise ValueError(
+                f"PostgreSQL fault rule {key} must be {value!r}, found {fault.get(key)!r}.")
+
+    server = exactly_one("Microsoft.DBforPostgreSQL/flexibleServers")
+    if server.get("sku") != {"name": "Standard_B1ms", "tier": "Burstable"}:
+        raise ValueError("PostgreSQL must use the cost-bounded Standard_B1ms SKU.")
+    postgres = server["properties"]
+    if postgres.get("version") != "16":
+        raise ValueError("PostgreSQL 16 is required.")
+    if postgres.get("authConfig") != {
+            "activeDirectoryAuth": "Enabled",
+            "passwordAuth": "Disabled",
+            "tenantId": "[tenant().tenantId]"}:
+        raise ValueError("PostgreSQL must use Entra-only authentication.")
+    if postgres.get("network", {}).get("publicNetworkAccess") != "Disabled":
+        raise ValueError("PostgreSQL public network access must remain disabled.")
+    if not postgres.get("network", {}).get("delegatedSubnetResourceId"):
+        raise ValueError("PostgreSQL requires its delegated subnet.")
+    if not postgres.get("network", {}).get("privateDnsZoneArmResourceId"):
+        raise ValueError("PostgreSQL requires its private DNS zone.")
+    if postgres.get("backup") != {
+            "backupRetentionDays": 7, "geoRedundantBackup": "Disabled"}:
+        raise ValueError("PostgreSQL must retain the seven-day local backup policy.")
+    if postgres.get("highAvailability", {}).get("mode") != "Disabled":
+        raise ValueError("High availability is intentionally disabled for workshop cost.")
+    if postgres.get("storage") != {"autoGrow": "Enabled", "storageSizeGB": 32}:
+        raise ValueError("PostgreSQL storage must be 32 GiB with auto-grow.")
+    exactly_one("Microsoft.DBforPostgreSQL/flexibleServers/databases")
+    administrator = exactly_one(
+        "Microsoft.DBforPostgreSQL/flexibleServers/administrators")
+    if administrator["properties"].get("principalType") != "ServicePrincipal":
+        raise ValueError("The VM managed identity must be the PostgreSQL Entra administrator.")
+    exactly_one("Microsoft.Network/privateDnsZones")
+    exactly_one("Microsoft.Network/privateDnsZones/virtualNetworkLinks")
+    diagnostics = exactly_one("Microsoft.Insights/diagnosticSettings")
+    if not diagnostics["properties"].get("workspaceId"):
+        raise ValueError("PostgreSQL diagnostics must flow to Log Analytics.")
+    if diagnostics["properties"].get("logs") != [
+            {"categoryGroup": "allLogs", "enabled": True}]:
+        raise ValueError("PostgreSQL allLogs diagnostics must remain enabled.")
+
     workspace = exactly_one("Microsoft.OperationalInsights/workspaces")
     if workspace["properties"]["retentionInDays"] == 0:
         raise ValueError("Monitoring data needs retained logs.")
@@ -73,9 +139,14 @@ def check(template):
                 for counter in group["counterSpecifiers"]]
     if not any("Processor Time" in counter for counter in counters):
         raise ValueError("AMA must collect guest CPU telemetry.")
-    if not any("Free Space" in counter for counter in counters):
-        raise ValueError("AMA must collect data-disk free space.")
+    if any("Logical Disk" in counter for counter in counters):
+        raise ValueError("The removed Orders data disk must not remain in the DCR.")
     exactly_one("Microsoft.Insights/dataCollectionRuleAssociations")
+    query_rules = by_type.get("microsoft.insights/scheduledqueryrules", [])
+    rule_names = {rule["name"] for rule in query_rules}
+    if rule_names != {
+            "alert-orders-http-5xx", "alert-orders-postgresql-connectivity"}:
+        raise ValueError("Expected only HTTP 5xx and PostgreSQL dependency query alerts.")
     extensions = by_type.get("microsoft.compute/virtualmachines/extensions", [])
     if not any(extension["properties"]["type"] == "AzureMonitorLinuxAgent" for extension in extensions):
         raise ValueError("The Linux Azure Monitor Agent must be installed.")
@@ -91,6 +162,12 @@ def check(template):
     kinds = {connector["properties"]["dataConnectorType"] for connector in connectors}
     if kinds != {"AppInsights", "LogAnalytics"} or len(connectors) != 2:
         raise ValueError("SRE Agent requires exactly the Application Insights and Log Analytics connectors.")
+    serialized = json.dumps(template)
+    if "single-vm-postgresql-v1" not in serialized:
+        raise ValueError("The resource group requires the versioned PostgreSQL architecture tag.")
+    for obsolete in ("DATA_DISK_NAME", "DATA_DISK_RESOURCE_ID", "dataDiskSizeGiB"):
+        if obsolete in serialized:
+            raise ValueError(f"Obsolete data-disk contract remains: {obsolete}")
     return len(deployed)
 
 
@@ -99,7 +176,9 @@ if __name__ == "__main__":
         if len(sys.argv) != 2:
             raise ValueError("Usage: python scripts/check_infra.py <compiled ARM template.json>")
         count = check(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8-sig")))
-        print(f"Validated single-VM architecture across {count} compiled ARM resources.")
+        print(
+            f"Validated VM plus private PostgreSQL architecture across "
+            f"{count} compiled ARM resources.")
     except (ValueError, KeyError, TypeError, OSError) as error:
         print(f"Infrastructure regression: {error}", file=sys.stderr)
         sys.exit(1)

@@ -1,4 +1,4 @@
-metadata description = 'Small public VM network with explicit outbound connectivity and Internet ingress on TCP 8080 only.'
+metadata description = 'Public Orders VM subnet and private delegated PostgreSQL subnet with a controlled TCP 5432 fault rule.'
 
 targetScope = 'resourceGroup'
 
@@ -13,7 +13,9 @@ param tags object = {}
 resource networkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2024-05-01' = {
   name: 'nsg-orders-${suffix}'
   location: location
-  tags: tags
+  tags: union(tags, {
+    component: 'postgresql-connectivity'
+  })
   properties: {
     securityRules: [
       {
@@ -43,6 +45,20 @@ resource networkSecurityGroup 'Microsoft.Network/networkSecurityGroups@2024-05-0
           destinationPortRange: '*'
         }
       }
+      {
+        name: 'PostgreSqlFaultInjection'
+        properties: {
+          description: 'Workshop toggle for VM-to-PostgreSQL connectivity; azd up reconciles this rule to Allow.'
+          priority: 100
+          direction: 'Outbound'
+          access: 'Allow'
+          protocol: 'Tcp'
+          sourceAddressPrefix: '10.240.0.0/27'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '10.240.0.32/27'
+          destinationPortRange: '5432'
+        }
+      }
     ]
   }
 }
@@ -68,6 +84,20 @@ resource network 'Microsoft.Network/virtualNetworks@2024-05-01' = {
           }
         }
       }
+      {
+        name: 'postgresql'
+        properties: {
+          addressPrefix: '10.240.0.32/27'
+          delegations: [
+            {
+              name: 'Microsoft.DBforPostgreSQL.flexibleServers'
+              properties: {
+                serviceName: 'Microsoft.DBforPostgreSQL/flexibleServers'
+              }
+            }
+          ]
+        }
+      }
     ]
   }
 }
@@ -75,6 +105,11 @@ resource network 'Microsoft.Network/virtualNetworks@2024-05-01' = {
 resource ordersSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' existing = {
   parent: network
   name: 'orders'
+}
+
+resource postgresqlSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' existing = {
+  parent: network
+  name: 'postgresql'
 }
 
 resource publicIp 'Microsoft.Network/publicIPAddresses@2024-05-01' = {
@@ -119,6 +154,12 @@ resource networkInterface 'Microsoft.Network/networkInterfaces@2024-05-01' = {
 
 output virtualNetworkName string = network.name
 output virtualNetworkResourceId string = network.id
+output ordersSubnetResourceId string = ordersSubnet.id
+output postgresqlSubnetResourceId string = postgresqlSubnet.id
+output networkSecurityGroupName string = networkSecurityGroup.name
+output networkSecurityGroupResourceId string = networkSecurityGroup.id
+output postgresqlFaultRuleName string = 'PostgreSqlFaultInjection'
+output postgresqlFaultRuleResourceId string = '${networkSecurityGroup.id}/securityRules/PostgreSqlFaultInjection'
 output networkInterfaceResourceId string = networkInterface.id
 output publicIpAddress string = publicIp.properties.ipAddress
 output publicIpResourceId string = publicIp.id
