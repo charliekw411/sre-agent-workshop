@@ -122,7 +122,7 @@ test("environment inventory requires one bounded VM and workspace", () => {
 test("fault commands preserve fixed safety parameters and correlation", () => {
   assert.equal(
     createFaultScript("cpu", REQUEST),
-    "set -euo pipefail\n" +
+    "set -eu\n" +
       "/usr/bin/python3 /opt/orders-api/faults.py cpu 600 2 " +
       `--request-id ${REQUEST}`,
   );

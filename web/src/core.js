@@ -213,7 +213,7 @@ export function createFaultScript(action, requestId) {
   }
   const argumentsText = argumentsList.length ? ` ${argumentsList.join(" ")}` : "";
   return (
-    "set -euo pipefail\n" +
+    "set -eu\n" +
     `/usr/bin/python3 /opt/orders-api/faults.py ${action}${argumentsText} ` +
     `--request-id ${requestId}`
   );
