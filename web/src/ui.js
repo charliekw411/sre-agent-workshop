@@ -289,18 +289,14 @@ function timeLabel(date) {
   }).format(date);
 }
 
-export function renderLineChart(root, points, scenario, now = new Date()) {
+export function renderLineChart(
+  root,
+  points,
+  scenario,
+  now = new Date(),
+  incidentStartedAt = null,
+) {
   root.replaceChildren();
-  if (!points.length) {
-    root.append(
-      element(
-        "p",
-        "sre-chart__empty",
-        "No samples are available yet. Azure Monitor ingestion can take several minutes.",
-      ),
-    );
-    return;
-  }
 
   const width = 720;
   const height = 280;
@@ -316,22 +312,43 @@ export function renderLineChart(root, points, scenario, now = new Date()) {
     (point) =>
       point.timestamp.getTime() >= start - 60000 && point.timestamp.getTime() <= end + 60000,
   );
-  if (!visible.length) {
+  const incidentTimestamp = incidentStartedAt?.getTime();
+  const showIncident =
+    Number.isFinite(incidentTimestamp) &&
+    incidentTimestamp >= start &&
+    incidentTimestamp <= end;
+  if (!visible.length && !showIncident) {
     root.append(
-      element("p", "sre-chart__empty", "Azure returned no samples in the last 30 minutes."),
+      element(
+        "p",
+        "sre-chart__empty",
+        points.length
+          ? "Azure returned no samples in the last 30 minutes."
+          : "No samples are available yet. Azure Monitor ingestion can take several minutes.",
+      ),
     );
     return;
   }
 
-  const values = visible.map((point) => point.value);
-  const latest = visible[visible.length - 1];
   const summary = element("p", "sre-chart__summary");
-  summary.textContent =
-    scenario.id === "cpu"
-      ? `Latest ${formatPercent(latest.value)} | Peak ${formatPercent(Math.max(...values))}`
-      : `Latest ${formatPercent(latest.value)} failed | Peak ${formatPercent(
-          Math.max(...values),
-        )} failed`;
+  const summaryParts = [];
+  if (showIncident) {
+    summaryParts.push(`Incident started ${timeLabel(incidentStartedAt)}`);
+  }
+  if (visible.length) {
+    const values = visible.map((point) => point.value);
+    const latest = visible[visible.length - 1];
+    summaryParts.push(
+      scenario.id === "cpu"
+        ? `Latest ${formatPercent(latest.value)} | Peak ${formatPercent(Math.max(...values))}`
+        : `Latest ${formatPercent(latest.value)} failed | Peak ${formatPercent(
+            Math.max(...values),
+          )} failed`,
+    );
+  } else {
+    summaryParts.push("Waiting for Azure Monitor samples");
+  }
+  summary.textContent = summaryParts.join(" | ");
   root.append(summary);
 
   const svg = svgElement("svg", {
@@ -384,21 +401,48 @@ export function renderLineChart(root, points, scenario, now = new Date()) {
     ),
   );
 
-  const path = visible
-    .map((point, index) => `${index ? "L" : "M"} ${x(point.timestamp).toFixed(2)} ${y(point.value).toFixed(2)}`)
-    .join(" ");
-  svg.append(
-    svgElement("path", {
-      class: "sre-chart__line",
-      d: path,
-    }),
-    svgElement("circle", {
-      class: "sre-chart__latest",
-      cx: x(latest.timestamp),
-      cy: y(latest.value),
-      r: 4,
-    }),
-  );
+  if (showIncident) {
+    const incidentX = x(incidentStartedAt);
+    const labelOnLeft = incidentX > width - margin.right - 120;
+    svg.append(
+      svgElement("line", {
+        class: "sre-chart__event",
+        x1: incidentX,
+        x2: incidentX,
+        y1: margin.top,
+        y2: height - margin.bottom,
+      }),
+      svgElement(
+        "text",
+        {
+          class: "sre-chart__event-label",
+          x: incidentX + (labelOnLeft ? -6 : 6),
+          y: margin.top + 13,
+          "text-anchor": labelOnLeft ? "end" : "start",
+        },
+        "Incident started",
+      ),
+    );
+  }
+
+  if (visible.length) {
+    const latest = visible[visible.length - 1];
+    const path = visible
+      .map((point, index) => `${index ? "L" : "M"} ${x(point.timestamp).toFixed(2)} ${y(point.value).toFixed(2)}`)
+      .join(" ");
+    svg.append(
+      svgElement("path", {
+        class: "sre-chart__line",
+        d: path,
+      }),
+      svgElement("circle", {
+        class: "sre-chart__latest",
+        cx: x(latest.timestamp),
+        cy: y(latest.value),
+        r: 4,
+      }),
+    );
+  }
 
   for (const [timestamp, anchor] of [
     [new Date(start), "start"],
@@ -461,6 +505,8 @@ export class IncidentLauncher {
     this.app = app;
     this.scenario = SCENARIOS[scenarioId];
     this.environmentKey = "";
+    this.incidentStartedAt = null;
+    this.points = [];
     this.refreshing = false;
     this.timer = null;
     this.build();
@@ -550,6 +596,8 @@ export class IncidentLauncher {
   }
 
   async execute(action) {
+    const incidentRequestedAt =
+      action === this.scenario.action ? new Date() : null;
     this.status.dataset.kind = "progress";
     this.status.textContent =
       action === "reset-cpu"
@@ -563,6 +611,10 @@ export class IncidentLauncher {
           : "Starting the bounded workshop fault through Azure...";
     try {
       const result = await this.app.executeFault(action);
+      if (incidentRequestedAt) {
+        this.incidentStartedAt = incidentRequestedAt;
+        this.renderGraph();
+      }
       this.status.dataset.kind = "success";
       this.status.textContent = describeResult(action, result);
       await this.refreshGraph(false);
@@ -604,6 +656,9 @@ export class IncidentLauncher {
     const key = `${state.environment.subscription.id}:${state.environment.resourceGroup.id}`;
     if (key !== this.environmentKey) {
       this.environmentKey = key;
+      this.incidentStartedAt = null;
+      this.points = [];
+      this.renderGraph();
       this.status.dataset.kind = "success";
       this.status.textContent =
         `Targeting ${state.environment.resourceGroup.name} / ` +
@@ -638,6 +693,16 @@ export class IncidentLauncher {
     }
   }
 
+  renderGraph() {
+    renderLineChart(
+      this.graph,
+      this.points,
+      this.scenario,
+      new Date(),
+      this.incidentStartedAt,
+    );
+  }
+
   async refreshGraph(manual) {
     if (this.refreshing || !this.app.connected) {
       return;
@@ -646,8 +711,8 @@ export class IncidentLauncher {
     this.refresh.disabled = true;
     this.graphStatus.textContent = "Refreshing telemetry...";
     try {
-      const points = await this.app.chartSeries(this.scenario.id);
-      renderLineChart(this.graph, points, this.scenario);
+      this.points = await this.app.chartSeries(this.scenario.id);
+      this.renderGraph();
       this.graphStatus.textContent = `Updated ${timeLabel(new Date())} | automatic refresh every ${this.app.config.refreshSeconds} seconds`;
     } catch (error) {
       this.graphStatus.textContent = `Telemetry error: ${this.app.errorMessage(error)}`;

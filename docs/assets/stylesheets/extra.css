@@ -385,6 +385,17 @@
   font-weight: 600;
 }
 
+.sre-chart__event {
+  stroke: var(--sre-warn);
+  stroke-width: 2;
+}
+
+.sre-chart__event-label {
+  fill: var(--sre-warn);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .sre-chart__line {
   fill: none;
   stroke: var(--sre-accent);
