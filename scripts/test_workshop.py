@@ -26,6 +26,7 @@ def load_module(name, path):
 HERE = Path(__file__).parent
 workshop = load_module("workshop", HERE / "workshop.py")
 faults = load_module("vm_faults", HERE / "vm" / "faults.py")
+inspection = load_module("vm_inspection", HERE / "vm" / "inspect.py")
 VALUES = {
     "AZURE_ENV_NAME": "sre-vm-test",
     "AZURE_LOCATION": "australiaeast",
@@ -104,6 +105,37 @@ class ConfigurationTests(unittest.TestCase):
             self.assertIn(expected, source)
         for forbidden in ("mkfs", "mount /", "postgresql-16 postgresql"):
             self.assertNotIn(forbidden, source)
+
+    def test_inspection_uses_system_ca_roots_for_libpq(self):
+        database = {
+            "host": "psql-orders-test.postgres.database.azure.com",
+            "port": "5432",
+            "database": "orders",
+            "username": "vm-orders-test",
+        }
+        with patch.object(inspection, "access_token", return_value="token"):
+            environment = inspection.postgresql_environment(database)
+        self.assertEqual(environment["PGSSLMODE"], "verify-full")
+        self.assertEqual(environment["PGSSLROOTCERT"], "system")
+        self.assertEqual(environment["PGPASSWORD"], "token")
+
+    def test_inspection_reports_and_redacts_subprocess_errors(self):
+        secret = "managed-identity-token"
+        failure = subprocess.CalledProcessError(
+            2,
+            ["psql"],
+            stderr=f"connection failed for {secret}",
+        )
+        with patch.object(inspection.subprocess, "run", side_effect=failure), \
+                self.assertRaisesRegex(
+                    RuntimeError, "psql exited with code 2"
+                ) as raised:
+            inspection.command(
+                "psql",
+                environment={"PGPASSWORD": secret},
+            )
+        self.assertIn("<redacted>", str(raised.exception))
+        self.assertNotIn(secret, str(raised.exception))
 
     def test_payload_is_deterministic_and_excludes_build_outputs_and_secrets(self):
         first, digest = workshop.bundle()

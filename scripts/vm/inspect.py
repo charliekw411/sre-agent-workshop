@@ -18,14 +18,25 @@ ENVIRONMENT_FILE = Path("/etc/orders-api.env")
 
 
 def command(*args, environment=None):
-    return subprocess.run(
-        args,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env=environment,
-    ).stdout.strip()
+    try:
+        return subprocess.run(
+            args,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=environment,
+        ).stdout.strip()
+    except subprocess.CalledProcessError as error:
+        diagnostic = (error.stderr or error.stdout or "no diagnostic output").strip()
+        if environment:
+            for name in ("PGPASSWORD",):
+                secret = environment.get(name)
+                if secret:
+                    diagnostic = diagnostic.replace(secret, "<redacted>")
+        raise RuntimeError(
+            f"{args[0]} exited with code {error.returncode}: {diagnostic[:2000]}"
+        ) from None
 
 
 def settings():
@@ -71,6 +82,20 @@ def access_token():
     return token
 
 
+def postgresql_environment(database):
+    return {
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "PGHOST": database["host"],
+        "PGPORT": database["port"],
+        "PGDATABASE": database["database"],
+        "PGUSER": database["username"],
+        "PGPASSWORD": access_token(),
+        "PGSSLMODE": "verify-full",
+        "PGSSLROOTCERT": "system",
+        "PGCONNECT_TIMEOUT": "5",
+    }
+
+
 def inspect():
     service = command("systemctl", "is-active", "orders-api")
     enabled = command("systemctl", "is-enabled", "orders-api")
@@ -89,16 +114,7 @@ def inspect():
             not ipaddress.ip_address(address).is_private for address in addresses):
         raise RuntimeError("PostgreSQL did not resolve exclusively to private addresses.")
 
-    environment = {
-        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "PGHOST": database["host"],
-        "PGPORT": database["port"],
-        "PGDATABASE": database["database"],
-        "PGUSER": database["username"],
-        "PGPASSWORD": access_token(),
-        "PGSSLMODE": "verify-full",
-        "PGCONNECT_TIMEOUT": "5",
-    }
+    environment = postgresql_environment(database)
     sql = """
 SELECT json_build_object(
     'serverVersion', current_setting('server_version'),
