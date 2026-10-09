@@ -211,7 +211,7 @@ function Connect-WorkshopGraph {
         }
         'cleanup' { $scopes += 'User.ReadWrite.All', 'Group.ReadWrite.All', 'UserAuthenticationMethod.ReadWrite.All' }
     }
-    [void](Connect-MgGraph -TenantId $Tenant -Scopes $scopes -ContextScope Process -NoWelcome -Verbose:$false -Debug:$false)
+    [void](Connect-MgGraph -TenantId $Tenant -Scopes $scopes -UseDeviceCode -ContextScope Process -NoWelcome -Verbose:$false -Debug:$false)
     $context = Get-MgContext
     Assert-Workshop ($context.TenantId -eq $Tenant -and $context.AuthType -eq 'Delegated') `
         'Microsoft Graph must be connected to the requested tenant using delegated organizer authentication.'
