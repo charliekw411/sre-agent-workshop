@@ -211,7 +211,18 @@ function Connect-WorkshopGraph {
         }
         'cleanup' { $scopes += 'User.ReadWrite.All', 'Group.ReadWrite.All', 'UserAuthenticationMethod.ReadWrite.All' }
     }
-    [void](Connect-MgGraph -TenantId $Tenant -Scopes $scopes -UseDeviceCode -ContextScope Process -NoWelcome -Verbose:$false -Debug:$false)
+    Write-Host '[authentication] Requesting device-code sign-in. Complete the code prompt below with your organizer account.'
+    try {
+        Connect-MgGraph -TenantId $Tenant -Scopes $scopes -UseDeviceCode -ContextScope Process -NoWelcome -Verbose:$false -Debug:$false `
+            -ErrorAction Stop | ForEach-Object { Write-Host $_ }
+    } catch {
+        $details = $_.Exception.ToString()
+        $reason = [regex]::Match($details, '\bAADSTS\d+\b').Value
+        if (-not $reason) {
+            $reason = if ($details -match '(?i)(timed out|timeout|cancell?ed)') { 'timed out or cancelled' } else { 'device-code sign-in failed' }
+        }
+        throw (New-WorkshopError "Microsoft Graph sign-in failed ($reason). Rerun the command and complete the code prompt. If it fails again, check tenant sign-in policy and admin consent. Raw authentication details withheld.")
+    }
     $context = Get-MgContext
     Assert-Workshop ($context.TenantId -eq $Tenant -and $context.AuthType -eq 'Delegated') `
         'Microsoft Graph must be connected to the requested tenant using delegated organizer authentication.'
