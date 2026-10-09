@@ -267,7 +267,50 @@ function Invoke-WorkshopGraph {
                 Start-Sleep -Seconds ([Math]::Min(60, [Math]::Max($retryAfter, [Math]::Pow(2, $attempt + 1))))
                 continue
             }
-            throw (New-WorkshopError "Graph $Method failed (HTTP $status). Credential-related error details withheld." $status)
+            $code = ''
+            $detail = 'Graph did not provide readable validation details.'
+            if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+                $serviceError = $null
+                try {
+                    $json = $_.ErrorDetails.Message
+                    # The SDK prepends HTTP headers to its error response body.
+                    if (-not $json.TrimStart().StartsWith('{')) { $json = ($json -split '\r?\n\r?\n', 2)[-1] }
+                    $document = $json | ConvertFrom-Json -AsHashtable
+                    if ($document -is [System.Collections.IDictionary]) { $serviceError = $document['error'] }
+                } catch {
+                    $detail = 'Graph validation details were not valid JSON; raw output withheld.'
+                }
+                if ($serviceError -is [System.Collections.IDictionary]) {
+                    $message = [string]$serviceError['message']
+                    if ($serviceError['code'] -is [string] -and
+                        $serviceError['code'] -cmatch '^[A-Za-z][A-Za-z0-9_.-]{0,79}$') { $code = $serviceError['code'] }
+                    if ($message) {
+                        if ($Body -is [System.Collections.IDictionary]) {
+                            $secrets = @($Body['password'], $Body['temporaryAccessPass'], $Body['accessToken'],
+                                $Body['refreshToken'], $Body['idToken'], $Body['clientSecret'])
+                            if ($Body['passwordProfile'] -is [System.Collections.IDictionary]) {
+                                $secrets += $Body['passwordProfile']['password']
+                            }
+                            foreach ($secret in $secrets) {
+                                if ($secret -is [string] -and $secret.Length) {
+                                    $message = $message.Replace($secret, '<redacted>')
+                                    if ($code.Contains($secret)) { $code = '' }
+                                }
+                            }
+                        }
+                        $message = $message -replace '(?i)\bBearer\s+[a-z0-9._~+/-]+=*', '<redacted>'
+                        $message = $message -replace '\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b', '<redacted>'
+                        $message = $message -replace '(?i)\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b', '<id>'
+                        $message = $message -replace '[^\s@"<>]+@[^\s@"<>]+', '<user>'
+                        $message = $message -replace '[\x00-\x1f\x7f]', ' '
+                        $detail = $message.Substring(0, [Math]::Min(500, $message.Length))
+                    }
+                }
+            }
+            $endpoint = $uri.AbsolutePath.Substring('/v1.0'.Length) -replace '^/(users|groups|domains)/[^/]+', '/$1/<id>'
+            $endpoint = $endpoint -replace '(?i)\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b', '<id>'
+            if ($code) { $detail = "${code}: $detail" }
+            throw (New-WorkshopError "Graph $Method $endpoint failed (HTTP $status). $detail" $status $code)
         }
     }
 }
@@ -966,7 +1009,7 @@ function Invoke-WorkshopParticipants {
         }
         Save-WorkshopRoster $state $directory $RosterOutput
         Write-Host "[$Action] $($keys.Count - $failed) succeeded; $failed failed."
-        if ($Action -eq 'prepare') {
+        if ($Action -eq 'prepare' -and $failed -eq 0) {
             Write-Host "Workshop group: SRE Workshop Participants ($Cohort). No Azure RBAC was created. Enable TAP for this group before issue-taps."
         }
         Assert-Workshop ($failed -eq 0) 'Some participants failed. Resolve the reported causes and rerun the same action; successful identities and grants are preserved.'
