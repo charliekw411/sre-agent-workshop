@@ -341,7 +341,8 @@ function Get-WorkshopUser {
 function Assert-WorkshopUser {
     param($User, $State, [string]$Username, [switch]$AllowDisabled)
     Assert-Workshop ($null -ne $User -and (Test-WorkshopGuid $User.id)) 'The participant account is missing or invalid.'
-    Assert-Workshop ($User.userPrincipalName -eq $Username -and $User.employeeType -eq $State.ownerTag) `
+    Assert-Workshop ($User.userPrincipalName -eq $Username -and
+        $User.employeeType -in @($State.ownerTag, $State.ownerTag.Split(':')[-1])) `
         'An existing account does not match this cohort ownership state; it will not be adopted or changed.'
     Assert-Workshop ($User.userType -eq 'Member' -and $User['onPremisesSyncEnabled'] -ne $true -and
         $User['creationType'] -ne 'Invitation') 'Participant accounts must be local internal Members, not guests or synchronized identities.'
@@ -481,7 +482,8 @@ function Prepare-WorkshopParticipant {
             $user = Invoke-WorkshopGraph -Method POST -Path '/users' -Body @{
                 displayName = $Row.DisplayName.Trim(); userPrincipalName = $username
                 mailNickname = "sre-$($State.cohort)-$key"; userType = 'Member'; accountEnabled = $true
-                employeeType = $State.ownerTag
+                # Keep this user field short without changing existing cohort ownership.
+                employeeType = $State.ownerTag.Split(':')[-1]
                 passwordProfile = @{ password = $password; forceChangePasswordNextSignIn = $false }
             }
         } catch {
