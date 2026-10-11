@@ -2,14 +2,20 @@
 
 <#
 .SYNOPSIS
-Prepare workshop users, bulk-issue TAPs, assign scoped access, or clean up a cohort.
+Manage workshop users, TAP handouts, scoped access, or cleanup.
 .DESCRIPTION
 TAPs default to 60 minutes and single use. Entra controls pass length and permitted
 lifetimes; the script does not change tenant policy.
+show-taps decrypts saved handoffs locally for paper distribution. Use a private
+terminal/printer without transcription or logging; its output contains plaintext TAPs.
 .EXAMPLE
 .\scripts\manage-participants.ps1 prepare -TenantId $tenantId -Cohort workshop -Domain $domain -Count 1
 .EXAMPLE
 .\scripts\manage-participants.ps1 issue-taps -TenantId $tenantId -Cohort workshop
+.EXAMPLE
+.\scripts\manage-participants.ps1 show-taps -TenantId $tenantId -Cohort workshop
+.EXAMPLE
+.\scripts\manage-participants.ps1 show-taps -TenantId $tenantId -Cohort workshop | Out-Printer
 .EXAMPLE
 .\scripts\manage-participants.ps1 assign-access -TenantId $tenantId -Cohort workshop -SubscriptionId $subscriptionId -EnvironmentMap .\environments.csv -NoAccessValidated
 .EXAMPLE
@@ -18,7 +24,7 @@ lifetimes; the script does not change tenant policy.
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('prepare', 'issue-taps', 'assign-access', 'cleanup')]
+    [ValidateSet('prepare', 'issue-taps', 'show-taps', 'assign-access', 'cleanup')]
     [string]$Action = 'prepare',
     [guid]$TenantId = [guid]::Empty,
     [ValidatePattern('^[a-z0-9][a-z0-9-]{0,23}$')]
@@ -547,6 +553,40 @@ function Write-WorkshopTapHandoff {
     [IO.File]::Move("$path.new", $path, $true)
 }
 
+function Show-WorkshopTaps {
+    param($State, [string]$Directory, [string[]]$Keys)
+    $folder = Join-Path $Directory 'taps'
+    Assert-Workshop (Test-Path -LiteralPath $folder -PathType Container) 'No encrypted TAP handoffs were found. Run issue-taps first.'
+    Assert-Workshop (((Get-Item -LiteralPath $folder -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) `
+        'The encrypted handoff folder cannot be a symbolic link or junction.'
+    $rows = @(foreach ($key in $Keys) {
+        $participant = $State.participants[$key]
+        Assert-Workshop (-not $participant.cleanupStarted) "$key is being cleaned up; its TAP will not be displayed."
+        Assert-Workshop (Test-WorkshopGuid $participant.userId) "$key has no prepared user. Run prepare and issue-taps first."
+        $path = Join-Path $folder "$key.clixml"
+        Assert-Workshop (Test-Path -LiteralPath $path -PathType Leaf) "No encrypted TAP handoff exists for $key. Run issue-taps first."
+        Assert-Workshop (((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) `
+            'An encrypted handoff path was replaced by a symbolic link.'
+        $handoff = Import-Clixml -LiteralPath $path
+        Assert-Workshop ($handoff -is [System.Collections.IDictionary] -and
+            (Test-WorkshopGuid $handoff['methodId']) -and $handoff['credential'] -is [pscredential] -and
+            $handoff['credential'].UserName -eq $participant.username) `
+            "The encrypted TAP handoff for $key does not match this prepared participant."
+        $expires = [datetimeoffset]::MinValue
+        Assert-Workshop ([datetimeoffset]::TryParse([string]$handoff['expiresUtc'], [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None, [ref]$expires)) "The encrypted TAP handoff for $key has an invalid expiration."
+        Assert-Workshop ($expires -gt [datetimeoffset]::UtcNow) "The TAP for $key has expired. Run issue-taps before printing handouts."
+        $pass = $handoff['credential'].GetNetworkCredential().Password
+        Assert-Workshop ($pass.Length -in 8..48 -and $pass -notmatch '[\x00-\x1f\x7f]') "The TAP handoff for $key has an invalid pass format."
+        [pscustomobject]@{
+            Alias = $key; Username = $participant.username; TemporaryAccessPass = $pass
+            Expires = $expires.ToLocalTime().ToString('yyyy-MM-dd HH:mm zzz')
+        }
+    })
+    Write-Warning 'Plaintext credentials: use a private terminal/printer without transcription or logging. A previously used single-use TAP will not work.'
+    $rows | Format-List Alias, Username, TemporaryAccessPass, Expires
+}
+
 function Remove-WorkshopHandoff {
     param([string]$Directory, [string]$Key)
     Assert-Workshop ($Key -cmatch '^[a-z0-9][a-z0-9-]{0,23}$') 'The encrypted handoff alias is invalid.'
@@ -877,15 +917,15 @@ function Invoke-WorkshopParticipants {
     )
     Assert-Workshop ($TenantId -ne [guid]::Empty) '-TenantId must identify the workshop tenant.'
     Assert-Workshop ($Cohort -cmatch '^[a-z0-9][a-z0-9-]{0,23}$') 'Cohort must be a lowercase name of up to 24 letters, digits, or hyphens.'
-    Assert-Workshop ($Action -in @('prepare', 'issue-taps', 'assign-access', 'cleanup')) 'Choose prepare, issue-taps, assign-access, or cleanup.'
+    Assert-Workshop ($Action -in @('prepare', 'issue-taps', 'show-taps', 'assign-access', 'cleanup')) 'Choose prepare, issue-taps, show-taps, assign-access, or cleanup.'
     Assert-Workshop (-not ($RosterPath -and $PSBoundParameters.ContainsKey('Count'))) 'Use either -Count or -RosterPath, not both.'
     Assert-Workshop (-not $ReplaceTaps -or $Action -eq 'issue-taps') '-ReplaceTaps applies only to issue-taps.'
     Assert-Workshop (-not $RetryUnconfirmedGroupCreation -or $Action -eq 'prepare') '-RetryUnconfirmedGroupCreation applies only to prepare after an organizer verifies the missing group in Entra.'
     Assert-Workshop (-not $Alias -or $Action -ne 'prepare') 'Use a roster or count for prepare; -Alias selects already-prepared participants.'
-    if ($Action -eq 'issue-taps') {
-        Assert-Workshop $IsWindows 'Bulk TAP handoff requires Windows DPAPI. The script will not create credentials with a plaintext fallback.'
-        Assert-Workshop ($LifetimeMinutes -in 10..480) 'TAP lifetime must be 10 to 480 minutes.'
+    if ($Action -in @('issue-taps', 'show-taps')) {
+        Assert-Workshop $IsWindows 'TAP issuance and viewing require Windows DPAPI; no plaintext storage fallback is supported.'
     }
+    if ($Action -eq 'issue-taps') { Assert-Workshop ($LifetimeMinutes -in 10..480) 'TAP lifetime must be 10 to 480 minutes.' }
     if ($Action -eq 'assign-access') {
         Assert-Workshop $NoAccessValidated 'First validate TAP sign-in and no workshop access with the pilot account, then pass -NoAccessValidated.'
         Assert-Workshop ($SubscriptionId -ne [guid]::Empty) 'assign-access requires -SubscriptionId.'
@@ -914,6 +954,18 @@ function Invoke-WorkshopParticipants {
         if ($Action -eq 'prepare') {
             Assert-Workshop (-not $state.domain -or $state.domain -eq $Domain) 'A cohort cannot change its username domain.'
             $state.domain = $Domain
+        } else {
+            $keys = @(if ($Alias) { $Alias } else {
+                $state.participants.Keys | Where-Object { $Action -eq 'cleanup' -or $state.participants[$_].status -ne 'cleaned' } | Sort-Object
+            })
+            Assert-Workshop ($keys.Count -gt 0 -and @($keys | Select-Object -Unique).Count -eq $keys.Count) 'Select at least one unique prepared participant.'
+            foreach ($key in $keys) {
+                Assert-Workshop ($key -cmatch '^[a-z0-9][a-z0-9-]{0,23}$' -and $state.participants.Contains($key)) 'A selected alias is not in this prepared cohort.'
+            }
+        }
+        if ($Action -eq 'show-taps') {
+            Show-WorkshopTaps $state $directory $keys
+            return
         }
         Save-WorkshopState $state $directory
         Connect-WorkshopGraph $TenantId.ToString() $Action
@@ -924,13 +976,6 @@ function Invoke-WorkshopParticipants {
             Ensure-WorkshopGroup $state $directory -RetryUnconfirmed:$RetryUnconfirmedGroupCreation
             $keys = @($rows | ForEach-Object { $_.Alias })
         } else {
-            $keys = @(if ($Alias) { $Alias } else {
-                $state.participants.Keys | Where-Object { $Action -eq 'cleanup' -or $state.participants[$_].status -ne 'cleaned' } | Sort-Object
-            })
-            Assert-Workshop ($keys.Count -gt 0 -and @($keys | Select-Object -Unique).Count -eq $keys.Count) 'Select at least one unique prepared participant.'
-            foreach ($key in $keys) {
-                Assert-Workshop ($key -cmatch '^[a-z0-9][a-z0-9-]{0,23}$' -and $state.participants.Contains($key)) 'A selected alias is not in this prepared cohort.'
-            }
             $members = @(Get-WorkshopMembers $state)
             if ($Action -ne 'cleanup') {
                 foreach ($member in $members) {
