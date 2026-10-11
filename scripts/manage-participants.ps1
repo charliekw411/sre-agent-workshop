@@ -3,6 +3,9 @@
 <#
 .SYNOPSIS
 Prepare workshop users, bulk-issue TAPs, assign scoped access, or clean up a cohort.
+.DESCRIPTION
+TAPs default to 60 minutes and single use. Entra controls pass length and permitted
+lifetimes; the script does not change tenant policy.
 .EXAMPLE
 .\scripts\manage-participants.ps1 prepare -TenantId $tenantId -Cohort workshop -Domain $domain -Count 1
 .EXAMPLE
@@ -26,8 +29,8 @@ param(
     [string]$RosterPath,
     [string]$EnvironmentMap,
     [guid]$SubscriptionId = [guid]::Empty,
-    [ValidateRange(10, 60)]
-    [int]$LifetimeMinutes = 30,
+    [ValidateRange(10, 480)]
+    [int]$LifetimeMinutes = 60,
     [string[]]$Alias,
     [string]$StateDirectory,
     [string]$RosterOutput,
@@ -510,8 +513,8 @@ function Prepare-WorkshopParticipant {
 
 function Assert-WorkshopTapPolicy {
     param($Policy, [string]$GroupId, [int]$Minutes)
-    Assert-Workshop ($Policy.state -eq 'enabled' -and $Policy.isUsableOnce -eq $true) `
-        'Enable TAP and require one-time use in Entra Authentication methods > Policies > Temporary Access Pass.'
+    Assert-Workshop ($Policy.state -eq 'enabled') `
+        'Enable TAP in Entra Authentication methods > Policies > Temporary Access Pass.'
     $targets = @($Policy.includeTargets)
     Assert-Workshop ($targets.Count -eq 1 -and $targets[0].id -eq $GroupId -and
         $targets[0].targetType -eq 'group' -and (Test-WorkshopEmptyList $Policy['excludeTargets'])) `
@@ -519,7 +522,7 @@ function Assert-WorkshopTapPolicy {
     Assert-Workshop ($Policy.minimumLifetimeInMinutes -is [long] -or $Policy.minimumLifetimeInMinutes -is [int]) 'TAP minimum lifetime is invalid.'
     Assert-Workshop ($Policy.maximumLifetimeInMinutes -is [long] -or $Policy.maximumLifetimeInMinutes -is [int]) 'TAP maximum lifetime is invalid.'
     Assert-Workshop ($Minutes -ge $Policy.minimumLifetimeInMinutes -and $Minutes -le $Policy.maximumLifetimeInMinutes) `
-        'LifetimeMinutes is outside the tenant TAP policy bounds. Configure a short onboarding window in Entra first.'
+        "LifetimeMinutes is outside the tenant TAP policy bounds ($($Policy.minimumLifetimeInMinutes) to $($Policy.maximumLifetimeInMinutes) minutes)."
 }
 
 function Get-WorkshopTaps {
@@ -869,7 +872,7 @@ function Invoke-WorkshopParticipants {
     param(
         [string]$Action = 'prepare', [guid]$TenantId = [guid]::Empty, [string]$Cohort = 'workshop', [string]$Domain,
         [int]$Count = 1, [string]$RosterPath, [string]$EnvironmentMap, [guid]$SubscriptionId = [guid]::Empty,
-        [int]$LifetimeMinutes = 30, [string[]]$Alias, [string]$StateDirectory, [string]$RosterOutput,
+        [int]$LifetimeMinutes = 60, [string[]]$Alias, [string]$StateDirectory, [string]$RosterOutput,
         [switch]$ReplaceTaps, [switch]$RetryUnconfirmedGroupCreation, [switch]$NoAccessValidated, [switch]$ConfirmCleanup
     )
     Assert-Workshop ($TenantId -ne [guid]::Empty) '-TenantId must identify the workshop tenant.'
@@ -881,7 +884,7 @@ function Invoke-WorkshopParticipants {
     Assert-Workshop (-not $Alias -or $Action -ne 'prepare') 'Use a roster or count for prepare; -Alias selects already-prepared participants.'
     if ($Action -eq 'issue-taps') {
         Assert-Workshop $IsWindows 'Bulk TAP handoff requires Windows DPAPI. The script will not create credentials with a plaintext fallback.'
-        Assert-Workshop ($LifetimeMinutes -in 10..60) 'TAP lifetime must be 10 to 60 minutes.'
+        Assert-Workshop ($LifetimeMinutes -in 10..480) 'TAP lifetime must be 10 to 480 minutes.'
     }
     if ($Action -eq 'assign-access') {
         Assert-Workshop $NoAccessValidated 'First validate TAP sign-in and no workshop access with the pilot account, then pass -NoAccessValidated.'
