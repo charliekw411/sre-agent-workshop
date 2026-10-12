@@ -10,6 +10,10 @@ param envName string
 @description('Azure region for all workshop resources.')
 param location string = 'australiaeast'
 
+@description('Optional explicit resource-group name. The standard single-environment name is used when empty.')
+@maxLength(90)
+param workshopResourceGroupName string = ''
+
 @description('Object ID of the signed-in attendee or service principal.')
 @minLength(1)
 param deployerPrincipalId string
@@ -32,7 +36,9 @@ param vmSize string = 'Standard_D2as_v5'
 param alertEmail string = ''
 
 var suffix = take(uniqueString(subscription().id, envName), 12)
-var resourceGroupName = 'rg-sre-agent-workshop-${envName}'
+var resourceGroupName = empty(workshopResourceGroupName)
+  ? 'rg-sre-agent-workshop-${envName}'
+  : workshopResourceGroupName
 var tags = {
   workload: 'sre-agent-workshop'
   environment: envName

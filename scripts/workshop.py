@@ -259,8 +259,19 @@ def token_identity(token):
     return str(uuid.UUID(claims["oid"])), str(uuid.UUID(claims["tid"]))
 
 
+def resource_group_name(values):
+    group = values.get("WORKSHOP_RESOURCE_GROUP_NAME") or (
+        "rg-sre-agent-workshop-" + required(values, "AZURE_ENV_NAME")
+    )
+    if (not isinstance(group, str) or not 1 <= len(group) <= 90
+            or not re.fullmatch(r"[A-Za-z0-9_.()\-]+", group)
+            or group.endswith(".")):
+        raise DeploymentError("WORKSHOP_RESOURCE_GROUP_NAME is not a valid Azure resource-group name.")
+    return group
+
+
 def check_resource_group(values, fresh=False):
-    group = "rg-sre-agent-workshop-" + required(values, "AZURE_ENV_NAME")
+    group = resource_group_name(values)
     subscription = required(values, "AZURE_SUBSCRIPTION_ID")
     exists = az("group", "exists", "--name", group, "--subscription", subscription)
     if type(exists) is not bool:
@@ -330,10 +341,12 @@ def existing_vm_matches(values, resource_group_exists=None):
     return False
 
 
-def check_vm_capacity(values, check_existing=True):
+def check_vm_capacity(values, check_existing=True, instances=1):
     location = required(values, "AZURE_LOCATION")
     subscription = required(values, "AZURE_SUBSCRIPTION_ID")
     size = values.get("VM_SIZE") or "Standard_D2as_v5"
+    if type(instances) is not int or instances < 1:
+        raise DeploymentError("VM capacity instances must be a positive integer.")
     if not re.fullmatch(r"Standard_[A-Za-z0-9_]+", size):
         raise DeploymentError("VM_SIZE must be a Standard Azure VM size name.")
     if check_existing and existing_vm_matches(values):
@@ -380,12 +393,34 @@ def check_vm_capacity(values, check_existing=True):
             else:
                 raise DeploymentError(f"Azure returned an invalid {field} for the {name} quota.")
         available = counts["limit"] - counts["currentValue"]
-        if available < cpus:
+        required_cpus = cpus * instances
+        if available < required_cpus:
             raise DeploymentError(
-                f"{size} needs {cpus} vCPUs, but {name} has {available} remaining in {location}. "
+                f"{instances} {size} VM(s) need {required_cpus} vCPUs, but {name} has "
+                f"{available} remaining in {location}. "
                 "Select an available size within existing quotas. Free Trial subscriptions cannot request quota increases."
             )
-    progress(f"[preflight] {size}: {cpus} x64 vCPUs, {memory:g} GiB RAM; regional and family quotas available.")
+    progress(
+        f"[preflight] {instances} x {size}: {required_cpus} x64 vCPUs total, "
+        f"{memory:g} GiB RAM each; regional and family quotas available."
+    )
+
+
+def check_sre_agent_region(values):
+    location = required(values, "AZURE_LOCATION")
+    subscription = required(values, "AZURE_SUBSCRIPTION_ID")
+    locations = az(
+        "provider", "show",
+        "--namespace", "Microsoft.App",
+        "--subscription", subscription,
+        "--query", "resourceTypes[?resourceType=='agents'].locations | [0]",
+    )
+    if not isinstance(locations, list) or location.casefold() not in {
+            item.replace(" ", "").casefold() for item in locations}:
+        raise DeploymentError(
+            f"SRE Agent is not advertised in {location}; no region substitution is made."
+        )
+    progress(f"[preflight] Azure SRE Agent is advertised in {location}.")
 
 
 def check_postgresql_capacity(values):
@@ -494,14 +529,7 @@ def prepare():
             )
         else:
             register_providers()
-            location = required(values, "AZURE_LOCATION")
-            locations = az("provider", "show", "--namespace", "Microsoft.App", "--query",
-                           "resourceTypes[?resourceType=='agents'].locations | [0]")
-            if not isinstance(locations, list) or location.casefold() not in {
-                    item.replace(" ", "").casefold() for item in locations}:
-                raise DeploymentError(
-                    f"SRE Agent is not advertised in {location}; no region substitution is made."
-                )
+            check_sre_agent_region(values)
             check_vm_capacity(values, check_existing=False)
             check_postgresql_capacity(values)
         ensure_ssh_public_key(values)

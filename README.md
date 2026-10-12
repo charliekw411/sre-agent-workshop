@@ -162,6 +162,49 @@ IDs, and the public API URL. The generated `.workshop/workshop.env` and
 `.workshop/workshop.ps1` files use an explicit non-secret allowlist. They do not
 contain a PostgreSQL password or access token.
 
+### Deploy a participant cohort
+
+Use the cohort wrapper when the Entra users already exist and each participant
+needs Contributor access to one isolated resource group:
+
+```bash
+python scripts/cohort.py deploy \
+  --participants 5 \
+  --subscriptions "<subscription-1>" "<subscription-2>" "<subscription-3>" \
+  --user-prefix "sre-test-workshop-participant" \
+  --user-domain "<tenant>.onmicrosoft.com"
+```
+
+`--participants 5` creates only `participant-01` through `participant-05` and
+`rg-01` through `rg-05`. The subscriptions are assigned round-robin, so five
+participants across three subscriptions use a 2/2/1 split. Increasing the same
+command to `--participants 20` extends the saved cohort to `rg-20` with a 7/7/6
+split.
+
+Before deployment, the command validates all participant UPNs, subscriptions,
+required providers, regional service availability, PostgreSQL availability,
+aggregate VM quota, and existing resource-group tags. It then deploys
+sequentially, runs the public, private database, telemetry, and fault-status
+checks, and assigns the matching user the built-in Contributor role on only
+their resource group.
+
+Progress and resumable private state are written under `.workshop/cohort/`.
+The final terminal table and `.workshop/cohort/roster.json` use subscription
+labels instead of subscription IDs. Rerunning the same command skips ready
+environments and retries failed or incomplete ones.
+
+Cleanup verifies the workshop tags before deleting anything:
+
+```bash
+python scripts/cohort.py cleanup --participant participant-03 --yes
+python scripts/cohort.py cleanup --all --yes
+```
+
+The deployment identity must be able to create role assignments, such as Owner
+or Contributor plus User Access Administrator. These environments are intended
+for same-day use; delete them promptly because the VM, PostgreSQL server,
+monitoring, public IP, and always-on SRE Agent continue to incur charges.
+
 ## Use and validate the workload
 
 Load the generated values and run the supported checks:
