@@ -161,6 +161,41 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(az.call_count, 2)
         self.assertNotIn("delete", str(az.call_args_list))
 
+    def test_user_resolution_explicitly_requests_account_enabled(self):
+        item = self.item()
+        state = {
+            "subscriptions": SUBSCRIPTIONS,
+            "participants": [item],
+        }
+        with patch.object(cohort, "select_subscription"), patch.object(
+                cohort.workshop, "az",
+                return_value={
+                    "id": item["userObjectId"],
+                    "userPrincipalName": item["userPrincipalName"],
+                    "accountEnabled": True,
+                    "userType": "Member",
+                }) as az:
+            cohort.resolve_users(state)
+
+        self.assertIn("%40", az.call_args.args[4])
+        self.assertIn("$select=id,userPrincipalName,accountEnabled,userType",
+                      az.call_args.args[4])
+
+    def test_disabled_user_is_rejected(self):
+        item = self.item()
+        state = {
+            "subscriptions": SUBSCRIPTIONS,
+            "participants": [item],
+        }
+        with patch.object(cohort, "select_subscription"), patch.object(
+                cohort.workshop, "az",
+                return_value={
+                    "id": item["userObjectId"],
+                    "userPrincipalName": item["userPrincipalName"],
+                    "accountEnabled": False,
+                }), self.assertRaisesRegex(cohort.CohortError, "is disabled"):
+            cohort.resolve_users(state)
+
     def test_existing_contributor_assignment_is_not_duplicated(self):
         item = self.item()
         with patch.object(

@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.parse
 import uuid
 
 import workshop
@@ -174,9 +175,19 @@ def resolve_users(state):
     select_subscription(state["subscriptions"][0]["id"])
     object_ids = set()
     for item in state["participants"]:
-        user = workshop.az("ad", "user", "show", "--id", item["userPrincipalName"])
+        user_url = (
+            "https://graph.microsoft.com/v1.0/users/"
+            + urllib.parse.quote(item["userPrincipalName"], safe="")
+            + "?$select=id,userPrincipalName,accountEnabled,userType"
+        )
+        user = workshop.az(
+            "rest",
+            "--method", "get",
+            "--url", user_url,
+            "--resource", "https://graph.microsoft.com",
+        )
         if user.get("accountEnabled") is not True:
-            raise CohortError(f"{item['userPrincipalName']} is missing or disabled.")
+            raise CohortError(f"{item['userPrincipalName']} is disabled.")
         object_id = str(uuid.UUID(user["id"]))
         if object_id in object_ids:
             raise CohortError("Two participant UPNs resolved to the same Entra object.")
