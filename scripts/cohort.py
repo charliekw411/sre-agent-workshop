@@ -498,6 +498,10 @@ def deploy_participant(state, item):
             state, item,
             deployment="Succeeded", validation="Running", status="Validating",
         )
+        progress(
+            f"[{item['participant']}] Infrastructure succeeded for "
+            f"{item['resourceGroup']}; running validation"
+        )
 
         stage = "validation"
         for arguments in (
@@ -506,12 +510,18 @@ def deploy_participant(state, item):
             ("telemetry",),
             ("fault", "status"),
         ):
+            progress(
+                f"[{item['participant']}] Validating: {' '.join(arguments)}"
+            )
             run_logged([
                 sys.executable, ROOT / "scripts" / "workshop.py", *arguments,
             ], log_path, item["environment"])
         update_item(
             state, item,
             validation="Passed", rbac="Running", status="Assigning RBAC",
+        )
+        progress(
+            f"[{item['participant']}] Validation passed; assigning Contributor"
         )
 
         stage = "rbac"

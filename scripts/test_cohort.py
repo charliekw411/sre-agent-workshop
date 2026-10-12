@@ -228,6 +228,35 @@ class SafetyTests(unittest.TestCase):
         self.assertTrue(all(value <= 2 for value in maximum.values()))
         self.assertGreater(maximum_total, 1)
 
+    def test_deployment_reports_completed_stages(self):
+        item = self.item()
+        state = {"participants": [item]}
+
+        def update(_, target, **changes):
+            target.update(changes)
+
+        with patch.object(cohort, "update_item", side_effect=update), \
+                patch.object(cohort, "run_logged"), \
+                patch.object(cohort, "ensure_contributor"), \
+                patch.object(cohort, "progress") as progress:
+            cohort.deploy_participant(state, item)
+
+        messages = [invocation.args[0] for invocation in progress.call_args_list]
+        self.assertIn(
+            "[participant-01] Infrastructure succeeded for rg-01; "
+            "running validation",
+            messages,
+        )
+        self.assertIn("[participant-01] Validating: smoke", messages)
+        self.assertIn("[participant-01] Validating: inspect", messages)
+        self.assertIn("[participant-01] Validating: telemetry", messages)
+        self.assertIn("[participant-01] Validating: fault status", messages)
+        self.assertIn(
+            "[participant-01] Validation passed; assigning Contributor",
+            messages,
+        )
+        self.assertTrue(messages[-1].startswith("[participant-01] Ready:"))
+
     def test_existing_contributor_assignment_is_not_duplicated(self):
         item = self.item()
         with patch.object(
