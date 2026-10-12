@@ -3,6 +3,7 @@
 
 import argparse
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import json
 import os
@@ -10,6 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 import uuid
@@ -24,6 +26,7 @@ ROSTER_PATH = STATE_DIRECTORY / "roster.json"
 LOG_DIRECTORY = STATE_DIRECTORY / "logs"
 ARCHITECTURE = "single-vm-postgresql-v1"
 CONTRIBUTOR_ROLE_ID = "b24988ac-6180-42a0-ab88-20f7382dd24c"
+STATE_LOCK = threading.Lock()
 
 
 class CohortError(Exception):
@@ -56,9 +59,20 @@ def safe_roster(state):
     }
 
 
-def save_state(state):
+def write_state(state):
     atomic_json(STATE_PATH, state)
     atomic_json(ROSTER_PATH, safe_roster(state))
+
+
+def save_state(state):
+    with STATE_LOCK:
+        write_state(state)
+
+
+def update_item(state, item, **changes):
+    with STATE_LOCK:
+        item.update(changes)
+        write_state(state)
 
 
 def resolve_subscriptions(requested):
@@ -167,12 +181,7 @@ def load_or_create_state(args, subscriptions):
     return state
 
 
-def select_subscription(subscription_id):
-    workshop.az("account", "set", "--subscription", subscription_id)
-
-
 def resolve_users(state):
-    select_subscription(state["subscriptions"][0]["id"])
     object_ids = set()
     for item in state["participants"]:
         user_url = (
@@ -274,8 +283,7 @@ def preflight(state):
             f"[cohort] Preflighting {subscription['label']} for "
             f"{len(assigned)} participant(s)"
         )
-        select_subscription(subscription["id"])
-        workshop.register_providers()
+        workshop.register_providers(subscription["id"])
         values = {
             "AZURE_LOCATION": state["location"],
             "AZURE_SUBSCRIPTION_ID": subscription["id"],
@@ -376,10 +384,9 @@ def configure_environment(state, item, existing_environments):
             f"not {state['vmSize']}."
         )
     set_azd_value(environment, "VM_SIZE", state["vmSize"])
-    workshop.cli("azd", "env", "select", environment, "--no-prompt")
 
 
-def run_logged(command, path):
+def run_logged(command, path, environment):
     path.parent.mkdir(parents=True, exist_ok=True)
     process_environment = os.environ.copy()
     process_environment.update({
@@ -387,6 +394,8 @@ def run_logged(command, path):
         "AZURE_CORE_ENABLE_LOG_FILE": "false",
         "AZURE_CORE_COLLECT_TELEMETRY": "false",
         "AZD_SKIP_UPDATE_CHECK": "true",
+        "AZURE_ENV_NAME": environment,
+        "WORKSHOP_COHORT_MODE": "1",
     })
     tail = deque(maxlen=30)
     with path.open("a", encoding="utf-8") as log:
@@ -463,9 +472,9 @@ def ensure_contributor(item):
     )
 
 
-def deploy_participant(state, item, existing_environments):
+def deploy_participant(state, item):
     started = time.monotonic()
-    item.update({
+    update_item(state, item, **{
         "attempts": item["attempts"] + 1,
         "deployment": "Running",
         "validation": "Pending",
@@ -474,23 +483,20 @@ def deploy_participant(state, item, existing_environments):
         "error": None,
         "startedUtc": datetime.now(timezone.utc).isoformat(),
     })
-    save_state(state)
     log_path = LOG_DIRECTORY / f"{item['participant']}.log"
     stage = "deployment"
     try:
-        select_subscription(item["subscriptionId"])
-        configure_environment(state, item, existing_environments)
         progress(
             f"[{item['participant']}] Deploying {item['resourceGroup']} "
             f"({item['subscriptionLabel']}); log: {log_path}"
         )
         run_logged([
             "azd", "up", "--no-prompt", "--environment", item["environment"],
-        ], log_path)
-        item["deployment"] = "Succeeded"
-        item["validation"] = "Running"
-        item["status"] = "Validating"
-        save_state(state)
+        ], log_path, item["environment"])
+        update_item(
+            state, item,
+            deployment="Succeeded", validation="Running", status="Validating",
+        )
 
         stage = "validation"
         for arguments in (
@@ -501,35 +507,66 @@ def deploy_participant(state, item, existing_environments):
         ):
             run_logged([
                 sys.executable, ROOT / "scripts" / "workshop.py", *arguments,
-            ], log_path)
-        item["validation"] = "Passed"
-        item["rbac"] = "Running"
-        item["status"] = "Assigning RBAC"
-        save_state(state)
+            ], log_path, item["environment"])
+        update_item(
+            state, item,
+            validation="Passed", rbac="Running", status="Assigning RBAC",
+        )
 
         stage = "rbac"
         ensure_contributor(item)
-        item["rbac"] = "Contributor"
-        item["status"] = "Ready"
-        item["completedUtc"] = datetime.now(timezone.utc).isoformat()
+        update_item(
+            state, item,
+            rbac="Contributor",
+            status="Ready",
+            completedUtc=datetime.now(timezone.utc).isoformat(),
+        )
         progress(
             f"[{item['participant']}] Ready: {item['userPrincipalName']} "
             f"has Contributor on {item['resourceGroup']}"
         )
     except (CohortError, workshop.DeploymentError, OSError, KeyError, TypeError, ValueError) as error:
+        changes = {
+            "status": "Failed",
+            "error": str(error),
+            "completedUtc": datetime.now(timezone.utc).isoformat(),
+        }
         if stage == "deployment":
-            item["deployment"] = "Failed"
+            changes["deployment"] = "Failed"
         elif stage == "validation":
-            item["validation"] = "Failed"
+            changes["validation"] = "Failed"
         else:
-            item["rbac"] = "Failed"
-        item["status"] = "Failed"
-        item["error"] = str(error)
-        item["completedUtc"] = datetime.now(timezone.utc).isoformat()
+            changes["rbac"] = "Failed"
+        update_item(state, item, **changes)
         progress(f"[{item['participant']}] FAILED during {stage}; see {log_path}")
     finally:
-        item["durationSeconds"] = round(time.monotonic() - started, 1)
-        save_state(state)
+        update_item(
+            state, item,
+            durationSeconds=round(time.monotonic() - started, 1),
+        )
+
+
+def deploy_parallel(state, items, parallel_per_subscription):
+    executors = {
+        subscription["id"]: ThreadPoolExecutor(
+            max_workers=parallel_per_subscription,
+            thread_name_prefix=subscription["label"],
+        )
+        for subscription in state["subscriptions"]
+    }
+    futures = []
+    try:
+        for item in items:
+            futures.append(
+                executors[item["subscriptionId"]].submit(
+                    deploy_participant, state, item,
+                )
+            )
+        for future in as_completed(futures):
+            future.result()
+    finally:
+        for executor in executors.values():
+            executor.shutdown(wait=True)
 
 
 def duration(value):
@@ -575,21 +612,45 @@ def table(state):
 
 
 def deploy(args):
+    if not 1 <= args.parallel_per_subscription <= 3:
+        raise CohortError("--parallel-per-subscription must be between 1 and 3.")
     subscriptions = resolve_subscriptions(args.subscriptions)
     state = load_or_create_state(args, subscriptions)
     preflight(state)
     existing_environments = azd_environment_names()
+    pending = []
     for item in state["participants"]:
         if item["status"] == "Ready":
             try:
                 ensure_contributor(item)
             except (CohortError, workshop.DeploymentError) as error:
-                item.update({"rbac": "Failed", "status": "Failed", "error": str(error)})
-                save_state(state)
+                update_item(
+                    state, item,
+                    rbac="Failed", status="Failed", error=str(error),
+                )
             else:
                 progress(f"[{item['participant']}] Already ready; skipping deployment")
                 continue
-        deploy_participant(state, item, existing_environments)
+        try:
+            configure_environment(state, item, existing_environments)
+        except (CohortError, workshop.DeploymentError) as error:
+            update_item(
+                state, item,
+                deployment="Failed", status="Failed", error=str(error),
+            )
+            progress(
+                f"[{item['participant']}] FAILED while configuring its azd environment"
+            )
+            continue
+        pending.append(item)
+    if pending:
+        progress(
+            f"[cohort] Deploying up to "
+            f"{args.parallel_per_subscription * len(state['subscriptions'])} "
+            f"environments at once "
+            f"({args.parallel_per_subscription} per subscription)"
+        )
+        deploy_parallel(state, pending, args.parallel_per_subscription)
     print(table(state))
     failures = [item for item in state["participants"] if item["status"] != "Ready"]
     if failures:
@@ -696,6 +757,7 @@ def parser():
     deploy_parser.add_argument("--user-domain", required=True)
     deploy_parser.add_argument("--location", default="australiaeast")
     deploy_parser.add_argument("--vm-size", default="Standard_D2as_v5")
+    deploy_parser.add_argument("--parallel-per-subscription", type=int, default=2)
     cleanup_parser = commands.add_parser("cleanup")
     target = cleanup_parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--participant")

@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import call, patch
 
@@ -167,8 +169,7 @@ class SafetyTests(unittest.TestCase):
             "subscriptions": SUBSCRIPTIONS,
             "participants": [item],
         }
-        with patch.object(cohort, "select_subscription"), patch.object(
-                cohort.workshop, "az",
+        with patch.object(cohort.workshop, "az",
                 return_value={
                     "id": item["userObjectId"],
                     "userPrincipalName": item["userPrincipalName"],
@@ -187,14 +188,45 @@ class SafetyTests(unittest.TestCase):
             "subscriptions": SUBSCRIPTIONS,
             "participants": [item],
         }
-        with patch.object(cohort, "select_subscription"), patch.object(
-                cohort.workshop, "az",
+        with patch.object(cohort.workshop, "az",
                 return_value={
                     "id": item["userObjectId"],
                     "userPrincipalName": item["userPrincipalName"],
                     "accountEnabled": False,
                 }), self.assertRaisesRegex(cohort.CohortError, "is disabled"):
             cohort.resolve_users(state)
+
+    def test_parallel_deployment_is_bounded_per_subscription(self):
+        items = cohort.participant_records(
+            5, SUBSCRIPTIONS, "participant", "example.com",
+        )
+        state = {"subscriptions": SUBSCRIPTIONS, "participants": items}
+        lock = threading.Lock()
+        active = {item["id"]: 0 for item in SUBSCRIPTIONS}
+        maximum = {item["id"]: 0 for item in SUBSCRIPTIONS}
+        total_active = 0
+        maximum_total = 0
+
+        def deploy(_, item):
+            nonlocal total_active, maximum_total
+            with lock:
+                subscription = item["subscriptionId"]
+                active[subscription] += 1
+                total_active += 1
+                maximum[subscription] = max(
+                    maximum[subscription], active[subscription],
+                )
+                maximum_total = max(maximum_total, total_active)
+            time.sleep(0.03)
+            with lock:
+                active[subscription] -= 1
+                total_active -= 1
+
+        with patch.object(cohort, "deploy_participant", side_effect=deploy):
+            cohort.deploy_parallel(state, items, parallel_per_subscription=2)
+
+        self.assertTrue(all(value <= 2 for value in maximum.values()))
+        self.assertGreater(maximum_total, 1)
 
     def test_existing_contributor_assignment_is_not_duplicated(self):
         item = self.item()

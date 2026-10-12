@@ -184,9 +184,12 @@ split.
 Before deployment, the command validates all participant UPNs, subscriptions,
 required providers, regional service availability, PostgreSQL availability,
 aggregate VM quota, and existing resource-group tags. It then deploys
-sequentially, runs the public, private database, telemetry, and fault-status
-checks, and assigns the matching user the built-in Contributor role on only
-their resource group.
+with up to two environments per subscription in parallel, runs the public,
+private database, telemetry, and fault-status checks, and assigns the matching
+user the built-in Contributor role on only their resource group. With three
+subscriptions, at most six environments run at once. Use
+`--parallel-per-subscription 1` if a subscription needs more conservative
+throttling.
 
 Progress and resumable private state are written under `.workshop/cohort/`.
 The final terminal table and `.workshop/cohort/roster.json` use subscription

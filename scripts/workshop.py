@@ -146,10 +146,18 @@ def required(values, key):
 
 
 def environment():
-    values = json.loads(cli("azd", "env", "get-values", "--output", "json"))
+    command = ["env", "get-values", "--output", "json"]
+    selected = os.environ.get("AZURE_ENV_NAME")
+    if selected:
+        command += ["--environment", selected]
+    values = json.loads(cli("azd", *command))
     if not isinstance(values, dict):
         raise DeploymentError("azd did not return an environment object.")
     env_name = required(values, "AZURE_ENV_NAME")
+    if selected and env_name != selected:
+        raise DeploymentError(
+            f"azd returned environment {env_name}, not the requested {selected}."
+        )
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", env_name):
         raise DeploymentError("The azd environment name must contain only letters, digits, - and _.")
     subscription = required(values, "AZURE_SUBSCRIPTION_ID")
@@ -157,8 +165,6 @@ def environment():
         uuid.UUID(subscription)
     except ValueError as error:
         raise DeploymentError("AZURE_SUBSCRIPTION_ID must be a subscription GUID.") from error
-    # Every call uses the azd subscription, not an unrelated Azure CLI default.
-    az("account", "set", "--subscription", subscription)
     return values
 
 
@@ -212,7 +218,11 @@ def stage(values, name):
 
 
 def export_values(values):
-    directory = ROOT / ".workshop"
+    directory = (
+        state_directory(values)
+        if os.environ.get("WORKSHOP_COHORT_MODE") == "1"
+        else ROOT / ".workshop"
+    )
     directory.mkdir(exist_ok=True)
     safe = {key: str(value) for key, value in values.items()
             if key in SAFE_OUTPUTS and value is not None}
@@ -227,10 +237,15 @@ def export_values(values):
         path.chmod(0o600)
 
 
-def register_providers():
+def register_providers(subscription=None):
+    subscription_args = (
+        ["--subscription", subscription] if subscription else []
+    )
+
     def states():
         return {item["namespace"].casefold(): item["state"].casefold() for item in az(
-            "provider", "list", "--query", "[].{namespace:namespace,state:registrationState}"
+            "provider", "list", *subscription_args,
+            "--query", "[].{namespace:namespace,state:registrationState}",
         )}
 
     current = states()
@@ -238,7 +253,7 @@ def register_providers():
                if current.get(provider.casefold()) != "registered"}
     for provider in sorted(pending):
         progress(f"[preflight] Registering {provider}")
-        az("provider", "register", "--namespace", provider)
+        az("provider", "register", "--namespace", provider, *subscription_args)
     deadline = time.monotonic() + 600
     while pending:
         if time.monotonic() >= deadline:
@@ -494,6 +509,7 @@ def validate():
 
 def prepare():
     values = environment()
+    subscription = required(values, "AZURE_SUBSCRIPTION_ID")
     write_json(state_directory(values) / "deployment.json", {
         "environment": values["AZURE_ENV_NAME"],
         "startedUtc": datetime.now(timezone.utc).isoformat(), "stages": [],
@@ -504,15 +520,17 @@ def prepare():
         if not resource_group_exists:
             clear_fresh_environment_evidence(values)
         token = az("account", "get-access-token", "--resource",
-                   "https://management.azure.com/", sensitive=True)["accessToken"]
+                   "https://management.azure.com/",
+                   "--subscription", subscription,
+                   sensitive=True)["accessToken"]
+        principal, tenant = token_identity(token)
         azd_token = json.loads(cli(
             "azd", "auth", "token", "--scope", "https://management.azure.com/.default",
-            "--output", "json", sensitive=True,
+            "--tenant-id", tenant, "--output", "json", sensitive=True,
         ))["token"]
-        principal, _ = token_identity(token)
         if token_identity(token) != token_identity(azd_token):
             raise DeploymentError("Azure CLI and azd must use the same principal and tenant.")
-        account = az("account", "show")
+        account = az("account", "show", "--subscription", subscription)
         principal_type = "User" if account["user"]["type"] == "user" else "ServicePrincipal"
         for key, value in (
             ("AZURE_PRINCIPAL_ID", principal),
@@ -528,7 +546,7 @@ def prepare():
                 "SKU, and unused-quota availability checks."
             )
         else:
-            register_providers()
+            register_providers(subscription)
             check_sre_agent_region(values)
             check_vm_capacity(values, check_existing=False)
             check_postgresql_capacity(values)
@@ -663,9 +681,10 @@ def sre_agent_url(values):
     return url
 
 
-def sre_agent_token():
+def sre_agent_token(values):
     response = az(
         "account", "get-access-token", "--resource", "https://azuresre.dev",
+        "--subscription", required(values, "AZURE_SUBSCRIPTION_ID"),
         sensitive=True,
     )
     token = response.get("accessToken") if isinstance(response, dict) else None
@@ -730,7 +749,7 @@ def sre_agent_request(endpoint, token, path, method="GET", body=None):
 
 def ensure_sre_response_plan(values, attempts=8, retry_seconds=15):
     endpoint = sre_agent_url(values)
-    token = sre_agent_token()
+    token = sre_agent_token(values)
     properties = {
         "incidentPlatform": "AzMonitor",
         "impactedService": "",
@@ -1138,7 +1157,9 @@ def query_logs(values, query):
         response = az(
             "rest", "--method", "post", "--url",
             f"https://api.loganalytics.io/v1/workspaces/{workspace}/query",
-            "--resource", "https://api.loganalytics.io", "--body", "@" + str(path),
+            "--resource", "https://api.loganalytics.io",
+            "--subscription", required(values, "AZURE_SUBSCRIPTION_ID"),
+            "--body", "@" + str(path),
         )
     if not isinstance(response, dict) or response.get("error"):
         raise DeploymentError("Log Analytics returned a query error.")

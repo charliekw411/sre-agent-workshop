@@ -261,10 +261,26 @@ class PreflightTests(unittest.TestCase):
                 workshop.register_providers()
         self.assertEqual(az.call_count, 1)
 
-    def test_subscription_selection_is_explicit(self):
-        with patch.object(workshop, "cli", return_value=json.dumps(VALUES)), patch.object(workshop, "az") as az:
+    def test_environment_selection_is_explicit_without_mutating_azure_cli(self):
+        with patch.dict(os.environ, {"AZURE_ENV_NAME": VALUES["AZURE_ENV_NAME"]}), \
+                patch.object(workshop, "cli", return_value=json.dumps(VALUES)) as cli, \
+                patch.object(workshop, "az") as az:
             self.assertEqual(workshop.environment(), VALUES)
-        az.assert_called_once_with("account", "set", "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"])
+        cli.assert_called_once_with(
+            "azd", "env", "get-values", "--output", "json",
+            "--environment", VALUES["AZURE_ENV_NAME"],
+        )
+        az.assert_not_called()
+
+    def test_cohort_exports_are_isolated_per_environment(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(workshop, "ROOT", Path(temporary)), \
+                patch.dict(os.environ, {"WORKSHOP_COHORT_MODE": "1"}):
+            workshop.export_values(VALUES)
+            directory = Path(temporary) / ".workshop" / VALUES["AZURE_ENV_NAME"]
+            self.assertTrue((directory / "workshop.env").is_file())
+            self.assertTrue((directory / "workshop.ps1").is_file())
+            self.assertFalse((Path(temporary) / ".workshop" / "workshop.env").exists())
 
     def test_exports_allowlist_and_shell_quoting(self):
         with tempfile.TemporaryDirectory() as temporary:
