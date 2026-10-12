@@ -1,7 +1,7 @@
 ---
 title: Module 02 - Operate the SRE Agent Response Plan
 description: Verify the read-only Azure SRE Agent, inspect its Azure Monitor response plan, and rehearse the human review workflow before an alert fires.
-ms.date: 2026-10-06
+ms.date: 2026-10-12
 ms.topic: how-to
 keywords:
   - azure sre agent
@@ -186,9 +186,10 @@ write, or fault execution rights.
 
 !!! important "Configuration access is not runtime authority"
     You receive an agent-scoped administrator role so deployment can configure
-    the response plan. That does not grant the agent runtime permission to change
-    the VM or the PostgreSQL fault rule. The human operator and the read-only
-    agent have different identities and responsibilities.
+    the response plan and so you can install the Module 05 scheduled task and
+    create Live Reports. That does not grant the agent runtime permission to
+    change the VM or the PostgreSQL fault rule. The human operator and the
+    read-only agent have different identities and responsibilities.
 
 ### Task 4: Inspect the alert inputs
 

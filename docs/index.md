@@ -1,7 +1,7 @@
 ---
 title: Azure SRE Agent Workshop
-description: Deploy a public Orders API with private PostgreSQL, investigate CPU and database-connectivity incidents, and verify Azure SRE Agent findings.
-ms.date: 2026-10-06
+description: Deploy a public Orders API with private PostgreSQL, investigate CPU and database-connectivity incidents, verify Azure SRE Agent findings, and schedule a proactive health check.
+ms.date: 2026-10-12
 ms.topic: overview
 keywords:
   - azure sre agent
@@ -9,12 +9,14 @@ keywords:
   - azure virtual machines
   - postgresql
   - incident response
+  - scheduled tasks
+  - live reports
 estimated_reading_time: 7
 ---
 
 <div class="sre-hero" markdown>
 <h1>Azure SRE Agent Workshop</h1>
-<p>Exercise a public API, observe its private managed database dependency, trigger two controlled incidents, and verify how Azure SRE Agent responds.</p>
+<p>Exercise a public API, observe its private managed database dependency, trigger two controlled incidents, verify how Azure SRE Agent responds, and schedule a proactive health check.</p>
 </div>
 
 ## What you deploy
@@ -92,7 +94,8 @@ VM and no-HA database remain deliberate cost and failure-domain compromises.
 * Verify agent claims with portal charts, Kusto queries, API responses, and
   Activity Log.
 * Restore a narrowly scoped network rule without modifying database data.
-* Preserve evidence and turn response gaps into owned improvements.
+* Schedule a read-only agent health check and build a refreshable Live Report.
+* Preserve evidence and delete every workshop resource.
 
 ## Learning path
 
@@ -102,7 +105,7 @@ flowchart LR
     M1 --> M2[02 Operate response plan]
     M2 --> M3[03 Respond to high CPU]
     M3 --> M4[04 Respond to PostgreSQL connectivity loss]
-    M4 --> M5[05 Review and improve]
+    M4 -->     M5[05 Schedule health check and Live Report]
     M5 --> M6[06 Preserve evidence and clean up]
 
     classDef setup fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a
@@ -120,8 +123,8 @@ flowchart LR
 | 02 | Rehearse the Sev1/Sev2 Review response plan | Resource roles, response plan, alert rules, and healthy agent assessment |
 | 03 | Detect, investigate, and recover from CPU saturation | VM CPU, request duration, alert, Activity Log, and investigation |
 | 04 | Diagnose and restore PostgreSQL connectivity | NSG rule state, HTTP 503 readiness, failed dependencies, alert, and investigation |
-| 05 | Produce an evidence-backed incident review | Customer, dependency, resource, alert, change, and recovery timelines |
-| 06 | Preserve evidence and delete every workshop resource | Final healthy state, saved notes, resource inventory, and deletion proof |
+| 05 | Schedule a proactive health check and build a Live Report | Installed task, thread findings graded against KQL, and a refreshable report |
+| 06 | Preserve evidence and delete every workshop resource | Final healthy state, saved notes, report snapshot, resource inventory, and deletion proof |
 
 Allow about three and a half hours, including telemetry ingestion and alert
 evaluation waits.
@@ -137,6 +140,10 @@ healthy signal -> authenticated bounded change -> customer and telemetry impact
 The SRE Agent reads resources and telemetry and proposes a response. It has no
 permission to mutate the VM or NSG. You verify its claims and run an approved
 reset through your own authenticated session.
+
+Module 05 adds a proactive path that needs no fault: a scheduled, read-only agent
+health check and a refreshable Live Report. Both read the same telemetry, and
+neither changes Azure resources.
 
 The PostgreSQL fault changes only `PostgreSqlFaultInjection`:
 
@@ -160,6 +167,8 @@ This is not a production reference architecture:
 * The application availability probe originates on the VM.
 * The VM runtime identity also holds database administrator privilege.
 * Only synthetic data belongs in the API.
+* Live Reports is a preview feature created in the portal, and the recurring
+  health check uses agent units until you remove it.
 * Azure resources continue to incur charges until deletion.
 
 Azure Policy must permit the public VM endpoint, private PostgreSQL resources,

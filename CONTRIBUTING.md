@@ -1,7 +1,7 @@
 ---
 title: Contributing
 description: How to contribute to the Azure SRE Agent workshop, including documentation, PostgreSQL test, and deployment validation standards.
-ms.date: 2026-10-06
+ms.date: 2026-10-12
 ms.topic: how-to
 keywords:
   - contributing
@@ -68,8 +68,8 @@ python scripts/check_infra.py .workshop/infra-template.json
 az bicep lint --file infra/azd/main.bicep
 ```
 
-Deployment hooks require PyYAML from `requirements.txt`. Keep orchestration
-cross-platform in `scripts/workshop.py`; Bash and PowerShell entry points must
+Deployment hooks and the `health-check` command require PyYAML from
+`requirements.txt`. Keep orchestration cross-platform in `scripts/workshop.py`; Bash and PowerShell entry points must
 share that implementation.
 
 ### Application tests
@@ -134,6 +134,31 @@ them:
   `DependencyType == "PostgreSQL"`.
 * Existing resource groups are accepted only when tagged
   `workshop-architecture=single-vm-postgresql-v1`.
+* The scheduled health check is opt-in through `health-check install`. `azd up`
+  never installs it, and it creates no Azure resource.
+* The installer attaches only the read-only tools in `HEALTH_CHECK_TOOLS` (plus
+  the query tool for each healthy telemetry connector) to the health-check
+  custom agent, pins its optional tool categories empty, and runs the task in
+  Review mode.
+* Live testing showed that scheduled runs do not apply the custom agent's
+  instructions or tool list, and that `QueryAppInsightsUsingAppId` is not
+  available to them. Keep the read-only and reporting rules in the skill and the
+  task prompt, query Application Insights data through the `App*` tables with
+  `QueryLogAnalyticsByWorkspaceId`, and never present the tool list as the
+  safety boundary of a run.
+* `health-check remove` deletes only the health-check task, custom agent, and
+  skill. It never changes the response plan or the connectors.
+* The health-check schedule is a UTC cron expression. `0 21 * * 0-4` is Monday
+  to Friday at 09:00 New Zealand Standard Time (UTC+12).
+* The Module 05 Live Report prompt was validated against a live agent on the
+  default Stable channel. Keep its status rules aligned with the health-check
+  skill: statuses come from the last 15 minutes, and failures that recovered
+  earlier in the window are reported separately. Ask for New Zealand time as
+  plain text, because the monitor tool serializes local times with a `+00:00`
+  suffix. Expect one approval, for the read-only `system-mcp-monitor` workspace
+  query tool. A report's tools run as the agent, approving needs SRE Agent
+  Administrator, and every generation can contain defects, so the module has
+  students verify each status.
 
 Do not broaden a fault to the whole subnet or Internet, stop the database
 server, mutate application data, add a database password, or treat Run Command
@@ -156,6 +181,9 @@ When the scope requires live validation, record:
 * VM restart persistence tied to `POSTGRESQL_SERVER_RESOURCE_ID`.
 * PostgreSQL dependency and availability telemetry.
 * CPU and PostgreSQL incident alert behavior.
+* Scheduled health check install, read-back, first task run thread, Live Report
+  creation (the single approval for the read-only workspace query tool and the
+  saved version number), a Reload of the saved report, and removal.
 * Reset state before final evidence and cleanup.
 * A repeated `azd up`, including reconciliation of the NSG rule to `Allow`.
 

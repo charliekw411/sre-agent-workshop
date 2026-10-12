@@ -725,9 +725,9 @@ first-failure, alert, mitigation, recovery, and resolution times.
 
 ## Next steps
 
-[Next: Module 05 - Review and Improve the Response :material-arrow-right:](../05-review-and-improve/index.md){ .md-button .md-button--primary }
+[Next: Module 05 - Schedule a Health Check and Build a Live Report :material-arrow-right:](../05-scheduled-health-check/index.md){ .md-button .md-button--primary }
 
 <div class="sre-nav" markdown>
 [:material-arrow-left: Module 03 - Respond to High CPU](../03-incident-high-cpu/index.md)
-[Module 05 - Review and Improve the Response :material-arrow-right:](../05-review-and-improve/index.md)
+[Module 05 - Schedule a Health Check and Build a Live Report :material-arrow-right:](../05-scheduled-health-check/index.md)
 </div>

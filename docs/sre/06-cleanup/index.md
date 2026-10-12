@@ -1,7 +1,7 @@
 ---
 title: Module 06 - Preserve Evidence and Clean Up
-description: Capture final portal evidence, stop all workshop activity, preserve investigation artifacts, delete the Azure environment, and verify removal.
-ms.date: 2026-10-06
+description: Capture final portal evidence, stop workshop activity and the scheduled health check, preserve investigation artifacts, delete the Azure environment, and verify removal.
+ms.date: 2026-10-12
 ms.topic: how-to
 keywords:
   - cleanup
@@ -30,10 +30,15 @@ Deleting the resource group permanently removes the PostgreSQL server, its
 locally redundant backups, and all synthetic orders. Preserve only evidence
 appropriate for your organization's data-handling policy.
 
+The recurring health check from Module 05 runs on weekdays and consumes agent
+units on every run. This module saves a snapshot of the Live Report, removes the
+scheduled task, and only then deletes the environment.
+
 ## Learning objectives
 
 * Capture final healthy Orders GUI, CPU, PostgreSQL dependency, and API views.
 * Stop load generation and reset CPU and PostgreSQL fault controls.
+* Remove the recurring health-check task and save a Live Report snapshot.
 * Preserve notes, charts, alert history, and agent findings.
 * Review the exact Azure scope before deletion.
 * Delete and verify the workshop environment.
@@ -95,7 +100,12 @@ Before deleting anything:
 6. Open **Monitor** > **Alerts**, include resolved alerts, and capture the CPU
    and PostgreSQL connectivity alert history.
 7. Save the final SRE Agent investigation summaries.
-8. In Log Analytics, capture the PostgreSQL dependency failure and recovery
+8. Open the **Orders Service Health** Live Report from Module 05 and select
+   **Reload**. From the overflow menu, select **Download HTML** to save a static,
+   sanitized snapshot. The file cannot call SRE Agent tools, but handle it
+   according to the sensitivity of its data. Skip this step if you did not build
+   the report.
+9. In Log Analytics, capture the PostgreSQL dependency failure and recovery
    window from Module 04.
 
 <!-- SCREENSHOT: Final VM CPU chart showing baseline, incident spike, and recovered state -->
@@ -129,6 +139,29 @@ reads back the fixed NSG rule, recycles only `orders-api`, and verifies
 readiness plus an order read; it does not alter database rows or restart the VM
 or PostgreSQL.
 
+Then remove the recurring health check so it stops consuming agent units:
+
+=== "Bash"
+
+    ```bash
+    python scripts/workshop.py health-check remove
+    python scripts/workshop.py health-check status
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    python scripts/workshop.py health-check remove
+    python scripts/workshop.py health-check status
+    ```
+
+`remove` reports `"ok": true` and lists the scheduled task, custom agent, and
+skill it deleted. The following `status` reports `"installed": false`. The
+command deletes only those three items. It does not change the response plan,
+the connectors, or any Live Report, and it is safe to repeat. Live Reports and
+the task's run history are deleted with the agent in Task 5, which is why Task 1
+saves a snapshot first.
+
 ### Task 3: Preserve the evidence worth keeping
 
 Create a directory outside `.workshop` and copy your notes:
@@ -159,7 +192,7 @@ Keep:
 * CPU and PostgreSQL dependency timelines.
 * Alert and response-plan timestamps.
 * Agent drafts and your corrections.
-* The final incident review and improvement backlog.
+* Your health-check notes, graded claims, and the Live Report snapshot.
 
 The JSON files under `.workshop/<environment>/` are deployment and validation
 evidence. Copy them only if they are useful and permitted by your organization.
@@ -222,7 +255,8 @@ delete.
 
 Read the interactive confirmation carefully. This removes the resource group,
 VM, private network and DNS resources, PostgreSQL server and backups, public
-endpoint, telemetry, alert history, response plan, and SRE Agent.
+endpoint, telemetry, alert history, response plan, SRE Agent, and any Live
+Reports it holds.
 
 Allow Azure several minutes to finish deletion.
 
@@ -305,6 +339,10 @@ Do not delete the repository or your copied review artifacts.
 
 * [x] You captured the final healthy Orders GUI, VM CPU, API, alert, and SRE Agent views.
 * [x] All load generation and faults were stopped.
+* [x] `health-check remove` completed and `health-check status` reported
+  `installed` as `false`.
+* [x] You downloaded a Live Report snapshot, or recorded that you did not build
+  the report.
 * [x] Notes and screenshots were copied outside deployment state.
 * [x] You reviewed the resource inventory before deletion.
 * [x] `azd down --purge --force` completed.
@@ -326,12 +364,12 @@ Do not delete the repository or your copied review artifacts.
 You deployed and validated a persistent single-VM workload, used its customer
 GUI, confirmed healthy telemetry, operated an SRE Agent response plan, handled
 CPU and PostgreSQL connectivity incidents, verified automated findings, and
-converted the evidence into an improvement backlog.
+added a proactive scheduled health check and Live Report.
 
 [Return to workshop home :material-home:](../../index.md){ .md-button .md-button--primary }
 [Troubleshooting](../30-appendix/02-troubleshooting.md){ .md-button }
 
 <div class="sre-nav" markdown>
-[:material-arrow-left: Module 05 - Review and Improve](../05-review-and-improve/index.md)
+[:material-arrow-left: Module 05 - Schedule a Health Check and Build a Live Report](../05-scheduled-health-check/index.md)
 [About the authors :material-arrow-right:](../29-about-the-authors/index.md)
 </div>
