@@ -194,7 +194,8 @@ throttling.
 Progress and resumable private state are written under `.workshop/cohort/`.
 The final terminal table and `.workshop/cohort/roster.json` use subscription
 labels instead of subscription IDs. Rerunning the same command skips ready
-environments and retries failed or incomplete ones.
+environments and resumes failed or incomplete ones from the first unfinished
+deployment, validation, or RBAC stage.
 
 Cleanup verifies the workshop tags before deleting anything:
 

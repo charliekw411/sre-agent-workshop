@@ -251,11 +251,50 @@ class SafetyTests(unittest.TestCase):
         self.assertIn("[participant-01] Validating: inspect", messages)
         self.assertIn("[participant-01] Validating: telemetry", messages)
         self.assertIn("[participant-01] Validating: fault status", messages)
+        self.assertIn("[participant-01] Validation passed", messages)
+        self.assertIn("[participant-01] Assigning Contributor", messages)
+        self.assertTrue(messages[-1].startswith("[participant-01] Ready:"))
+
+    def test_rbac_retry_skips_successful_deployment_and_validation(self):
+        item = self.item()
+        item.update({
+            "deployment": "Succeeded",
+            "validation": "Passed",
+            "rbac": "Failed",
+            "status": "Failed",
+        })
+        state = {"participants": [item]}
+
+        def update(_, target, **changes):
+            target.update(changes)
+
+        with patch.object(cohort, "update_item", side_effect=update), \
+                patch.object(cohort, "run_logged") as run_logged, \
+                patch.object(cohort, "ensure_contributor") as ensure_contributor, \
+                patch.object(cohort, "progress") as progress:
+            cohort.deploy_participant(state, item)
+
+        run_logged.assert_not_called()
+        ensure_contributor.assert_called_once_with(item)
+        messages = [invocation.args[0] for invocation in progress.call_args_list]
         self.assertIn(
-            "[participant-01] Validation passed; assigning Contributor",
+            "[participant-01] Infrastructure already succeeded for rg-01; "
+            "skipping deployment",
             messages,
         )
-        self.assertTrue(messages[-1].startswith("[participant-01] Ready:"))
+        self.assertIn(
+            "[participant-01] Validation already passed; skipping validation",
+            messages,
+        )
+        self.assertEqual(item["status"], "Ready")
+
+    def test_contributor_lookup_uses_scope_without_all(self):
+        item = self.item()
+        with patch.object(cohort.workshop, "az", return_value=[]) as az:
+            cohort.contributor_assignments(item)
+
+        self.assertIn("--scope", az.call_args.args)
+        self.assertNotIn("--all", az.call_args.args)
 
     def test_existing_contributor_assignment_is_not_duplicated(self):
         item = self.item()

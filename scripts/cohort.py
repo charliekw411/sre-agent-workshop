@@ -299,7 +299,7 @@ def preflight(state):
             )
             if not has_vm:
                 new_instances += 1
-                if item["status"] == "Ready":
+                if item["deployment"] == "Succeeded":
                     item.update({
                         "deployment": "Pending",
                         "validation": "Pending",
@@ -436,7 +436,6 @@ def contributor_assignments(item):
         "role", "assignment", "list",
         "--assignee-object-id", item["userObjectId"],
         "--scope", scope,
-        "--all",
         "--fill-principal-name", "false",
         "--subscription", item["subscriptionId"],
     )
@@ -475,56 +474,72 @@ def ensure_contributor(item):
 
 def deploy_participant(state, item):
     started = time.monotonic()
+    deployment_succeeded = item["deployment"] == "Succeeded"
+    validation_passed = deployment_succeeded and item["validation"] == "Passed"
     update_item(state, item, **{
         "attempts": item["attempts"] + 1,
-        "deployment": "Running",
-        "validation": "Pending",
-        "rbac": "Pending",
-        "status": "Deploying",
         "error": None,
         "startedUtc": datetime.now(timezone.utc).isoformat(),
     })
     log_path = LOG_DIRECTORY / f"{item['participant']}.log"
     stage = "deployment"
     try:
-        progress(
-            f"[{item['participant']}] Deploying {item['resourceGroup']} "
-            f"({item['subscriptionLabel']}); log: {log_path}"
-        )
-        run_logged([
-            "azd", "up", "--no-prompt", "--environment", item["environment"],
-        ], log_path, item["environment"])
-        update_item(
-            state, item,
-            deployment="Succeeded", validation="Running", status="Validating",
-        )
-        progress(
-            f"[{item['participant']}] Infrastructure succeeded for "
-            f"{item['resourceGroup']}; running validation"
-        )
-
-        stage = "validation"
-        for arguments in (
-            ("smoke",),
-            ("inspect",),
-            ("telemetry",),
-            ("fault", "status"),
-        ):
+        if deployment_succeeded:
             progress(
-                f"[{item['participant']}] Validating: {' '.join(arguments)}"
+                f"[{item['participant']}] Infrastructure already succeeded for "
+                f"{item['resourceGroup']}; skipping deployment"
+            )
+        else:
+            update_item(
+                state, item,
+                deployment="Running", validation="Pending",
+                rbac="Pending", status="Deploying",
+            )
+            progress(
+                f"[{item['participant']}] Deploying {item['resourceGroup']} "
+                f"({item['subscriptionLabel']}); log: {log_path}"
             )
             run_logged([
-                sys.executable, ROOT / "scripts" / "workshop.py", *arguments,
+                "azd", "up", "--no-prompt", "--environment", item["environment"],
             ], log_path, item["environment"])
-        update_item(
-            state, item,
-            validation="Passed", rbac="Running", status="Assigning RBAC",
-        )
-        progress(
-            f"[{item['participant']}] Validation passed; assigning Contributor"
-        )
+            update_item(
+                state, item,
+                deployment="Succeeded", validation="Pending", status="Validating",
+            )
+            progress(
+                f"[{item['participant']}] Infrastructure succeeded for "
+                f"{item['resourceGroup']}; running validation"
+            )
+
+        stage = "validation"
+        if validation_passed:
+            progress(
+                f"[{item['participant']}] Validation already passed; "
+                "skipping validation"
+            )
+        else:
+            update_item(
+                state, item,
+                validation="Running", rbac="Pending", status="Validating",
+            )
+            for arguments in (
+                ("smoke",),
+                ("inspect",),
+                ("telemetry",),
+                ("fault", "status"),
+            ):
+                progress(
+                    f"[{item['participant']}] Validating: {' '.join(arguments)}"
+                )
+                run_logged([
+                    sys.executable, ROOT / "scripts" / "workshop.py", *arguments,
+                ], log_path, item["environment"])
+            update_item(state, item, validation="Passed")
+            progress(f"[{item['participant']}] Validation passed")
 
         stage = "rbac"
+        update_item(state, item, rbac="Running", status="Assigning RBAC")
+        progress(f"[{item['participant']}] Assigning Contributor")
         ensure_contributor(item)
         update_item(
             state, item,
