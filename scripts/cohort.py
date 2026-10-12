@@ -26,6 +26,8 @@ ROSTER_PATH = STATE_DIRECTORY / "roster.json"
 LOG_DIRECTORY = STATE_DIRECTORY / "logs"
 ARCHITECTURE = "single-vm-postgresql-v1"
 CONTRIBUTOR_ROLE_ID = "b24988ac-6180-42a0-ab88-20f7382dd24c"
+SRE_AGENT_STANDARD_USER_ROLE_ID = "2d84a65a-63b2-4343-bbb6-31105d857bc1"
+PARTICIPANT_ACCESS = "Contributor + SRE User"
 STATE_LOCK = threading.Lock()
 
 
@@ -427,11 +429,7 @@ def run_logged(command, path, environment):
         )
 
 
-def contributor_assignments(item):
-    scope = (
-        f"/subscriptions/{item['subscriptionId']}"
-        f"/resourceGroups/{item['resourceGroup']}"
-    )
+def role_assignments(item, scope, role_id):
     assignments = workshop.az(
         "role", "assignment", "list",
         "--assignee-object-id", item["userObjectId"],
@@ -443,32 +441,72 @@ def contributor_assignments(item):
         assignment for assignment in assignments
         if str(assignment.get("scope", "")).casefold() == scope.casefold()
         and str(assignment.get("roleDefinitionId", "")).casefold().endswith(
-            CONTRIBUTOR_ROLE_ID
+            role_id
         )
     ]
 
 
-def ensure_contributor(item):
-    if contributor_assignments(item):
+def ensure_role_assignment(item, scope, role_id, role_name):
+    if role_assignments(item, scope, role_id):
         return
-    scope = (
-        f"/subscriptions/{item['subscriptionId']}"
-        f"/resourceGroups/{item['resourceGroup']}"
-    )
     workshop.az(
         "role", "assignment", "create",
         "--assignee-object-id", item["userObjectId"],
         "--assignee-principal-type", "User",
-        "--role", CONTRIBUTOR_ROLE_ID,
+        "--role", role_id,
         "--scope", scope,
         "--subscription", item["subscriptionId"],
     )
     for _ in range(6):
-        if contributor_assignments(item):
+        if role_assignments(item, scope, role_id):
             return
         time.sleep(5)
     raise CohortError(
-        f"Contributor assignment was not visible for {item['participant']}."
+        f"{role_name} assignment was not visible for {item['participant']}."
+    )
+
+
+def resource_group_scope(item):
+    return (
+        f"/subscriptions/{item['subscriptionId']}"
+        f"/resourceGroups/{item['resourceGroup']}"
+    )
+
+
+def sre_agent_scope(item):
+    agents = workshop.az(
+        "resource", "list",
+        "--resource-group", item["resourceGroup"],
+        "--resource-type", "Microsoft.App/agents",
+        "--subscription", item["subscriptionId"],
+    )
+    if not isinstance(agents, list) or len(agents) != 1:
+        raise CohortError(
+            f"Expected exactly one SRE Agent in {item['resourceGroup']}."
+        )
+    scope = agents[0].get("id")
+    expected = resource_group_scope(item) + "/providers/Microsoft.App/agents/"
+    if (not isinstance(scope, str)
+            or not scope.casefold().startswith(expected.casefold())
+            or "/" in scope[len(expected):]):
+        raise CohortError(
+            f"Azure returned an invalid SRE Agent scope for {item['participant']}."
+        )
+    return scope
+
+
+def ensure_participant_access(item):
+    ensure_role_assignment(
+        item,
+        resource_group_scope(item),
+        CONTRIBUTOR_ROLE_ID,
+        "Contributor",
+    )
+    ensure_role_assignment(
+        item,
+        sre_agent_scope(item),
+        SRE_AGENT_STANDARD_USER_ROLE_ID,
+        "SRE Agent Standard User",
     )
 
 
@@ -539,17 +577,18 @@ def deploy_participant(state, item):
 
         stage = "rbac"
         update_item(state, item, rbac="Running", status="Assigning RBAC")
-        progress(f"[{item['participant']}] Assigning Contributor")
-        ensure_contributor(item)
+        progress(f"[{item['participant']}] Assigning participant access")
+        ensure_participant_access(item)
         update_item(
             state, item,
-            rbac="Contributor",
+            rbac=PARTICIPANT_ACCESS,
             status="Ready",
             completedUtc=datetime.now(timezone.utc).isoformat(),
         )
         progress(
             f"[{item['participant']}] Ready: {item['userPrincipalName']} "
-            f"has Contributor on {item['resourceGroup']}"
+            f"has Contributor on {item['resourceGroup']} and "
+            "SRE Agent Standard User on its agent"
         )
     except (CohortError, workshop.DeploymentError, OSError, KeyError, TypeError, ValueError) as error:
         changes = {
@@ -648,13 +687,17 @@ def deploy(args):
     for item in state["participants"]:
         if item["status"] == "Ready":
             try:
-                ensure_contributor(item)
+                ensure_participant_access(item)
             except (CohortError, workshop.DeploymentError) as error:
                 update_item(
                     state, item,
                     rbac="Failed", status="Failed", error=str(error),
                 )
             else:
+                update_item(
+                    state, item,
+                    rbac=PARTICIPANT_ACCESS, error=None,
+                )
                 progress(f"[{item['participant']}] Already ready; skipping deployment")
                 continue
         try:

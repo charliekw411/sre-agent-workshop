@@ -165,7 +165,8 @@ contain a PostgreSQL password or access token.
 ### Deploy a participant cohort
 
 Use the cohort wrapper when the Entra users already exist and each participant
-needs Contributor access to one isolated resource group:
+needs Contributor access to one isolated resource group plus SRE Agent Standard
+User access to that group's agent:
 
 ```bash
 python scripts/cohort.py deploy \

@@ -25,9 +25,9 @@ Run these commands from the repository root in PowerShell 7.4+ on Windows, using
 
    `--participants 5` maps the existing users to `participant-01` through `participant-05` and deploys `rg-01` through `rg-05`. Subscriptions are assigned round-robin in the order supplied. The command validates participant accounts, provider and feature registration, regional service availability, PostgreSQL availability, and VM quota before deploying.
 
-   The command does not create users or TAPs. It grants each participant Contributor access only to their matching resource group.
+   The command does not create users or TAPs. It grants each participant Contributor access only to their matching resource group and SRE Agent Standard User only on that group's agent resource.
 
-3. **Wait for every row to report `Ready`.** A successful final table shows `Succeeded`, `Passed`, `Contributor`, and `Ready` for every participant. Detailed output is written to one log per participant:
+3. **Wait for every row to report `Ready`.** A successful final table shows `Succeeded`, `Passed`, `Contributor + SRE User`, and `Ready` for every participant. Detailed output is written to one log per participant:
 
    ```powershell
    Get-Content .\.workshop\cohort\logs\participant-01.log -Tail 30 -Wait

@@ -237,7 +237,7 @@ class SafetyTests(unittest.TestCase):
 
         with patch.object(cohort, "update_item", side_effect=update), \
                 patch.object(cohort, "run_logged"), \
-                patch.object(cohort, "ensure_contributor"), \
+                patch.object(cohort, "ensure_participant_access"), \
                 patch.object(cohort, "progress") as progress:
             cohort.deploy_participant(state, item)
 
@@ -252,7 +252,7 @@ class SafetyTests(unittest.TestCase):
         self.assertIn("[participant-01] Validating: telemetry", messages)
         self.assertIn("[participant-01] Validating: fault status", messages)
         self.assertIn("[participant-01] Validation passed", messages)
-        self.assertIn("[participant-01] Assigning Contributor", messages)
+        self.assertIn("[participant-01] Assigning participant access", messages)
         self.assertTrue(messages[-1].startswith("[participant-01] Ready:"))
 
     def test_rbac_retry_skips_successful_deployment_and_validation(self):
@@ -270,12 +270,14 @@ class SafetyTests(unittest.TestCase):
 
         with patch.object(cohort, "update_item", side_effect=update), \
                 patch.object(cohort, "run_logged") as run_logged, \
-                patch.object(cohort, "ensure_contributor") as ensure_contributor, \
+                patch.object(
+                    cohort, "ensure_participant_access",
+                ) as ensure_participant_access, \
                 patch.object(cohort, "progress") as progress:
             cohort.deploy_participant(state, item)
 
         run_logged.assert_not_called()
-        ensure_contributor.assert_called_once_with(item)
+        ensure_participant_access.assert_called_once_with(item)
         messages = [invocation.args[0] for invocation in progress.call_args_list]
         self.assertIn(
             "[participant-01] Infrastructure already succeeded for rg-01; "
@@ -287,30 +289,43 @@ class SafetyTests(unittest.TestCase):
             messages,
         )
         self.assertEqual(item["status"], "Ready")
+        self.assertEqual(item["rbac"], cohort.PARTICIPANT_ACCESS)
 
-    def test_contributor_lookup_uses_scope_without_all(self):
+    def test_role_lookup_uses_scope_without_all(self):
         item = self.item()
         with patch.object(cohort.workshop, "az", return_value=[]) as az:
-            cohort.contributor_assignments(item)
+            cohort.role_assignments(
+                item, cohort.resource_group_scope(item), cohort.CONTRIBUTOR_ROLE_ID,
+            )
 
         self.assertIn("--scope", az.call_args.args)
         self.assertNotIn("--all", az.call_args.args)
 
-    def test_existing_contributor_assignment_is_not_duplicated(self):
+    def test_existing_role_assignment_is_not_duplicated(self):
         item = self.item()
         with patch.object(
-                cohort, "contributor_assignments", return_value=[{"id": "existing"}]), \
+                cohort, "role_assignments", return_value=[{"id": "existing"}]), \
                 patch.object(cohort.workshop, "az") as az:
-            cohort.ensure_contributor(item)
+            cohort.ensure_role_assignment(
+                item,
+                cohort.resource_group_scope(item),
+                cohort.CONTRIBUTOR_ROLE_ID,
+                "Contributor",
+            )
         az.assert_not_called()
 
     def test_contributor_is_created_only_at_matching_resource_group(self):
         item = self.item()
         with patch.object(
-                cohort, "contributor_assignments",
+                cohort, "role_assignments",
                 side_effect=[[], [{"id": "created"}]]), \
                 patch.object(cohort.workshop, "az", return_value={}) as az:
-            cohort.ensure_contributor(item)
+            cohort.ensure_role_assignment(
+                item,
+                cohort.resource_group_scope(item),
+                cohort.CONTRIBUTOR_ROLE_ID,
+                "Contributor",
+            )
 
         scope = (
             f"/subscriptions/{item['subscriptionId']}"
@@ -327,6 +342,42 @@ class SafetyTests(unittest.TestCase):
                 "--scope", scope,
                 "--subscription", item["subscriptionId"],
             ),
+        )
+
+    def test_participant_gets_standard_user_only_on_matching_agent(self):
+        item = self.item()
+        agent_scope = (
+            cohort.resource_group_scope(item)
+            + "/providers/Microsoft.App/agents/sre-test"
+        )
+        with patch.object(
+                cohort.workshop, "az",
+                return_value=[{"id": agent_scope}]) as az, \
+                patch.object(cohort, "ensure_role_assignment") as ensure:
+            cohort.ensure_participant_access(item)
+
+        az.assert_called_once_with(
+            "resource", "list",
+            "--resource-group", item["resourceGroup"],
+            "--resource-type", "Microsoft.App/agents",
+            "--subscription", item["subscriptionId"],
+        )
+        self.assertEqual(
+            ensure.call_args_list,
+            [
+                call(
+                    item,
+                    cohort.resource_group_scope(item),
+                    cohort.CONTRIBUTOR_ROLE_ID,
+                    "Contributor",
+                ),
+                call(
+                    item,
+                    agent_scope,
+                    cohort.SRE_AGENT_STANDARD_USER_ROLE_ID,
+                    "SRE Agent Standard User",
+                ),
+            ],
         )
 
     def test_cleanup_refuses_wrong_tags_without_deleting(self):
@@ -351,7 +402,7 @@ class SafetyTests(unittest.TestCase):
         item.update({
             "deployment": "Succeeded",
             "validation": "Passed",
-            "rbac": "Contributor",
+            "rbac": cohort.PARTICIPANT_ACCESS,
             "status": "Ready",
             "durationSeconds": 125,
         })
