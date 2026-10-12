@@ -283,7 +283,7 @@ def preflight(state):
             f"[cohort] Preflighting {subscription['label']} for "
             f"{len(assigned)} participant(s)"
         )
-        workshop.register_providers(subscription["id"])
+        workshop.register_providers(subscription["id"], state["location"])
         values = {
             "AZURE_LOCATION": state["location"],
             "AZURE_SUBSCRIPTION_ID": subscription["id"],

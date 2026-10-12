@@ -261,6 +261,37 @@ class PreflightTests(unittest.TestCase):
                 workshop.register_providers()
         self.assertEqual(az.call_count, 1)
 
+    def test_microsoft_app_registering_does_not_block_available_agent_region(self):
+        providers = [
+            {
+                "namespace": provider,
+                "state": "Registering" if provider == "Microsoft.App" else "Registered",
+            }
+            for provider in workshop.PROVIDERS
+        ]
+
+        def azure(*arguments, **_):
+            if arguments[:2] == ("provider", "list"):
+                return providers
+            if arguments[:2] == ("provider", "show"):
+                return ["Australia East"]
+            self.fail(f"Unexpected Azure call: {arguments}")
+
+        with patch.object(workshop, "az", side_effect=azure) as az, \
+                patch.object(workshop.time, "sleep"):
+            workshop.register_providers(
+                VALUES["AZURE_SUBSCRIPTION_ID"], VALUES["AZURE_LOCATION"],
+            )
+
+        self.assertNotIn(
+            call(
+                "provider", "register",
+                "--namespace", "Microsoft.App",
+                "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+            ),
+            az.call_args_list,
+        )
+
     def test_environment_selection_is_explicit_without_mutating_azure_cli(self):
         with patch.dict(os.environ, {"AZURE_ENV_NAME": VALUES["AZURE_ENV_NAME"]}), \
                 patch.object(workshop, "cli", return_value=json.dumps(VALUES)) as cli, \

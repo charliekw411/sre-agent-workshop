@@ -237,7 +237,17 @@ def export_values(values):
         path.chmod(0o600)
 
 
-def register_providers(subscription=None):
+def sre_agent_locations(subscription):
+    locations = az(
+        "provider", "show",
+        "--namespace", "Microsoft.App",
+        "--subscription", subscription,
+        "--query", "resourceTypes[?resourceType=='agents'].locations | [0]",
+    )
+    return locations if isinstance(locations, list) else []
+
+
+def register_providers(subscription=None, location=None):
     subscription_args = (
         ["--subscription", subscription] if subscription else []
     )
@@ -252,6 +262,9 @@ def register_providers(subscription=None):
     pending = {provider for provider in PROVIDERS
                if current.get(provider.casefold()) != "registered"}
     for provider in sorted(pending):
+        if current.get(provider.casefold()) == "registering":
+            progress(f"[preflight] {provider} registration is already in progress")
+            continue
         progress(f"[preflight] Registering {provider}")
         az("provider", "register", "--namespace", provider, *subscription_args)
     deadline = time.monotonic() + 1800
@@ -265,6 +278,17 @@ def register_providers(subscription=None):
         current = states()
         pending = {provider for provider in pending
                    if current.get(provider.casefold()) != "registered"}
+        if ("Microsoft.App" in pending and location and subscription
+                and current.get("microsoft.app") == "registering"
+                and location.casefold() in {
+                    item.replace(" ", "").casefold()
+                    for item in sre_agent_locations(subscription)
+                }):
+            pending.remove("Microsoft.App")
+            progress(
+                f"[preflight] Microsoft.App/agents is available in {location}; "
+                "provider registration can finish in the background."
+            )
         if pending:
             progress("[preflight] Waiting for " + ", ".join(sorted(pending)))
 
@@ -425,13 +449,8 @@ def check_vm_capacity(values, check_existing=True, instances=1):
 def check_sre_agent_region(values):
     location = required(values, "AZURE_LOCATION")
     subscription = required(values, "AZURE_SUBSCRIPTION_ID")
-    locations = az(
-        "provider", "show",
-        "--namespace", "Microsoft.App",
-        "--subscription", subscription,
-        "--query", "resourceTypes[?resourceType=='agents'].locations | [0]",
-    )
-    if not isinstance(locations, list) or location.casefold() not in {
+    locations = sre_agent_locations(subscription)
+    if location.casefold() not in {
             item.replace(" ", "").casefold() for item in locations}:
         raise DeploymentError(
             f"SRE Agent is not advertised in {location}; no region substitution is made."
@@ -547,7 +566,9 @@ def prepare():
                 "SKU, and unused-quota availability checks."
             )
         else:
-            register_providers(subscription)
+            register_providers(
+                subscription, required(values, "AZURE_LOCATION"),
+            )
             check_sre_agent_region(values)
             check_vm_capacity(values, check_existing=False)
             check_postgresql_capacity(values)
