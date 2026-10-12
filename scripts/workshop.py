@@ -254,11 +254,12 @@ def register_providers(subscription=None):
     for provider in sorted(pending):
         progress(f"[preflight] Registering {provider}")
         az("provider", "register", "--namespace", provider, *subscription_args)
-    deadline = time.monotonic() + 600
+    deadline = time.monotonic() + 1800
     while pending:
         if time.monotonic() >= deadline:
             raise DeploymentError(
-                "Provider registration exceeded ten minutes: " + ", ".join(sorted(pending))
+                "Provider registration exceeded thirty minutes: "
+                + ", ".join(sorted(pending))
             )
         time.sleep(10)
         current = states()
