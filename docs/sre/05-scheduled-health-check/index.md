@@ -310,8 +310,8 @@ In the Azure SRE Agent portal, confirm the result independently:
 
 !!! warning "The recurring schedule uses agent units"
     Each scheduled run, and each creation or update of a Live Report, consumes
-    Azure Agent Units. The agent has a 500 unit monthly limit. Module 06 removes
-    the task before deletion. See
+    Azure Agent Units. The agent has a 500 unit monthly limit, and the task keeps
+    running on weekdays while it stays enabled. See
     [Cost Management](../30-appendix/03-cost-management.md) for the details.
 
 ### Task 4: Run the task now and read the thread
@@ -756,9 +756,11 @@ Append the outcome to your notes:
     '@ | Add-Content .workshop/notes/scheduled-health-check.md
     ```
 
-Fill in each line. Leave the scheduled task enabled for now. Stop the traffic
-from Task 1 with ++ctrl+c++ when you finish. Module 06 downloads a snapshot of
-the Live Report and removes the task before it deletes the environment.
+Fill in each line. Leave the scheduled task, custom agent, skill, and Live
+Report in place so you can review and edit them. Portal edits show up as
+differences in `health-check status`, and `health-check install` restores the
+repository definitions. Stop the traffic from Task 1 with ++ctrl+c++ when you
+finish.
 
 ## Validation
 
