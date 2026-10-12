@@ -292,6 +292,53 @@ class PreflightTests(unittest.TestCase):
             az.call_args_list,
         )
 
+    def test_public_ip_feature_is_registered_and_provider_refreshed(self):
+        with patch.object(
+                workshop, "az",
+                side_effect=[
+                    {"properties": {"state": "NotRegistered"}},
+                    None,
+                    {"properties": {"state": "Pending"}},
+                    {"properties": {"state": "Registered"}},
+                    None,
+                ]) as az, patch.object(workshop.time, "sleep"):
+            workshop.ensure_public_ip_feature(VALUES)
+
+        self.assertEqual(
+            az.call_args_list,
+            [
+                call(
+                    "feature", "show",
+                    "--namespace", "Microsoft.Network",
+                    "--name", workshop.PUBLIC_IP_FEATURE,
+                    "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+                ),
+                call(
+                    "feature", "register",
+                    "--namespace", "Microsoft.Network",
+                    "--name", workshop.PUBLIC_IP_FEATURE,
+                    "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+                ),
+                call(
+                    "feature", "show",
+                    "--namespace", "Microsoft.Network",
+                    "--name", workshop.PUBLIC_IP_FEATURE,
+                    "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+                ),
+                call(
+                    "feature", "show",
+                    "--namespace", "Microsoft.Network",
+                    "--name", workshop.PUBLIC_IP_FEATURE,
+                    "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+                ),
+                call(
+                    "provider", "register",
+                    "--namespace", "Microsoft.Network",
+                    "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+                ),
+            ],
+        )
+
     def test_environment_selection_is_explicit_without_mutating_azure_cli(self):
         with patch.dict(os.environ, {"AZURE_ENV_NAME": VALUES["AZURE_ENV_NAME"]}), \
                 patch.object(workshop, "cli", return_value=json.dumps(VALUES)) as cli, \

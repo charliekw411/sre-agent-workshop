@@ -289,6 +289,7 @@ def preflight(state):
             "AZURE_SUBSCRIPTION_ID": subscription["id"],
             "VM_SIZE": state["vmSize"],
         }
+        workshop.ensure_public_ip_feature(values)
         workshop.check_sre_agent_region(values)
         workshop.check_postgresql_capacity(values)
         new_instances = 0

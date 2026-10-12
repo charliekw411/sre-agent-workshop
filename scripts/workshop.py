@@ -55,6 +55,7 @@ SOURCE_FILES = ("*.cs", "*.csproj", "appsettings.json", "wwwroot/**/*")
 VM_FILES = ("install.sh", "orders-api.service", "faults.py", "inspect.py")
 TRANSIENT_HTTP = {408, 429, 502, 503, 504}
 SRE_RESPONSE_PLAN_NAME = "workshop-sev1-sev2-review"
+PUBLIC_IP_FEATURE = "AllowBringYourOwnPublicIpAddress"
 FRESH_ENVIRONMENT_EVIDENCE = (
     "provision-start.json",
     "vm-deployment.json",
@@ -458,6 +459,62 @@ def check_sre_agent_region(values):
     progress(f"[preflight] Azure SRE Agent is advertised in {location}.")
 
 
+def ensure_public_ip_feature(values, timeout=1800):
+    subscription = required(values, "AZURE_SUBSCRIPTION_ID")
+
+    def state():
+        feature = az(
+            "feature", "show",
+            "--namespace", "Microsoft.Network",
+            "--name", PUBLIC_IP_FEATURE,
+            "--subscription", subscription,
+        )
+        return str(feature.get("properties", {}).get("state", ""))
+
+    current = state()
+    if current == "Registered":
+        return
+    if current == "NotRegistered":
+        progress(
+            f"[preflight] Registering Microsoft.Network/{PUBLIC_IP_FEATURE}"
+        )
+        az(
+            "feature", "register",
+            "--namespace", "Microsoft.Network",
+            "--name", PUBLIC_IP_FEATURE,
+            "--subscription", subscription,
+        )
+    elif current not in {"Pending", "Registering"}:
+        raise DeploymentError(
+            f"Microsoft.Network/{PUBLIC_IP_FEATURE} has unexpected state {current!r}."
+        )
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(15)
+        current = state()
+        if current == "Registered":
+            az(
+                "provider", "register",
+                "--namespace", "Microsoft.Network",
+                "--subscription", subscription,
+            )
+            progress(
+                f"[preflight] Microsoft.Network/{PUBLIC_IP_FEATURE} is registered."
+            )
+            return
+        if current not in {"Pending", "Registering"}:
+            raise DeploymentError(
+                f"Microsoft.Network/{PUBLIC_IP_FEATURE} changed to "
+                f"unexpected state {current!r}."
+            )
+        progress(
+            f"[preflight] Waiting for Microsoft.Network/{PUBLIC_IP_FEATURE}"
+        )
+    raise DeploymentError(
+        f"Microsoft.Network/{PUBLIC_IP_FEATURE} registration exceeded thirty minutes."
+    )
+
+
 def check_postgresql_capacity(values):
     location = required(values, "AZURE_LOCATION")
     subscription = required(values, "AZURE_SUBSCRIPTION_ID")
@@ -569,6 +626,7 @@ def prepare():
             register_providers(
                 subscription, required(values, "AZURE_LOCATION"),
             )
+            ensure_public_ip_feature(values)
             check_sre_agent_region(values)
             check_vm_capacity(values, check_existing=False)
             check_postgresql_capacity(values)
