@@ -4,7 +4,6 @@ export const ARM_SCOPE = "https://management.azure.com/user_impersonation";
 export const LOG_ANALYTICS_SCOPE = "https://api.loganalytics.io/Data.Read";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-const COHORT_RESOURCE_GROUP = /^rg-(?:0[1-9]|1[0-9]|20)$/i;
 const REQUEST_ID = /^[0-9a-f]{32}$/;
 const RESOURCE_ID =
   /^\/subscriptions\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/resourceGroups\/[a-z0-9._()-]+\/providers\/[a-z0-9.]+(?:\/[a-z0-9.]+\/[a-z0-9._()-]+)+$/i;
@@ -115,8 +114,7 @@ function tagValue(tags, expectedName) {
 export function isWorkshopResourceGroup(group, config) {
   return (
     typeof group?.name === "string" &&
-    (group.name.startsWith(config.resourceGroupPrefix) ||
-      COHORT_RESOURCE_GROUP.test(group.name)) &&
+    group.name.startsWith(config.resourceGroupPrefix) &&
     String(tagValue(group.tags, config.environmentTagName) || "").toLowerCase() ===
       config.environmentTagValue.toLowerCase()
   );

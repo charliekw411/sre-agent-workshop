@@ -822,10 +822,10 @@ Do not grant workload write access to make the demonstration automatic.
 
 ### Environment discovery returns no resource group
 
-The browser discovers only groups whose name uses the workshop prefix or the
-cohort form `rg-01` through `rg-20`, and whose architecture tag is
-`single-vm-postgresql-v1`. Confirm the participant can read the subscription,
-group, VM, workspace, NSG, PostgreSQL server, and optional SRE Agent resource.
+The browser discovers only groups whose name uses the workshop prefix and whose
+architecture tag is `single-vm-postgresql-v1`. Confirm the participant can read
+the subscription, group, VM, workspace, NSG, PostgreSQL server, and optional SRE
+Agent resource.
 
 ### CPU works but PostgreSQL control returns 403
 
