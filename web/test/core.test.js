@@ -69,6 +69,30 @@ test("environment discovery accepts only tagged workshop resource groups", () =>
     ),
     true,
   );
+  for (const name of ["rg-01", "rg-20"]) {
+    assert.equal(
+      isWorkshopResourceGroup(
+        {
+          name,
+          tags: { "workshop-architecture": "single-vm-postgresql-v1" },
+        },
+        config,
+      ),
+      true,
+    );
+  }
+  for (const name of ["rg-00", "rg-21", "rg-production"]) {
+    assert.equal(
+      isWorkshopResourceGroup(
+        {
+          name,
+          tags: { "workshop-architecture": "single-vm-postgresql-v1" },
+        },
+        config,
+      ),
+      false,
+    );
+  }
   assert.equal(
     isWorkshopResourceGroup(
       { name: "rg-sre-agent-workshop-demo", tags: { purpose: "production" } },
