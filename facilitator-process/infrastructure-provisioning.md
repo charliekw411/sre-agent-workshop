@@ -39,10 +39,21 @@ Run these commands from the repository root in PowerShell 7.4+ on Windows, using
 
    * Completed infrastructure skips `azd up`.
    * Passed validation is not repeated.
-   * Existing Contributor assignments are reused.
+   * Existing participant role assignments are reused.
    * Failed or interrupted deployments reconcile the same resource group.
 
    Keep the same tenant, UPN pattern, subscription order, and participant mapping. A saved cohort can be expanded up to 20 participants, but it cannot be shrunk or remapped.
+
+   These are the expected recovery cases:
+
+   | Symptom | Action |
+   | --- | --- |
+   | `Microsoft.App` remains `Registering`, but `Microsoft.App/agents` is available in the selected region | Allow the global registration to finish in the background; regional availability is sufficient. |
+   | `Microsoft.Network/AllowBringYourOwnPublicIpAddress` is not registered | Let preflight register it and wait. If Azure exceeds the timeout, rerun after the feature reports `Registered`. |
+   | The resource group contains resources but the participant is not `Ready` | Do not delete it. The command may still be running post-provision or telemetry checks; inspect the participant log. |
+   | `[telemetry] Waiting for ingestion` repeats | Wait for Application Insights and Log Analytics ingestion. The check polls for up to ten minutes. |
+   | SRE Agent reports `Forbidden: Access denied by PDP` | Rerun the cohort command to verify the agent-scoped SRE Agent Standard User assignment, then sign out and back in after RBAC propagation. |
+   | A participant finishes with `Failed` | Resolve any external Azure registration or permission error, then rerun the exact same cohort command. Successful stages are skipped. |
 
 5. **Clean up after the workshop.** Delete the entire cohort the same day to stop Azure charges:
 

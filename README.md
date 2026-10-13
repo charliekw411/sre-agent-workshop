@@ -187,8 +187,9 @@ required providers, regional service availability, PostgreSQL availability,
 aggregate VM quota, and existing resource-group tags. It then deploys
 with up to two environments per subscription in parallel, runs the public,
 private database, telemetry, and fault-status checks, and assigns the matching
-user the built-in Contributor role on only their resource group. With three
-subscriptions, at most six environments run at once. Use
+user the built-in Contributor role on only their resource group and SRE Agent
+Standard User on only that group's agent. With three subscriptions, at most six
+environments run at once. Use
 `--parallel-per-subscription 1` if a subscription needs more conservative
 throttling.
 
