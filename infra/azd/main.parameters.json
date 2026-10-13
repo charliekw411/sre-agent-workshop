@@ -8,6 +8,9 @@
     "location": {
       "value": "${AZURE_LOCATION=australiaeast}"
     },
+    "workshopResourceGroupName": {
+      "value": "${WORKSHOP_RESOURCE_GROUP_NAME=}"
+    },
     "deployerPrincipalId": {
       "value": "${AZURE_PRINCIPAL_ID}"
     },

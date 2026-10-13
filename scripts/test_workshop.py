@@ -67,10 +67,19 @@ class ConfigurationTests(unittest.TestCase):
     def test_vm_manifest_and_hooks_are_valid(self):
         workshop.validate()
         document = yaml.safe_load((workshop.ROOT / "azure.yaml").read_text())
+        parameters = json.loads(
+            (workshop.ROOT / "infra" / "azd" / "main.parameters.json").read_text()
+        )
+        entrypoint = (workshop.ROOT / "infra" / "azd" / "main.bicep").read_text()
         self.assertNotIn("services", document)
         self.assertEqual(document["workflows"]["up"]["steps"], [{"azd": "provision"}])
         self.assertIn("prepare-azd-env", document["hooks"]["preup"]["windows"]["run"])
         self.assertIn("postprovision", document["hooks"]["postprovision"]["posix"]["run"])
+        self.assertEqual(
+            parameters["parameters"]["workshopResourceGroupName"]["value"],
+            "${WORKSHOP_RESOURCE_GROUP_NAME=}",
+        )
+        self.assertIn("param workshopResourceGroupName string = ''", entrypoint)
 
     def test_no_legacy_resource_providers(self):
         self.assertIn("Microsoft.Compute", workshop.PROVIDERS)
@@ -204,6 +213,21 @@ class PreflightTests(unittest.TestCase):
         ]):
             workshop.check_resource_group(VALUES)
 
+    def test_explicit_resource_group_name_is_used(self):
+        values = {**VALUES, "WORKSHOP_RESOURCE_GROUP_NAME": "rg-01"}
+        with patch.object(workshop, "az", return_value=False) as az:
+            workshop.check_resource_group(values)
+        az.assert_called_once_with(
+            "group", "exists", "--name", "rg-01",
+            "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+        )
+
+    def test_invalid_explicit_resource_group_name_is_rejected(self):
+        with self.assertRaisesRegex(workshop.DeploymentError, "valid Azure"):
+            workshop.resource_group_name({
+                **VALUES, "WORKSHOP_RESOURCE_GROUP_NAME": "invalid/name",
+            })
+
     def test_benchmark_rejects_even_an_existing_vm_group(self):
         with patch.object(workshop, "az", return_value=True):
             with self.assertRaisesRegex(workshop.DeploymentError, "already exists"):
@@ -244,10 +268,104 @@ class PreflightTests(unittest.TestCase):
                 workshop.register_providers()
         self.assertEqual(az.call_count, 1)
 
-    def test_subscription_selection_is_explicit(self):
-        with patch.object(workshop, "cli", return_value=json.dumps(VALUES)), patch.object(workshop, "az") as az:
+    def test_microsoft_app_registering_does_not_block_available_agent_region(self):
+        providers = [
+            {
+                "namespace": provider,
+                "state": "Registering" if provider == "Microsoft.App" else "Registered",
+            }
+            for provider in workshop.PROVIDERS
+        ]
+
+        def azure(*arguments, **_):
+            if arguments[:2] == ("provider", "list"):
+                return providers
+            if arguments[:2] == ("provider", "show"):
+                return ["Australia East"]
+            self.fail(f"Unexpected Azure call: {arguments}")
+
+        with patch.object(workshop, "az", side_effect=azure) as az, \
+                patch.object(workshop.time, "sleep"):
+            workshop.register_providers(
+                VALUES["AZURE_SUBSCRIPTION_ID"], VALUES["AZURE_LOCATION"],
+            )
+
+        self.assertNotIn(
+            call(
+                "provider", "register",
+                "--namespace", "Microsoft.App",
+                "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+            ),
+            az.call_args_list,
+        )
+
+    def test_public_ip_feature_is_registered_and_provider_refreshed(self):
+        with patch.object(
+                workshop, "az",
+                side_effect=[
+                    {"properties": {"state": "NotRegistered"}},
+                    None,
+                    {"properties": {"state": "Pending"}},
+                    {"properties": {"state": "Registered"}},
+                    None,
+                ]) as az, patch.object(workshop.time, "sleep"):
+            workshop.ensure_public_ip_feature(VALUES)
+
+        self.assertEqual(
+            az.call_args_list,
+            [
+                call(
+                    "feature", "show",
+                    "--namespace", "Microsoft.Network",
+                    "--name", workshop.PUBLIC_IP_FEATURE,
+                    "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+                ),
+                call(
+                    "feature", "register",
+                    "--namespace", "Microsoft.Network",
+                    "--name", workshop.PUBLIC_IP_FEATURE,
+                    "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+                ),
+                call(
+                    "feature", "show",
+                    "--namespace", "Microsoft.Network",
+                    "--name", workshop.PUBLIC_IP_FEATURE,
+                    "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+                ),
+                call(
+                    "feature", "show",
+                    "--namespace", "Microsoft.Network",
+                    "--name", workshop.PUBLIC_IP_FEATURE,
+                    "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+                ),
+                call(
+                    "provider", "register",
+                    "--namespace", "Microsoft.Network",
+                    "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"],
+                ),
+            ],
+        )
+
+    def test_environment_selection_is_explicit_without_mutating_azure_cli(self):
+        with patch.dict(os.environ, {"AZURE_ENV_NAME": VALUES["AZURE_ENV_NAME"]}), \
+                patch.object(workshop, "cli", return_value=json.dumps(VALUES)) as cli, \
+                patch.object(workshop, "az") as az:
             self.assertEqual(workshop.environment(), VALUES)
-        az.assert_called_once_with("account", "set", "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"])
+        cli.assert_called_once_with(
+            "azd", "env", "get-values", "--output", "json",
+            "--environment", VALUES["AZURE_ENV_NAME"],
+        )
+        az.assert_not_called()
+
+    def test_cohort_exports_are_isolated_per_environment(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(workshop, "ROOT", Path(temporary)), \
+                patch.dict(os.environ, {"WORKSHOP_COHORT_MODE": "1"}):
+            workshop.export_values(VALUES)
+            directory = Path(temporary) / ".workshop" / VALUES["AZURE_ENV_NAME"]
+            self.assertTrue((directory / "workshop.env").is_file())
+            self.assertTrue((directory / "workshop.ps1").is_file())
+            self.assertFalse((Path(temporary) / ".workshop" / "workshop.env").exists())
 
     def test_exports_allowlist_and_shell_quoting(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -304,6 +422,22 @@ class CapacityTests(unittest.TestCase):
             workshop.check_vm_capacity(VALUES)
         self.assertEqual(az.call_count, 2)
         self.assertTrue(all("--subscription" in args.args for args in az.call_args_list))
+
+    def test_cohort_capacity_multiplies_required_vcpus(self):
+        with patch.object(
+                workshop, "az",
+                side_effect=[[self.sku()], self.quotas(limit=13)]):
+            with self.assertRaisesRegex(
+                    workshop.DeploymentError, "7 .* need 14 vCPUs"):
+                workshop.check_vm_capacity(
+                    VALUES, check_existing=False, instances=7,
+                )
+
+    def test_capacity_instance_count_must_be_positive(self):
+        with self.assertRaisesRegex(workshop.DeploymentError, "positive integer"):
+            workshop.check_vm_capacity(
+                VALUES, check_existing=False, instances=0,
+            )
 
     def test_offer_restriction_fails_before_quota_or_provisioning(self):
         restriction = {"type": "Location", "reasonCode": "NotAvailableForSubscription"}
