@@ -1,13 +1,20 @@
 """Offline regression coverage for VM deployment and its control-plane contract."""
 
 import base64
+from contextlib import ExitStack, contextmanager, redirect_stdout
+import copy
+from datetime import datetime, timedelta, timezone
 import gzip
 import importlib.util
+import inspect
 import io
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -1054,6 +1061,556 @@ class FaultTests(unittest.TestCase):
             self.assertIn(expected, fault)
         self.assertIn("access: 'Allow'", normal)
         self.assertIn("injectPostgresqlFault ? 'Deny' : 'Allow'", fault)
+
+
+HEALTH_VALUES = {
+    **VALUES,
+    "SRE_AGENT_RESOURCE_ID": (
+        "/subscriptions/00000000-0000-0000-0000-000000000001/"
+        "resourceGroups/rg-sre-agent-workshop-sre-vm-test/"
+        "providers/Microsoft.App/agents/sre-test"
+    ),
+}
+EXTENDED = "/api/v2/extendedAgent/"
+HEALTH_SKILL_PATH = EXTENDED + "skills/proactive-health-check"
+HEALTH_AGENT_PATH = EXTENDED + "agents/health-report-investigator"
+HEALTH_TASK_PATH = EXTENDED + "scheduledtasks/orders-daily-health-report"
+RESPONSE_PLAN_PATH = EXTENDED + "incidentFilters/workshop-sev1-sev2-review"
+
+
+def connector_response(app_insights="Succeeded", log_analytics="Succeeded"):
+    return {"value": [
+        {"name": "app-insights", "properties": {
+            "dataConnectorType": "AppInsights", "provisioningState": app_insights}},
+        {"name": "log-analytics", "properties": {
+            "dataConnectorType": "LogAnalytics", "provisioningState": log_analytics}},
+    ]}
+
+
+class FakeSreAgent:
+    """In-memory stand-in for the SRE Agent extendedAgent data plane."""
+
+    def __init__(self, stale_task_reads=0, keep_deleted=False, on_put=None):
+        self.resources = {}
+        self.calls = []
+        self.stale_task_reads = stale_task_reads
+        self.keep_deleted = keep_deleted
+        self.on_put = on_put or {}
+
+    def request(self, endpoint, token, path, method="GET", body=None):
+        self.calls.append((method, path))
+        listing = EXTENDED + "scheduledtasks"
+        if method == "PUT":
+            stored = copy.deepcopy(body)
+            if path in self.on_put:
+                self.on_put[path](stored)
+            self.resources[path] = stored
+            return None
+        if method == "DELETE":
+            if path not in self.resources:
+                raise workshop.SreAgentRequestError("not found", status=404, retryable=True)
+            if not self.keep_deleted:
+                del self.resources[path]
+            return None
+        if path == listing:
+            if self.stale_task_reads:
+                self.stale_task_reads -= 1
+                return {"value": []}
+            return {"value": [item for key, item in self.resources.items()
+                              if key.startswith(listing + "/")]}
+        if path in self.resources:
+            return self.resources[path]
+        raise workshop.SreAgentRequestError("not found", status=404, retryable=True)
+
+    def methods(self, method):
+        return [path for name, path in self.calls if name == method]
+
+
+class HealthCheckTests(unittest.TestCase):
+    @contextmanager
+    def patched(self, fake, connectors=None):
+        with tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
+            stack.enter_context(patch.object(workshop, "ROOT", Path(temporary)))
+            self.az = stack.enter_context(patch.object(
+                workshop, "az", return_value=connectors or connector_response()))
+            stack.enter_context(patch.object(workshop, "sre_agent_token", return_value="secret-token"))
+            self.request = stack.enter_context(patch.object(
+                workshop, "sre_agent_request", side_effect=fake.request))
+            self.sleep = stack.enter_context(patch.object(workshop.time, "sleep"))
+            yield Path(temporary)
+
+    def definition_with(self, mutate):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            copied = root / "agent"
+            shutil.copytree(workshop.AGENT_DEFINITIONS, copied)
+            template = copied / "scheduled-tasks" / "orders-daily-health-report.yaml"
+            document = yaml.safe_load(template.read_text(encoding="utf-8"))
+            mutate(document, root)
+            template.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with patch.object(workshop, "AGENT_DEFINITIONS", copied):
+                return workshop.load_health_check_definition(template)
+
+    def test_definition_is_a_review_mode_read_only_task(self):
+        definition = workshop.load_health_check_definition()
+        skills, agent, task = workshop.health_check_documents(
+            definition, ["QueryLogAnalyticsByWorkspaceId"])
+        self.assertEqual(definition["name"], "orders-daily-health-report")
+        self.assertEqual(definition["agent"], "health-report-investigator")
+        self.assertEqual(task["properties"]["agentMode"], "Review")
+        self.assertTrue(task["properties"]["isEnabled"])
+        self.assertEqual(task["properties"]["agent"], agent["name"])
+        self.assertEqual(agent["properties"]["allowedSkills"], [skills[0]["name"]])
+        self.assertTrue(set(definition["tools"]) <= workshop.HEALTH_CHECK_TOOLS)
+        for forbidden in ("RunAzCliWriteCommands", "SendOutlookEmail", "CreateGithubIssue"):
+            self.assertNotIn(forbidden, agent["properties"]["tools"])
+        self.assertEqual(skills[0]["properties"]["name"], "proactive-health-check")
+        self.assertIn("name: proactive-health-check", skills[0]["properties"]["skillContent"])
+
+    def test_schedule_is_weekday_morning_new_zealand_standard_time_in_utc(self):
+        schedule = workshop.load_health_check_definition()["schedule"]
+        minute, hour, day_of_month, month, day_of_week = schedule.split()
+        self.assertEqual(schedule, "0 21 * * 0-4")
+        self.assertEqual((minute, day_of_month, month), ("0", "*", "*"))
+        sunday_evening = datetime(2026, 10, 11, int(hour), int(minute), tzinfo=timezone.utc)
+        self.assertEqual(sunday_evening.weekday(), 6)
+        monday_morning = sunday_evening + timedelta(hours=12)
+        self.assertEqual((monday_morning.weekday(), monday_morning.hour), (0, 9))
+        self.assertEqual(day_of_week, "0-4")
+
+    def test_skill_uses_workload_names_that_the_deployment_defines(self):
+        skill = (workshop.AGENT_DEFINITIONS / "skills" / "proactive-health-check"
+                 / "SKILL.md").read_text(encoding="utf-8")
+        alerts = (workshop.ROOT / "infra" / "alerts.bicep").read_text(encoding="utf-8")
+        alert_names = re.findall(r"name: '(alert-orders-[a-z0-9-]+)'", alerts)
+        self.assertEqual(len(alert_names), 3)
+        fault = (workshop.ROOT / "infra" / "fault.bicep").read_text(encoding="utf-8")
+        availability = (workshop.ROOT / "src" / "OrdersApi"
+                        / "DatabaseAvailabilityService.cs").read_text(encoding="utf-8")
+        self.assertIn('Name = "orders-api-postgresql"', availability)
+        self.assertIn("name: 'PostgreSqlFaultInjection'", fault)
+        for expected in (*alert_names, "PostgreSqlFaultInjection", "orders-api-postgresql",
+                         'AppRoleName == "orders-api"', 'DependencyType == "PostgreSQL"',
+                         "AppAvailabilityResults", "Heartbeat", "Perf",
+                         'datetime_utc_to_local(TimeGenerated, "Pacific/Auckland")'):
+            self.assertIn(expected, skill)
+
+    def test_definition_files_use_no_em_dashes(self):
+        for path in (
+            workshop.HEALTH_CHECK_TEMPLATE,
+            workshop.AGENT_DEFINITIONS / "skills" / "proactive-health-check" / "SKILL.md",
+        ):
+            self.assertNotIn("\u2014", path.read_text(encoding="utf-8"), path.name)
+
+    def test_unsafe_or_malformed_definitions_are_rejected(self):
+        def outside_skill(document, root):
+            (root / "outside.md").write_text(
+                "---\nname: proactive-health-check\ndescription: Outside the agent directory.\n"
+                "---\nBody\n", encoding="utf-8")
+            document["custom_agent"]["skills"][0]["source"] = "../../outside.md"
+
+        cases = {
+            "write tool attached": (
+                lambda d, _: d["custom_agent"]["tools"]["read_only"].append("RunAzCliWriteCommands"),
+                "approved read-only tools"),
+            "email tool attached": (
+                lambda d, _: d["custom_agent"]["tools"]["read_only"].append("SendOutlookEmail"),
+                "approved read-only tools"),
+            "approval group": (
+                lambda d, _: d["custom_agent"]["tools"].update(ask_approval=["SendOutlookEmail"]),
+                "only read_only and deny"),
+            "write tool not denied": (
+                lambda d, _: d["custom_agent"]["tools"]["deny"].remove("RunAzCliWriteCommands"),
+                "must be denied"),
+            "autonomous task": (
+                lambda d, _: d["trigger"].update(action_mode="Autonomous"), "Review mode"),
+            "disabled task": (lambda d, _: d["trigger"].update(enabled=False), "enabled"),
+            "named schedule": (lambda d, _: d["trigger"].update(schedule="@daily"), "five-field"),
+            "six-field schedule": (
+                lambda d, _: d["trigger"].update(schedule="0 0 21 * * 0-4"), "five-field"),
+            "wrong handler": (
+                lambda d, _: d["trigger"].update(handling_agent="meta-agent"), "must match"),
+            "missing skill file": (
+                lambda d, _: d["custom_agent"]["skills"][0].update(source="../skills/missing.md"),
+                "must be a file under"),
+            "skill outside definitions": (outside_skill, "must be a file under"),
+            "skill name mismatch": (
+                lambda d, _: d["custom_agent"]["skills"][0].update(name="another-skill"),
+                "matching name"),
+        }
+        for label, (mutate, expected) in cases.items():
+            with self.subTest(label), self.assertRaisesRegex(workshop.DeploymentError, expected):
+                self.definition_with(mutate)
+
+    def test_install_writes_skill_agent_then_task_and_verifies_read_back(self):
+        fake = FakeSreAgent()
+        with self.patched(fake) as temporary:
+            result = workshop.ensure_health_check(HEALTH_VALUES, attempts=1)
+            evidence = json.loads(
+                (workshop.state_directory(HEALTH_VALUES) / "scheduled-health-check.json").read_text())
+        self.assertEqual(
+            fake.methods("PUT"), [HEALTH_SKILL_PATH, HEALTH_AGENT_PATH, HEALTH_TASK_PATH])
+        self.assertTrue(result["ok"] and result["installed"] and result["matchesDefinition"])
+        self.assertEqual(evidence, result)
+        self.assertEqual(result["scheduledTask"]["cronExpression"], "0 21 * * 0-4")
+        self.assertEqual(result["scheduledTask"]["agentMode"], "Review")
+        self.assertTrue(result["scheduledTask"]["enabled"])
+        self.assertEqual(result["problems"], [])
+        self.assertNotIn("secret-token", json.dumps(evidence))
+        self.assertTrue(str(self.az.call_args.args[-1]).endswith(
+            "/providers/Microsoft.App/agents/sre-test/DataConnectors?api-version=2025-05-01-preview"))
+        tools = fake.resources[HEALTH_AGENT_PATH]["properties"]["tools"]
+        self.assertEqual(tools, [
+            "GetAzCliHelp", "RunAzCliReadCommands", "PlotAreaChartWithCorrelation",
+            "PlotBarChart", "QueryLogAnalyticsByWorkspaceId", "QueryAppInsightsUsingAppId"])
+        self.assertNotIn(RESPONSE_PLAN_PATH, fake.resources)
+        self.assertEqual(self.request.call_args_list[0].args[0], VALUES["SRE_AGENT_ENDPOINT"])
+
+    def test_install_is_idempotent(self):
+        fake = FakeSreAgent()
+        with self.patched(fake):
+            workshop.ensure_health_check(HEALTH_VALUES, attempts=1)
+            first = copy.deepcopy(fake.resources)
+            workshop.ensure_health_check(HEALTH_VALUES, attempts=1)
+        self.assertEqual(fake.resources, first)
+        self.assertEqual(len(fake.resources), 3)
+
+    def test_only_tools_for_healthy_connectors_are_attached(self):
+        fake = FakeSreAgent()
+        with self.patched(fake, connector_response(app_insights="Failed")):
+            workshop.ensure_health_check(HEALTH_VALUES, attempts=1)
+        self.assertEqual(
+            fake.resources[HEALTH_AGENT_PATH]["properties"]["tools"][-1],
+            "QueryLogAnalyticsByWorkspaceId")
+        self.assertNotIn(
+            "QueryAppInsightsUsingAppId", fake.resources[HEALTH_AGENT_PATH]["properties"]["tools"])
+
+    def test_unhealthy_log_analytics_connector_fails_before_any_write(self):
+        fake = FakeSreAgent()
+        with self.patched(fake, connector_response(log_analytics="Failed")):
+            with self.assertRaisesRegex(workshop.DeploymentError, "log-analytics connector"):
+                workshop.ensure_health_check(HEALTH_VALUES, attempts=1)
+        self.request.assert_not_called()
+        self.assertEqual(fake.calls, [])
+
+    def test_unexpected_agent_resource_id_is_rejected_before_any_azure_call(self):
+        fake = FakeSreAgent()
+        with self.patched(fake):
+            with self.assertRaisesRegex(workshop.DeploymentError, "resource identifier"):
+                workshop.ensure_health_check({**HEALTH_VALUES, "SRE_AGENT_RESOURCE_ID": "/agent"})
+        self.az.assert_not_called()
+        self.request.assert_not_called()
+
+    def test_endpoint_outside_the_sre_agent_host_is_rejected(self):
+        fake = FakeSreAgent()
+        with self.patched(fake):
+            with self.assertRaisesRegex(workshop.DeploymentError, "Unexpected Azure SRE Agent endpoint"):
+                workshop.ensure_health_check(
+                    {**HEALTH_VALUES, "SRE_AGENT_ENDPOINT": "https://example.com"})
+        self.request.assert_not_called()
+
+    def test_slow_visibility_is_retried(self):
+        fake = FakeSreAgent(stale_task_reads=1)
+        with self.patched(fake):
+            result = workshop.ensure_health_check(HEALTH_VALUES, attempts=2, retry_seconds=1)
+        self.assertTrue(result["matchesDefinition"])
+        self.sleep.assert_called_once_with(1)
+        self.assertEqual(fake.methods("PUT").count(HEALTH_TASK_PATH), 2)
+
+    def test_permanent_failure_is_not_retried_and_leaves_no_evidence(self):
+        permanent = workshop.SreAgentRequestError("bad request", status=400, retryable=False)
+        with self.patched(FakeSreAgent()) as temporary:
+            self.request.side_effect = permanent
+            with self.assertRaisesRegex(workshop.DeploymentError, "bad request"):
+                workshop.ensure_health_check(HEALTH_VALUES)
+            evidence = workshop.state_directory(HEALTH_VALUES) / "scheduled-health-check.json"
+            self.assertFalse(evidence.exists())
+        self.request.assert_called_once()
+        self.sleep.assert_not_called()
+
+    def test_a_schedule_the_agent_does_not_keep_fails_after_bounded_attempts(self):
+        fake = FakeSreAgent(on_put={
+            HEALTH_TASK_PATH: lambda body: body["properties"].update(cronExpression="0 9 * * 1-5"),
+        })
+        with self.patched(fake) as temporary:
+            with self.assertRaisesRegex(workshop.DeploymentError, "cronExpression"):
+                workshop.ensure_health_check(HEALTH_VALUES, attempts=2, retry_seconds=1)
+            evidence = workshop.state_directory(HEALTH_VALUES) / "scheduled-health-check.json"
+            self.assertFalse(evidence.exists())
+        self.sleep.assert_called_once_with(1)
+
+    def test_status_is_read_only_and_reports_an_absent_health_check(self):
+        fake = FakeSreAgent()
+        with self.patched(fake):
+            report = workshop.health_check_status(HEALTH_VALUES)
+        self.assertFalse(report["installed"])
+        self.assertFalse(report["matchesDefinition"])
+        self.assertIsNone(report["scheduledTask"])
+        self.assertIsNone(report["customAgent"])
+        self.assertTrue(report["problems"])
+        self.assertEqual({method for method, _ in fake.calls}, {"GET"})
+        self.az.assert_not_called()
+
+    def test_status_reports_a_matching_install_and_portal_edits(self):
+        fake = FakeSreAgent()
+        with self.patched(fake):
+            workshop.ensure_health_check(HEALTH_VALUES, attempts=1)
+            matching = workshop.health_check_status(HEALTH_VALUES)
+            fake.resources[HEALTH_TASK_PATH]["properties"]["cronExpression"] = "0 20 * * 0-4"
+            fake.resources[HEALTH_TASK_PATH]["properties"]["isEnabled"] = False
+            fake.resources[HEALTH_AGENT_PATH]["properties"]["tools"].append("RunAzCliWriteCommands")
+            edited = workshop.health_check_status(HEALTH_VALUES)
+        self.assertTrue(matching["installed"] and matching["matchesDefinition"])
+        self.assertTrue(edited["installed"])
+        self.assertFalse(edited["matchesDefinition"])
+        problems = " ".join(edited["problems"])
+        for expected in ("cronExpression", "not enabled", "RunAzCliWriteCommands"):
+            self.assertIn(expected, problems)
+
+    def test_install_fails_when_the_agent_does_not_keep_a_safety_property(self):
+        def tools_without(name):
+            return lambda body: body["properties"]["tools"].remove(name)
+
+        cases = {
+            "autonomous mode": (
+                HEALTH_TASK_PATH, lambda b: b["properties"].update(agentMode="Autonomous"),
+                "agentMode"),
+            "another handler": (
+                HEALTH_TASK_PATH, lambda b: b["properties"].update(agent="meta_agent"),
+                "Scheduled task agent"),
+            "disabled task": (
+                HEALTH_TASK_PATH, lambda b: b["properties"].update(isEnabled=False), "not enabled"),
+            "changed prompt": (
+                HEALTH_TASK_PATH, lambda b: b["properties"].update(agentPrompt="Restart the VM."),
+                "property agentPrompt differs"),
+            "missing chart tool": (
+                HEALTH_AGENT_PATH, tools_without("PlotBarChart"), "missing tools: PlotBarChart"),
+            "missing log analytics tool": (
+                HEALTH_AGENT_PATH, tools_without("QueryLogAnalyticsByWorkspaceId"),
+                "missing tools: QueryLogAnalyticsByWorkspaceId"),
+            "extra write tool": (
+                HEALTH_AGENT_PATH,
+                lambda b: b["properties"]["tools"].append("RunAzCliWriteCommands"),
+                "outside the read-only set"),
+            "skill not allowed": (
+                HEALTH_AGENT_PATH, lambda b: b["properties"].update(allowedSkills=[]),
+                "does not allow skills"),
+            "mcp tools": (
+                HEALTH_AGENT_PATH, lambda b: b["properties"].update(mcpTools=["anything"]),
+                "property mcpTools"),
+            "connectors": (
+                HEALTH_AGENT_PATH, lambda b: b["properties"].update(connectors=["anything"]),
+                "property connectors"),
+            "agents as tools": (
+                HEALTH_AGENT_PATH, lambda b: b["properties"].update(agentsAsTools=["anything"]),
+                "property agentsAsTools"),
+            "common tools": (
+                HEALTH_AGENT_PATH, lambda b: b["properties"].update(commonTools=["anything"]),
+                "property commonTools"),
+            "system skills": (
+                HEALTH_AGENT_PATH, lambda b: b["properties"].update(addSystemSkills=True),
+                "addSystemSkills"),
+            "changed instructions": (
+                HEALTH_AGENT_PATH,
+                lambda b: b["properties"].update(instructions="Restart the VM."),
+                "property instructions differs"),
+            "changed skill body": (
+                HEALTH_SKILL_PATH,
+                lambda b: b["properties"].update(skillContent="Restart the VM."),
+                "content differs"),
+        }
+        for label, (path, mutate, expected) in cases.items():
+            with self.subTest(label):
+                with self.patched(FakeSreAgent(on_put={path: mutate})):
+                    with self.assertRaisesRegex(workshop.DeploymentError, expected):
+                        workshop.ensure_health_check(HEALTH_VALUES, attempts=1)
+                    evidence = workshop.state_directory(HEALTH_VALUES) / "scheduled-health-check.json"
+                    self.assertFalse(evidence.exists())
+
+    def test_agent_document_pins_optional_tool_categories_empty(self):
+        definition = workshop.load_health_check_definition()
+        _, agent, _ = workshop.health_check_documents(definition, ["QueryLogAnalyticsByWorkspaceId"])
+        properties = agent["properties"]
+        for key in ("mcpTools", "connectors", "agentsAsTools", "commonTools"):
+            self.assertEqual(properties[key], [], key)
+        self.assertIs(properties["addSystemSkills"], False)
+
+    def test_status_reports_changes_to_the_text_that_defines_behavior(self):
+        edits = {
+            "instructions": (
+                HEALTH_AGENT_PATH, lambda p: p.update(instructions="Restart the VM if CPU is high.")),
+            "prompt": (HEALTH_TASK_PATH, lambda p: p.update(agentPrompt="Restart the VM.")),
+            "skill": (HEALTH_SKILL_PATH, lambda p: p.update(skillContent="Restart the VM.")),
+            "log analytics tool": (
+                HEALTH_AGENT_PATH, lambda p: p["tools"].remove("QueryLogAnalyticsByWorkspaceId")),
+            "system skills": (HEALTH_AGENT_PATH, lambda p: p.update(addSystemSkills=True)),
+        }
+        for label, (path, edit) in edits.items():
+            with self.subTest(label):
+                fake = FakeSreAgent()
+                with self.patched(fake):
+                    workshop.ensure_health_check(HEALTH_VALUES, attempts=1)
+                    edit(fake.resources[path]["properties"])
+                    report = workshop.health_check_status(HEALTH_VALUES)
+                self.assertTrue(report["installed"])
+                self.assertFalse(report["matchesDefinition"])
+                self.assertTrue(report["problems"])
+
+    def test_status_tolerates_how_the_service_returns_text(self):
+        fake = FakeSreAgent()
+        with self.patched(fake):
+            workshop.ensure_health_check(HEALTH_VALUES, attempts=1)
+            skill = fake.resources[HEALTH_SKILL_PATH]["properties"]
+            body = skill.pop("skillContent").split("---\n", 2)[2]
+            skill["skillMdContent"] = body.replace("\n", "\r\n") + "\r\n"
+            fake.resources[HEALTH_AGENT_PATH]["properties"].pop("instructions")
+            fake.resources[HEALTH_TASK_PATH]["properties"]["agentPrompt"] += "  \n"
+            report = workshop.health_check_status(HEALTH_VALUES)
+        self.assertTrue(report["matchesDefinition"], report["problems"])
+
+    def test_remove_deletes_only_its_own_resources_in_dependency_order(self):
+        fake = FakeSreAgent()
+        with self.patched(fake):
+            fake.resources[RESPONSE_PLAN_PATH] = {"name": "workshop-sev1-sev2-review"}
+            fake.resources[EXTENDED + "scheduledtasks/someone-elses-task"] = {
+                "name": "someone-elses-task", "properties": {}}
+            workshop.ensure_health_check(HEALTH_VALUES, attempts=1)
+            evidence = workshop.state_directory(HEALTH_VALUES) / "scheduled-health-check.json"
+            self.assertTrue(evidence.exists())
+            result = workshop.remove_health_check(HEALTH_VALUES, attempts=1)
+            self.assertFalse(evidence.exists())
+        self.assertEqual(
+            fake.methods("DELETE"), [HEALTH_TASK_PATH, HEALTH_AGENT_PATH, HEALTH_SKILL_PATH])
+        self.assertEqual(
+            set(fake.resources),
+            {EXTENDED + "scheduledtasks/someone-elses-task", RESPONSE_PLAN_PATH})
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            result["removed"],
+            ["orders-daily-health-report", "health-report-investigator", "proactive-health-check"])
+
+    def test_remove_succeeds_when_nothing_is_installed(self):
+        fake = FakeSreAgent()
+        with self.patched(fake):
+            result = workshop.remove_health_check(HEALTH_VALUES, attempts=1)
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(fake.methods("DELETE")), 3)
+
+    def test_remove_fails_when_resources_stay_visible(self):
+        fake = FakeSreAgent(keep_deleted=True)
+        with self.patched(fake):
+            workshop.ensure_health_check(HEALTH_VALUES, attempts=1)
+            with self.assertRaisesRegex(workshop.DeploymentError, "still visible"):
+                workshop.remove_health_check(HEALTH_VALUES, attempts=2, retry_seconds=1)
+        self.sleep.assert_called_once_with(1)
+
+    def test_each_action_runs_exactly_one_handler(self):
+        names = ("ensure_health_check", "health_check_status", "remove_health_check")
+        for action, expected in zip(workshop.HEALTH_CHECK_ACTIONS, names):
+            with self.subTest(action), ExitStack() as stack:
+                handlers = {
+                    name: stack.enter_context(
+                        patch.object(workshop, name, return_value={"handler": name}))
+                    for name in names
+                }
+                self.assertEqual(
+                    workshop.health_check(HEALTH_VALUES, action), {"handler": expected})
+                for name, handler in handlers.items():
+                    if name == expected:
+                        handler.assert_called_once_with(HEALTH_VALUES)
+                    else:
+                        handler.assert_not_called()
+
+    def test_command_accepts_exactly_one_known_action(self):
+        with self.assertRaisesRegex(workshop.DeploymentError, "install, status, or remove"):
+            workshop.health_check(HEALTH_VALUES, "bogus")
+
+        def run(*arguments):
+            with patch.object(sys, "argv", ["workshop.py", "health-check", *arguments]), \
+                    patch.object(workshop, "environment", return_value=HEALTH_VALUES), \
+                    patch.object(workshop, "health_check", return_value={"ok": True}) as handler, \
+                    redirect_stdout(io.StringIO()):
+                workshop.main()
+            return handler
+
+        run().assert_called_once_with(HEALTH_VALUES, "status")
+        run("install").assert_called_once_with(HEALTH_VALUES, "install")
+        with self.assertRaisesRegex(workshop.DeploymentError, "one action"):
+            run("install", "remove")
+
+    def test_azd_up_does_not_install_the_health_check(self):
+        self.assertNotIn("health_check", inspect.getsource(workshop.postprovision))
+        self.assertNotIn("health", (workshop.ROOT / "azure.yaml").read_text(encoding="utf-8"))
+        self.assertIn("scheduled-health-check.json", workshop.FRESH_ENVIRONMENT_EVIDENCE)
+
+
+class HealthCheckDocumentationTests(unittest.TestCase):
+    REPO = HERE.parent
+    MODULE = ("docs", "sre", "05-scheduled-health-check", "index.md")
+
+    def read(self, *parts):
+        return self.REPO.joinpath(*parts).read_text(encoding="utf-8")
+
+    def test_module_replaces_review_and_sits_between_the_incidents_and_cleanup(self):
+        self.assertTrue(self.REPO.joinpath(*self.MODULE).is_file())
+        self.assertFalse((self.REPO / "docs" / "sre" / "05-review-and-improve").exists())
+        navigation = self.read("mkdocs.yml")
+        self.assertIn("sre/05-scheduled-health-check/index.md", navigation)
+        self.assertNotIn("05-review-and-improve", navigation)
+        module = self.read(*self.MODULE)
+        self.assertIn("(../04-incident-postgresql/index.md)", module)
+        self.assertIn("(../06-cleanup/index.md)", module)
+        for neighbour in (
+            ("docs", "sre", "04-incident-postgresql", "index.md"),
+            ("docs", "sre", "06-cleanup", "index.md"),
+        ):
+            self.assertIn("(../05-scheduled-health-check/index.md)", self.read(*neighbour))
+
+    def test_documented_health_check_commands_exist_and_every_action_is_documented(self):
+        pattern = re.compile(r"workshop\.py health-check(?: (\w+))?")
+        documented = set()
+        for parts in (
+            ("README.md",), self.MODULE,
+            ("docs", "sre", "06-cleanup", "index.md"),
+            ("docs", "sre", "30-appendix", "01-variables.md"),
+            ("docs", "sre", "30-appendix", "03-cost-management.md"),
+        ):
+            documented |= {match.group(1) for match in pattern.finditer(self.read(*parts))}
+        self.assertNotIn(None, documented)
+        self.assertEqual(documented, set(workshop.HEALTH_CHECK_ACTIONS))
+
+    def test_schedule_is_stated_consistently_with_the_definition(self):
+        schedule = workshop.load_health_check_definition()["schedule"]
+        for parts in (
+            ("README.md",), ("CONTRIBUTING.md",), self.MODULE,
+            ("docs", "sre", "30-appendix", "02-troubleshooting.md"),
+        ):
+            self.assertIn(schedule, self.read(*parts), parts[-1])
+        for text in (self.read("README.md"), self.read(*self.MODULE),
+                     workshop.HEALTH_CHECK_TEMPLATE.read_text(encoding="utf-8")):
+            self.assertIn("0 20 * * 0-4", text)
+
+    def test_new_module_follows_the_documentation_standards(self):
+        text = self.read(*self.MODULE)
+        self.assertTrue(text.startswith("---\n"))
+        frontmatter = yaml.safe_load(text.split("---", 2)[1])
+        for key in ("title", "description", "ms.date", "ms.topic"):
+            self.assertIn(key, frontmatter)
+        fenced = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                if not fenced:
+                    self.assertRegex(stripped, r"^```\w+$", f"fence without a language: {line!r}")
+                fenced = not fenced
+            elif not fenced:
+                self.assertFalse(line.startswith("# "), "Pages must not contain an H1.")
+        self.assertFalse(fenced)
+        self.assertNotIn("\u2014", text)
+        self.assertIsNone(re.search(r"\b(simply|easily|just|robust|seamless)\b", text, re.IGNORECASE))
+        for expected in ("health-report-investigator", "orders-daily-health-report",
+                         "proactive-health-check", "Orders Service Health"):
+            self.assertIn(expected, text)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,65 @@
+# Weekday health check for the Orders workload, installed by:
+#   python scripts/workshop.py health-check install
+#
+# The SRE Agent evaluates cron expressions in UTC and has no time-zone setting.
+# "0 21 * * 0-4" runs Sunday to Thursday at 21:00 UTC, which is Monday to Friday
+# at 09:00 New Zealand Standard Time (NZST, UTC+12). While New Zealand observes
+# daylight time (NZDT, UTC+13, late September to early April) the same schedule
+# runs at 10:00 local time. For 09:00 NZDT use "0 20 * * 0-4", then run
+# "health-check install" again.
+name: orders-daily-health-report
+
+trigger:
+  type: scheduled-task
+  description: Assess Orders API, PostgreSQL dependency, and VM health over the last 24 hours and report read-only findings in the task thread.
+  schedule: "0 21 * * 0-4"
+  enabled: true
+  action_mode: Review
+  handling_agent: health-report-investigator
+  prompt: |
+    Run the scheduled Orders service health check for the last 24 hours using
+    the proactive-health-check skill. Write every timestamp in UTC with New
+    Zealand time in parentheses. Return the findings in this thread and make no
+    changes.
+
+custom_agent:
+  name: health-report-investigator
+  action_mode: Review
+  handoff_description: Runs scheduled Orders service health checks and reports read-only findings.
+  # The installer adds the telemetry query tool for each healthy connector:
+  # QueryLogAnalyticsByWorkspaceId and QueryAppInsightsUsingAppId.
+  # This list is configuration. In live testing, scheduled runs used the
+  # platform's default tools and did not apply it, so the read-only rules are
+  # also in the skill and the task prompt.
+  tools:
+    read_only:
+      - GetAzCliHelp
+      - RunAzCliReadCommands
+      - PlotAreaChartWithCorrelation
+      - PlotBarChart
+    deny:
+      - RunAzCliWriteCommands
+      - SendOutlookEmail
+      - CreateGithubIssue
+  skills:
+    - name: proactive-health-check
+      source: ../skills/proactive-health-check/SKILL.md
+  instructions: |
+    Use the proactive-health-check skill to assess the Orders API, its private
+    PostgreSQL dependency, and the VM over the last 24 hours. Query Log
+    Analytics with QueryLogAnalyticsByWorkspaceId for the App*, Heartbeat, and
+    Perf tables, and use QueryAppInsightsUsingAppId only as a cross-check when
+    it is available. Read Azure state with GetAzCliHelp and
+    RunAzCliReadCommands only. Compare with the previous seven days only when
+    enough history exists, and say plainly when the environment is too new for
+    a baseline. Display evidence-grounded charts where they clarify health:
+    PlotAreaChartWithCorrelation for 24-hour trends and PlotBarChart for a
+    valid comparison. Label charts with the UTC window, New Zealand time,
+    units, and series, and never chart empty, sparse, or invented values.
+    Report the current state of each area separately from the findings in the
+    24-hour window, and treat missing samples as Unknown, never Healthy. Return
+    timestamped findings, evidence, missing data, risks, and recommended
+    follow-up in the task thread. Do not modify Azure resources, send email,
+    create issues, update memory, or create or update a Live Report. If severe
+    customer impact is active, include an escalation draft for human review
+    only.

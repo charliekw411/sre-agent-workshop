@@ -1,7 +1,7 @@
 ---
 title: Troubleshooting
-description: Diagnose deployment, private PostgreSQL, managed identity, schema, NSG fault, telemetry, SRE Agent, and cleanup problems in the workshop.
-ms.date: 2026-10-06
+description: Diagnose deployment, private PostgreSQL, managed identity, schema, NSG fault, telemetry, SRE Agent, scheduled health check, and cleanup problems in the workshop.
+ms.date: 2026-10-12
 ms.topic: troubleshooting
 keywords:
   - troubleshooting
@@ -817,6 +817,95 @@ python scripts/workshop.py fault reset-postgresql # PostgreSQL incident
 ```
 
 Do not grant workload write access to make the demonstration automatic.
+
+### `health-check install` returns 403 or 404
+
+Right after provisioning, the SRE Agent data plane can reject calls until role
+assignments propagate. The command retries these responses for about two
+minutes. If it still fails, confirm that you hold the agent-scoped administrator
+role and run the command again. It is safe to repeat.
+
+### `health-check install` says the log-analytics connector is not healthy
+
+The health check reads the `App*`, `Heartbeat`, and `Perf` tables through the
+`log-analytics` connector. Open the agent's Connectors page in the portal, wait
+for the connector to report a healthy state, and run the command again. Rerun
+`azd up` only if the connector is missing.
+
+### `health-check status` reports `matchesDefinition` as `false`
+
+Someone edited the task, custom agent, or skill in the portal. Read the
+`problems` list, then run `health-check install`. It rewrites all three items,
+including the tool list, from the definitions under `agent/`.
+
+### The scheduled task shows Failed or never runs
+
+The portal marks a task `Failed` after three consecutive failed runs. Open the
+task, read the latest run thread for the error, and run `health-check install` to
+rewrite it. The schedule is evaluated in UTC and runs on weekdays only:
+`0 21 * * 0-4` is Monday to Friday at 09:00 NZST, which is 10:00 during New
+Zealand daylight time. Use **Run task now** to test without waiting.
+
+### The health-check report says the Application Insights cross-check was unavailable
+
+This is expected in the current preview. Scheduled runs did not expose
+`QueryAppInsightsUsingAppId` in testing, even when the `app-insights` connector
+was healthy. The agent reads the same Application Insights data from the `App*`
+tables of the Log Analytics workspace, so treat the message as a gap only when
+those tables are also empty or the report has no request and dependency numbers.
+
+### The health-check report says Unknown or has no charts
+
+An area with no samples in the last 15 minutes is reported as Unknown by design.
+Start traffic with `./scripts/generate-load.sh`, wait for telemetry ingestion, and
+run the task again. Charts are omitted when data is empty or too sparse to plot.
+Do not read a missing chart as a healthy signal.
+
+### The Live Report cannot read a table
+
+A Live Report can use only the connectors already configured for the agent. Ask
+the agent in the authoring thread to list the data sources it can use, then
+adjust the report. Confirm that you have read and write permission on the agent
+and that the `log-analytics` and `app-insights` connectors are healthy. Live
+Reports is a preview feature, so record any limitation in your notes.
+
+### Live Reports is missing, or you cannot create, approve, or delete a report
+
+Creating a report, and running its queries when you open or reload it, needs the
+SRE Agent Standard User, SRE Agent Author, or SRE Agent Administrator role on the
+agent. Approving the report's tool call, and deleting a report, needs SRE Agent
+Administrator. `azd up` assigns the Administrator role to the person who
+deployed the agent. For a shared agent, ask its owner to assign the role at the
+agent scope, wait a few minutes, then sign out of the portal and back in.
+
+### The agent says its telemetry queries returned 403 InsufficientAccessError
+
+Role assignments take several minutes to propagate after `azd up`. The
+deployment already gives both agent identities the Log Analytics Reader role on
+the workspace, so do not add more assignments. The agent may suggest an
+`az role assignment create` command that uses the identity's client ID. Check
+the existing assignments first with
+`az role assignment list --scope <workspace resource ID>`. Wait a few minutes,
+then tell the authoring thread: "Retry the telemetry probes and continue
+building the report." In testing, the same request succeeded about seven minutes
+after the deployment finished.
+
+### A Live Report status looks wrong
+
+The agent generates the report's code, so a saved report can have defects. In
+testing, one version showed PostgreSQL as No data although its table listed more
+than 1,200 calls, and an earlier wording marked healthy areas Degraded because a
+recovered outage was inside the 24-hour window. Compare each status with its
+table and your Task 5 queries. Then select **Open authoring thread** and describe
+the defect, for example: "The PostgreSQL status shows No data but the table shows
+calls. Fix the status code for every area, test it against fresh query results,
+and save a new version."
+
+### There are two Live Reports with the same name
+
+Every request from **+ New report** creates a new report, even when the name
+matches. Delete the extra report from its overflow menu, which needs SRE Agent
+Administrator. To change an existing report, open its authoring thread instead.
 
 ## Documentation-site Azure connection
 

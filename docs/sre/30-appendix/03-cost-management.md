@@ -1,7 +1,7 @@
 ---
 title: Cost Management
 description: Understand, monitor, reduce, and stop the costs of the Orders VM, private PostgreSQL, monitoring, and Azure SRE Agent workshop.
-ms.date: 2026-10-06
+ms.date: 2026-10-12
 ms.topic: concept
 keywords:
   - azure cost management
@@ -37,6 +37,7 @@ It does not stop any resource or stop billing.
 | PostgreSQL diagnostics | Server logs and metrics sent to the workspace contribute to ingestion |
 | Azure Monitor alerts | Metric and scheduled-query rule evaluation can incur charges |
 | Azure SRE Agent | Current agent and model pricing; always-on charges can apply |
+| Scheduled health check and Live Reports | Each task run and each report creation or update consumes Azure Agent Units; reloading a report that only reads connector data does not |
 | Network transfer | Normally small for the workshop, but not guaranteed to be zero |
 
 The PostgreSQL incident changes one NSG rule between `Allow` and `Deny`. It does
@@ -75,6 +76,33 @@ Preflight reports VM quota and regional restrictions and checks that PostgreSQL
 The Log Analytics 1 GB/day setting and any SRE Agent usage limit are safeguards,
 not complete monetary caps. Ingestion can be delayed, and service-specific
 charges can continue after a cap affects data or active usage.
+
+## Scheduled health check and Live Report
+
+The Module 05 scheduled task asks the agent to plan, query, chart, and write a
+report on every run. Each run consumes Azure Agent Units, and the task repeats on
+weekdays until you remove it. Creating or updating a Live Report also consumes
+units. Reloading a report that only retrieves data through connector tools does
+not, but a section that asks a model to summarize the data consumes units on
+every refresh, so the workshop prompt excludes model-assisted analysis.
+
+In testing, about an hour of Live Report authoring (three report builds, one
+update, and several follow-up messages) showed 45 of the 500 monthly units
+used. The usage figure updates in batches and lagged by more than ten minutes, so
+read it after the work rather than during it. Ask each student to build the
+report once and to fix defects in its authoring thread instead of starting new
+reports.
+
+The agent has a 500 unit monthly limit. Like the Log Analytics cap, it is a
+safeguard rather than a complete monetary cap. Check **Settings** > **Agent
+consumption** in the SRE Agent portal, and remove the schedule when you finish:
+
+```bash
+python scripts/workshop.py health-check remove
+```
+
+Deleting the environment also deletes the agent, its tasks, and its Live
+Reports.
 
 ## Monitor actual cost
 
@@ -200,6 +228,7 @@ configuration:
     source .workshop/workshop.env
     python scripts/workshop.py fault reset
     python scripts/workshop.py fault status
+    python scripts/workshop.py health-check remove
     azd down --purge --force
     ```
 
@@ -209,6 +238,7 @@ configuration:
     . ./.workshop/workshop.ps1
     python scripts/workshop.py fault reset
     python scripts/workshop.py fault status
+    python scripts/workshop.py health-check remove
     azd down --purge --force
     ```
 
@@ -218,7 +248,7 @@ Cleanup removes the resource group and its:
 * VNet, subnets, NSG, private DNS zone, and link.
 * PostgreSQL server, database, and retained backups.
 * Log Analytics, Application Insights, diagnostics, and alerts.
-* SRE Agent, connectors, and identities.
+* SRE Agent, connectors, identities, scheduled tasks, and Live Reports.
 
 Verify removal:
 
