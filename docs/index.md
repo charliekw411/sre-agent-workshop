@@ -105,6 +105,8 @@ flowchart LR
     M1 --> M2[02 Operate response plan]
     M2 --> M3[03 Respond to high CPU]
     M3 --> M4[04 Respond to PostgreSQL connectivity loss]
+    M4 -.Optional.-> IW[Build an incident workflow]
+    IW -.Return to the learning path.-> M5
     M4 -->     M5[05 Schedule health check and Live Report]
     M5 --> M6[06 Preserve evidence and clean up]
 
@@ -113,7 +115,7 @@ flowchart LR
     classDef learn fill:#dcfce7,stroke:#15803d,color:#14532d
 
     class M1,M2 setup
-    class M3,M4 incident
+    class M3,M4,IW incident
     class M5,M6 learn
 ```
 
@@ -125,6 +127,13 @@ flowchart LR
 | 04 | Diagnose and restore PostgreSQL connectivity | NSG rule state, HTTP 503 readiness, failed dependencies, alert, and investigation |
 | 05 | Schedule a proactive health check and build a Live Report | Installed task, thread findings graded against KQL, and a refreshable report |
 | 06 | Preserve evidence and delete every workshop resource | Final healthy state, saved notes, report snapshot, resource inventory, and deletion proof |
+
+After Module 04, optionally
+[build an incident workflow](sre/incident-workflow/index.md) on the same
+environment. You install a dedicated investigator, partition two active
+response plans by title, grade an evidence-backed RCA, and review optional
+GitHub and Outlook follow-ups. Return to Module 05 without changing the
+numbered learning path.
 
 Allow about three and a half hours, including telemetry ingestion and alert
 evaluation waits.
@@ -144,6 +153,12 @@ reset through your own authenticated session.
 Module 05 adds a proactive path that needs no fault: a scheduled, read-only agent
 health check and a refreshable Live Report. Both read the same telemetry, and
 neither changes Azure resources.
+
+The optional incident workflow adds no workload or new fault. It temporarily
+routes PostgreSQL titles to a dedicated investigator while the original plan
+uses the disjoint CPU/HTTP 5xx title prefix. Both remain
+Sev1/Sev2 Review plans. External issue/email follow-ups require separate,
+destination-specific approvals; workload recovery remains operator-owned.
 
 The PostgreSQL fault changes only `PostgreSqlFaultInjection`:
 

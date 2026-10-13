@@ -162,6 +162,26 @@ the connectors, or any Live Report, and it is safe to repeat. Live Reports and
 the task's run history are deleted with the agent in Task 5, which is why Task 1
 saves a snapshot first.
 
+If you installed the [optional incident workflow](../incident-workflow/index.md),
+preserve its investigation and any action receipts, then restore the original
+response-plan filters before deleting local rollback state:
+
+```bash
+python scripts/workshop.py incident-workflow remove
+python scripts/workshop.py incident-workflow status
+```
+
+Removal disables the optional plan first, restores
+`workshop-sev1-sev2-review`, and deletes only the optional plan, investigator,
+and three incident skills. Status should report `installed: false` with no
+unowned components. A conflict or missing rollback file is an explicit error:
+keep `incident-workflow-state.json` and reconcile the reported configuration
+instead of guessing the original filters.
+
+Shared connectors, published GitHub issues, and sent email are not deleted by
+this command. Azure resource-group deletion is not a recall of those external
+writes.
+
 ### Task 3: Preserve the evidence worth keeping
 
 Create a directory outside `.workshop` and copy your notes:
@@ -193,6 +213,8 @@ Keep:
 * Alert and response-plan timestamps.
 * Agent drafts and your corrections.
 * Your health-check notes, graded claims, and the Live Report snapshot.
+* Optional incident-workflow routing evidence, RCA corrections, reviewed
+  drafts, and confirmed or unresolved action receipts.
 
 The JSON files under `.workshop/<environment>/` are deployment and validation
 evidence. Copy them only if they are useful and permitted by your organization.

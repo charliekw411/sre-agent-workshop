@@ -141,6 +141,13 @@ evidence is stored in:
 Do not create a second catch-all response plan. Two overlapping enabled plans
 make alert routing and investigation ownership ambiguous.
 
+The [optional incident-workflow module](../incident-workflow/index.md) after
+Module 04 demonstrates a safe two-plan setup. Its installer keeps both plans
+enabled but uses disjoint scalar title filters: PostgreSQL uses the new plan,
+while CPU and HTTP 5xx use this plan. Removal restores this plan's original
+configuration. Do not reproduce that setup by adding only a positive filter to
+a second plan, or by trusting stored advanced arrays without a dispatch test.
+
 <!-- SCREENSHOT: SRE Agent response plan showing Sev1/Sev2 Azure Monitor routing in Review mode -->
 
 ### Task 3: Review the permission boundary

@@ -133,7 +133,9 @@ them:
 * PostgreSQL dependency telemetry uses
   `DependencyType == "PostgreSQL"`.
 * Existing resource groups are accepted only when tagged
-  `workshop-architecture=single-vm-postgresql-v1`.
+  `workshop-architecture=single-vm-postgresql-v1`, except an explicitly selected
+  group that has no tags and a verified empty resource inventory. That fresh
+  target receives its tags through the normal deployment, not a manual bypass.
 * The scheduled health check is opt-in through `health-check install`. `azd up`
   never installs it, and it creates no Azure resource.
 * The installer attaches only the read-only tools in `HEALTH_CHECK_TOOLS` (plus
@@ -148,6 +150,22 @@ them:
   safety boundary of a run.
 * `health-check remove` deletes only the health-check task, custom agent, and
   skill. It never changes the response plan or the connectors.
+* The incident workflow is opt-in through `incident-workflow install`. Its
+  dedicated plan and the original plan remain Sev1/Sev2 Review plans, with the
+  disjoint scalar title filters: `postgresql` for the new plan and
+  `alert-orders-h` for CPU/HTTP 5xx on the original. Live Stable-preview runs
+  retained advanced title arrays and resource guards without enforcing them.
+  The agent must manage only the selected workshop group. Do not add a
+  second overlapping catch-all or silently split by severity.
+* Preserve the environment/agent-bound original-plan snapshot until incident
+  removal. Stage the optional plan disabled before partitioning, disable it
+  before restoring the original, and refuse unowned or concurrently edited
+  components. Repeated provisioning must not undo an active partition.
+* Incident and health-check tool allowlists remain separate. Optional source,
+  GitHub, and Outlook capabilities require explicit bindings and existing
+  connections. External write tools require verified Ask policies, and each
+  actual write requires a separate request, approval, duplicate check, and
+  receipt. A missing capability is an explicit draft-only result.
 * The health-check schedule is a UTC cron expression. `0 21 * * 0-4` is Monday
   to Friday at 09:00 New Zealand Standard Time (UTC+12).
 * The Module 05 Live Report prompt was validated against a live agent on the
@@ -226,6 +244,10 @@ Module pages use this sequence:
 Preserve the six-module learning progression. Commands, resource names, API
 paths, expected output, diagrams, troubleshooting, cost notes, and cross-links
 must agree with the implementation in the same pull request.
+
+Optional advanced modules can branch after Module 04 and return to Module 05
+without renumbering or changing the original module URLs. Keep the normal
+previous/next links intact and add an explicit optional entry link.
 
 ### Writing conventions
 

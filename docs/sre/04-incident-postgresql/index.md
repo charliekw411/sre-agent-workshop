@@ -727,6 +727,13 @@ first-failure, alert, mitigation, recovery, and resolution times.
 
 [Next: Module 05 - Schedule a Health Check and Build a Live Report :material-arrow-right:](../05-scheduled-health-check/index.md){ .md-button .md-button--primary }
 
+[Optional: Build an Incident Workflow](../incident-workflow/index.md){ .md-button }
+
+The optional branch repeats this controlled PostgreSQL fault to teach a
+dedicated investigator, complementary response-plan filters, evidence-backed
+RCA, and separately approved GitHub/Outlook follow-ups. It reuses the current
+environment and returns to Module 05 after restoring routing.
+
 <div class="sre-nav" markdown>
 [:material-arrow-left: Module 03 - Respond to High CPU](../03-incident-high-cpu/index.md)
 [Module 05 - Schedule a Health Check and Build a Live Report :material-arrow-right:](../05-scheduled-health-check/index.md)
