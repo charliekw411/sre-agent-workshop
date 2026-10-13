@@ -105,6 +105,12 @@ azd up
 Review and remove the old disposable environment separately. Do not change its
 tag to bypass compatibility checks.
 
+For a pre-created group, explicitly select it with
+`azd env set WORKSHOP_RESOURCE_GROUP_NAME "<group-name>"`. Preflight accepts
+this fresh target only when both its tags and resource inventory are empty.
+The normal deployment applies the workshop tags. It does not adopt an occupied
+or tagged legacy environment.
+
 ### A required provider is unavailable or unregistered
 
 Preflight registers all required providers, including
@@ -787,6 +793,74 @@ Read:
 
 Rerun `azd up` to reconcile `workshop-sev1-sev2-review`. Do not create a second
 overlapping catch-all plan.
+
+If the optional incident workflow is installed, run
+`python scripts/workshop.py incident-workflow status` first. Provisioning
+preserves a healthy two-plan title partition and refuses to overwrite one
+with missing rollback state or drift. Reconcile or remove that module before
+restoring a catch-all.
+
+### The optional incident workflow does not route as expected
+
+The agent must manage only the selected workshop resource group so its global
+title partition cannot divert another environment's identically named alerts.
+
+Run:
+
+```bash
+python scripts/workshop.py incident-workflow status
+```
+
+Compare `routing.workflowTitleContains` (`postgresql`) and
+`routing.originalTitleContains` (`alert-orders-h`) with the actual incident
+title. Both plans must be enabled for Sev1/Sev2 in Review mode. The latter
+prefix covers CPU and HTTP 5xx; PostgreSQL uses the dedicated investigator.
+Another enabled plan that matches the same titles causes installation to fail.
+Live Stable-preview verification retained `titleContainsAny`,
+`titleNotContains`, and target-resource guards but still misrouted CPU, so do
+not substitute those stored fields for the scalar predicates.
+
+Read the new alert instance's matched plan and actual handling agent in its
+thread. A related-alert merge can reuse an earlier thread without proving that
+the new investigator ran. If the preview drops filter fields or dispatches
+incorrectly, reset the fault and restore the original routing with
+`incident-workflow remove` before further exercises.
+
+### Incident workflow reports drift or a partial operation
+
+Keep `.workshop/<environment>/incident-workflow-state.json`. It is the
+environment/agent-bound snapshot needed to restore the original filters.
+Installation and removal compare live configuration before writes; a supplied
+strong ETag is used conditionally. With no ETag these preview checks are
+best-effort, not atomic; weak or malformed ETags are rejected. Avoid concurrent
+portal edits.
+
+Resolve the named conflict with its owner before removing/reinstalling. Do not
+delete the state file or enable the new plan beside an unrestricted original
+plan. A lost activation response is not blindly retried; rollback first disables
+the new plan and restores the original.
+
+A stale `incident-workflow-state.lock` can remain after a terminated process.
+Read its process ID and confirm the process is no longer operating before
+removing that specific lock file. Inspect partial state before retrying.
+
+### An optional GitHub or Outlook follow-up is disabled
+
+Inspect each `followups` entry and its reason. The exact incident repository
+must be configured through Code Access with authenticated GitHub access.
+The selected Outlook MCP server must bind one Office 365 connection whose
+`overallStatus` is `Connected`, with explicitly selected To recipients.
+
+The corresponding native write tool needs an exact Ask policy, with no
+matching Allow or Deny override. The installer does not create connections,
+complete OAuth, or replace global policies. Missing prerequisites leave the
+write tool unattached and the skill draft-only. Tool availability and an actual
+per-write approval interaction still need confirmation in your thread.
+
+Remove and reinstall after changing connections, capabilities, definitions,
+or trusted destinations. Do not switch repositories/mailboxes inside an
+incident. For an unknown issue/send outcome, reconcile the correlation marker
+and receipts rather than repeating the write.
 
 ### An alert fired but no investigation appears
 

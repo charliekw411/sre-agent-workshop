@@ -12,6 +12,7 @@ nav:
   - Module 02 - Operate the Response Plan: sre/02-operate-response-plan/index.md
   - Module 03 - Respond to High CPU: sre/03-incident-high-cpu/index.md
   - Module 04 - Respond to PostgreSQL Connectivity Loss: sre/04-incident-postgresql/index.md
+  - Optional Module - Build an Incident Workflow: sre/incident-workflow/index.md
   - Module 05 - Schedule a Health Check and Build a Live Report: sre/05-scheduled-health-check/index.md
   - Module 06 - Preserve Evidence and Clean Up: sre/06-cleanup/index.md
   - About The Authors: sre/29-about-the-authors/index.md

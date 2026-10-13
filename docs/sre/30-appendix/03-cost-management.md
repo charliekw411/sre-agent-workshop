@@ -37,12 +37,26 @@ It does not stop any resource or stop billing.
 | PostgreSQL diagnostics | Server logs and metrics sent to the workspace contribute to ingestion |
 | Azure Monitor alerts | Metric and scheduled-query rule evaluation can incur charges |
 | Azure SRE Agent | Current agent and model pricing; always-on charges can apply |
+| Optional incident workflow | Reuses the workload and agent; repeat investigations and optional connector operations can add usage |
 | Scheduled health check and Live Reports | Each task run and each report creation or update consumes Azure Agent Units; reloading a report that only reads connector data does not |
 | Network transfer | Normally small for the workshop, but not guaranteed to be zero |
 
 The PostgreSQL incident changes one NSG rule between `Allow` and `Deny`. It does
 not resize, stop, or delete the server, so its cost continues during and after
 the exercise.
+
+The [optional incident workflow](../incident-workflow/index.md) adds no VM,
+database, or App Service. Repeating the incident still consumes agent units and
+telemetry ingestion. Complementary title filters prevent intentionally routing
+one alert to both plans, but related-alert merging is not an exactly-once
+execution guarantee. Remove the workflow after preserving evidence:
+
+```bash
+python scripts/workshop.py incident-workflow remove
+```
+
+Removal restores routing; it does not stop the existing agent's billing,
+delete shared connections, remove a GitHub issue, or recall email.
 
 ## Architecture and cost tradeoff
 

@@ -47,6 +47,13 @@ require an instructor.
 | 05 | Schedule a Health Check and Build a Live Report | 40 min |
 | 06 | Preserve Evidence and Clean Up | 20 min |
 
+After Module 04, you can branch into
+[Build an Incident Workflow](docs/sre/incident-workflow/index.md). This optional
+module adapts Microsoft's onboarding Scenario 1 to the existing workload:
+install a dedicated RCA investigator, keep two response plans active with
+complementary title filters, and review optional GitHub and Outlook follow-ups.
+It does not replace or renumber the six modules.
+
 ## What gets deployed
 
 The workshop uses one Azure region and one disposable resource group:
@@ -94,7 +101,7 @@ tradeoffs.
 
 ```text
 .
-├── agent/              Health-check skill, custom agent, and scheduled-task definitions
+├── agent/              Incident-workflow and health-check skills, agents, and trigger definitions
 ├── azure.yaml          Azure Developer CLI project definition
 ├── docs/               Workshop content published to GitHub Pages
 ├── infra/              Bicep templates and the azd deployment entry point
@@ -146,6 +153,12 @@ The resource group is tagged
 `workshop-architecture=single-vm-postgresql-v1`. A resource group with another
 architecture tag is rejected rather than migrated, partially reused, or
 deleted.
+
+To deploy into a pre-created group, set
+`azd env set WORKSHOP_RESOURCE_GROUP_NAME "<group-name>"`. An explicitly
+selected group with no tags and no resources is accepted as a fresh target;
+the normal Bicep deployment applies the workshop tags. An occupied or
+incompatibly tagged group is still rejected without retagging or deletion.
 
 `azd up` then:
 
@@ -305,6 +318,42 @@ Prefer a custom role at the narrowest supported scope rather than broad VM or
 network contributor access. See
 [Configure the Site Azure Connection](docs/sre/30-appendix/05-site-azure-connection.md).
 
+## Optional incident workflow
+
+The optional module after Module 04 reuses the PostgreSQL incident rather than
+deploying another workload:
+
+```bash
+python scripts/workshop.py incident-workflow install
+python scripts/workshop.py incident-workflow status
+python scripts/workshop.py incident-workflow remove
+```
+
+Installation discovers the PostgreSQL-connectivity alert name and
+display names, installs three skills and `orders-alert-investigator`, and stages
+`orders-incident-workflow` disabled. It narrows the original plan to
+`titleContains: alert-orders-h` (CPU and HTTP 5xx) and the new plan to
+`titleContains: postgresql`, verifies them, then enables the new plan. Both
+retain Sev1/Sev2 and Review mode. Live Stable-preview testing retained advanced
+title arrays without enforcing them, so the module uses scalar predicates.
+Repeated `azd up` preserves an installed partition and refuses an overlapping
+catch-all when module state is missing or drifted.
+
+The original filters and exact agent binding are saved in
+`.workshop/<environment>/incident-workflow-state.json`; keep it until removal.
+Read-back is recorded in `incident-workflow.json`. Removal disables the new
+plan first, restores the saved original filters, and deletes only module-owned
+components. It does not change shared connectors or the health check.
+
+Source access, GitHub publication, and Outlook email are opt-in. The installer
+reuses native connections and attaches follow-up write tools only when the
+exact trusted destinations, authenticated connections, and explicit Ask
+policies pass checks. Missing capabilities leave explicit drafts rather than
+blocking the RCA. Each publication/send still needs a separate human request
+and approval, with duplicate checks and receipts. See the
+[module](docs/sre/incident-workflow/index.md) for flags, setup, and preview
+dispatch/approval verification.
+
 ## Scheduled health check and Live Report
 
 Module 05 adds a proactive scenario that introduces no fault. It is opt-in, so
@@ -350,7 +399,9 @@ Scenario-specific resets do not change the other fault. Before collecting final
 healthy evidence or deleting the environment, run the explicitly global
 `python scripts/workshop.py fault reset`. If you installed the Module 05 health
 check, also run `python scripts/workshop.py health-check remove`; the recurring
-task uses agent units on every scheduled run. When finished:
+task uses agent units on every scheduled run. If you installed the optional
+incident workflow, run `python scripts/workshop.py incident-workflow remove`
+before deleting its rollback state. When finished:
 
 ```bash
 azd down --purge --force

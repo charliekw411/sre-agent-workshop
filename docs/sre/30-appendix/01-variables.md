@@ -142,6 +142,9 @@ site and its authenticated Azure controls.
 | `python scripts/workshop.py health-check install` | Write and read back the Module 05 skill, custom agent, and scheduled task; opt-in and safe to repeat |
 | `python scripts/workshop.py health-check status` | Read the same items without writing; report `installed`, `matchesDefinition`, and any `problems` |
 | `python scripts/workshop.py health-check remove` | Delete only the health-check task, custom agent, and skill |
+| `python scripts/workshop.py incident-workflow install` | Opt in to a dedicated investigator and complementary title filters on two active Sev1/Sev2 plans |
+| `python scripts/workshop.py incident-workflow status` | Read component, routing, definition, and optional-capability state without changing the agent |
+| `python scripts/workshop.py incident-workflow remove` | Disable the optional plan, restore the original filters, and delete only the optional plan, investigator, and three skills |
 | `python scripts/workshop.py export` | Rebuild generated shell exports |
 
 The wrapper scripts call the same implementation:
@@ -182,6 +185,8 @@ Common files include:
 | `vm-deployment.json` | Guest installation and inspection result |
 | `sre-agent-configuration.json` | Response-plan read-back |
 | `scheduled-health-check.json` | Module 05 skill, custom agent, and scheduled-task read-back: schedule, mode, enabled state, and tools |
+| `incident-workflow-state.json` | Exact original response-plan snapshot, agent binding, component definitions, and trusted destinations; retain until removal |
+| `incident-workflow.json` | Optional workflow component, complementary routing, and capability read-back |
 | `smoke.json` | Public order, database-status, and retired-route checks |
 | `vm-inspection.json` | Service, private DNS, TLS, PostgreSQL version, migration, seed, and health checks |
 | `persistence-witness.json` | Order and bound `postgresqlServerResourceId` |
@@ -201,6 +206,14 @@ Common files include:
 These files can contain Azure resource IDs and operational timestamps. Handle
 them according to your organization's policy. Put working notes under
 `.workshop/notes/` and copy needed evidence elsewhere before cleanup.
+
+Incident installation accepts `--source-repository`, `--github-repository`,
+`--outlook-connector`, and repeatable `--email-to` options. These are explicit
+trusted bindings, not deployment exports or credentials. They are valid only
+with `incident-workflow install`; see the
+[optional module](../incident-workflow/index.md). Recipient and repository
+details stay in the ignored rollback state and installed instructions, not
+`SAFE_OUTPUTS`. Do not commit or publicly share them.
 
 ## Authentication is not exported
 

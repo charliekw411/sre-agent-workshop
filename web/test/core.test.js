@@ -276,7 +276,7 @@ test("PostgreSQL NSG fault rule is exact, bounded, and concurrency-addressable",
   assert.throws(() => postgresqlFaultRuleBody("Delete"), /access value/);
 });
 
-test("both incident modules keep inline launchers and terminal fallbacks", () => {
+test("incident modules and the optional workflow keep inline launchers and terminal fallbacks", () => {
   for (const [scenario, path, command] of [
     [
       "cpu",
@@ -286,6 +286,11 @@ test("both incident modules keep inline launchers and terminal fallbacks", () =>
     [
       "postgresql",
       "../../docs/sre/04-incident-postgresql/index.md",
+      "python scripts/workshop.py fault postgresql",
+    ],
+    [
+      "postgresql",
+      "../../docs/sre/incident-workflow/index.md",
       "python scripts/workshop.py fault postgresql",
     ],
   ]) {

@@ -228,6 +228,37 @@ class PreflightTests(unittest.TestCase):
                 **VALUES, "WORKSHOP_RESOURCE_GROUP_NAME": "invalid/name",
             })
 
+    def test_explicit_empty_untagged_group_can_be_provisioned_without_retagging(self):
+        values = {**VALUES, "WORKSHOP_RESOURCE_GROUP_NAME": "rg-sre"}
+        with patch.object(workshop, "az", side_effect=[True, {}, []]) as azure:
+            self.assertTrue(workshop.check_resource_group(values))
+        self.assertEqual(azure.call_args_list[-1], call(
+            "resource", "list", "--resource-group", "rg-sre",
+            "--subscription", VALUES["AZURE_SUBSCRIPTION_ID"], "--query", "[].id"))
+        self.assertNotIn("update", str(azure.call_args_list))
+
+    def test_explicit_occupied_or_tagged_group_is_not_adopted(self):
+        values = {**VALUES, "WORKSHOP_RESOURCE_GROUP_NAME": "rg-sre"}
+        for responses in ([True, {}, ["/existing-resource"]],
+                          [True, {"workshop-architecture": "legacy"}],
+                          [True, {"owner": "another-workload"}]):
+            with self.subTest(responses=responses), patch.object(
+                    workshop, "az", side_effect=responses) as azure:
+                with self.assertRaisesRegex(workshop.DeploymentError, "not a compatible"):
+                    workshop.check_resource_group(values)
+                self.assertNotIn("delete", str(azure.call_args_list))
+                self.assertNotIn("update", str(azure.call_args_list))
+
+    def test_empty_group_exception_does_not_apply_to_implicit_group_or_bad_inventory(self):
+        with patch.object(workshop, "az", side_effect=[True, {}]) as azure:
+            with self.assertRaises(workshop.DeploymentError):
+                workshop.check_resource_group(VALUES)
+            self.assertEqual(azure.call_count, 2)
+        values = {**VALUES, "WORKSHOP_RESOURCE_GROUP_NAME": "rg-sre"}
+        with patch.object(workshop, "az", side_effect=[True, {}, None]):
+            with self.assertRaisesRegex(workshop.DeploymentError, "inventory"):
+                workshop.check_resource_group(values)
+
     def test_benchmark_rejects_even_an_existing_vm_group(self):
         with patch.object(workshop, "az", return_value=True):
             with self.assertRaisesRegex(workshop.DeploymentError, "already exists"):
@@ -356,6 +387,38 @@ class PreflightTests(unittest.TestCase):
             "--environment", VALUES["AZURE_ENV_NAME"],
         )
         az.assert_not_called()
+
+    def test_windows_azure_cli_preserves_literal_url_and_kql_arguments(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            launcher = root / "wbin" / "az.cmd"
+            launcher.parent.mkdir()
+            launcher.touch()
+            runtime = root / "python.exe"
+            runtime.touch()
+            url = "https://management.azure.com/alerts?api-version=2019-03-01&pageCount=20"
+            query = "AppRequests | where Name == 'GET /orders' | take 2"
+            result = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
+            with patch.object(workshop.shutil, "which", return_value=str(launcher)), \
+                    patch.object(workshop.sys, "platform", "win32"), \
+                    patch.object(workshop.subprocess, "run", return_value=result) as run:
+                self.assertEqual(workshop.cli("az", "rest", "--url", url, "--query", query), "{}")
+            self.assertEqual(run.call_args.args[0], [
+                str(runtime), "-I", "-B", "-m", "azure.cli", "rest", "--url", url,
+                "--query", query, "--only-show-errors", "--output", "json"])
+            self.assertNotEqual(run.call_args.kwargs.get("shell"), True)
+
+    def test_windows_batch_launcher_without_runtime_fails_before_unsafe_execution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            launcher = Path(temporary) / "wbin" / "az.cmd"
+            launcher.parent.mkdir()
+            launcher.touch()
+            with patch.object(workshop.shutil, "which", return_value=str(launcher)), \
+                    patch.object(workshop.sys, "platform", "win32"), \
+                    patch.object(workshop.subprocess, "run") as run, \
+                    self.assertRaisesRegex(workshop.DeploymentError, "literal arguments"):
+                workshop.cli("az", "rest", "--url", "https://example.invalid/?a=1&b=2")
+            run.assert_not_called()
 
     def test_cohort_exports_are_isolated_per_environment(self):
         with tempfile.TemporaryDirectory() as temporary, \
@@ -683,14 +746,15 @@ class SreAgentTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(evidence, result)
-        self.assertEqual(calls[0][3], "PUT")
-        self.assertEqual(calls[0][4]["properties"]["priorities"], ["Sev1", "Sev2"])
-        self.assertEqual(calls[0][4]["properties"]["agentMode"], "Review")
-        self.assertEqual(calls[0][4]["properties"]["handlingAgent"], "meta_agent")
-        self.assertEqual(calls[0][4]["properties"]["titleContainsAll"], [])
-        self.assertEqual(calls[0][4]["properties"]["maxAutomatedInvestigationAttempts"], 3)
-        self.assertTrue(calls[0][4]["properties"]["mergeEnabled"])
-        self.assertEqual(calls[1][3], "GET")
+        self.assertEqual(calls[0][3], "GET")
+        self.assertEqual(calls[1][3], "PUT")
+        self.assertEqual(calls[1][4]["properties"]["priorities"], ["Sev1", "Sev2"])
+        self.assertEqual(calls[1][4]["properties"]["agentMode"], "Review")
+        self.assertEqual(calls[1][4]["properties"]["handlingAgent"], "meta_agent")
+        self.assertEqual(calls[1][4]["properties"]["titleContainsAll"], [])
+        self.assertEqual(calls[1][4]["properties"]["maxAutomatedInvestigationAttempts"], 3)
+        self.assertTrue(calls[1][4]["properties"]["mergeEnabled"])
+        self.assertEqual(calls[2][3], "GET")
 
     def test_transient_response_plan_failure_is_retried(self):
         transient = workshop.SreAgentRequestError(
@@ -700,10 +764,10 @@ class SreAgentTests(unittest.TestCase):
                 patch.object(workshop, "ROOT", Path(temporary)), \
                 patch.object(workshop, "sre_agent_token", return_value="token"), \
                 patch.object(workshop, "sre_agent_request", side_effect=[
-                    transient, None, {"value": [self.plan()]},
+                    transient, {"value": []}, None, {"value": [self.plan()]},
                 ]) as request, patch.object(workshop.time, "sleep") as sleep:
             workshop.ensure_sre_response_plan(VALUES, attempts=2, retry_seconds=1)
-        self.assertEqual(request.call_count, 3)
+        self.assertEqual(request.call_count, 4)
         sleep.assert_called_once_with(1)
 
     def test_permanent_response_plan_failure_is_not_retried(self):
@@ -1267,7 +1331,8 @@ class HealthCheckTests(unittest.TestCase):
             stack.enter_context(patch.object(workshop, "ROOT", Path(temporary)))
             self.az = stack.enter_context(patch.object(
                 workshop, "az", return_value=connectors or connector_response()))
-            stack.enter_context(patch.object(workshop, "sre_agent_token", return_value="secret-token"))
+            stack.enter_context(patch.object(
+                workshop, "sre_agent_token", return_value="secret-token", autospec=True))
             self.request = stack.enter_context(patch.object(
                 workshop, "sre_agent_request", side_effect=fake.request))
             self.sleep = stack.enter_context(patch.object(workshop.time, "sleep"))
@@ -1745,6 +1810,752 @@ class HealthCheckDocumentationTests(unittest.TestCase):
         for expected in ("health-report-investigator", "orders-daily-health-report",
                          "proactive-health-check", "Orders Service Health"):
             self.assertIn(expected, text)
+
+
+INCIDENT_GROUP = HEALTH_VALUES["SRE_AGENT_RESOURCE_ID"].split("/providers/")[0]
+INCIDENT_VALUES = {
+    **HEALTH_VALUES,
+    "VM_RESOURCE_ID": INCIDENT_GROUP + "/providers/Microsoft.Compute/virtualMachines/vm-orders-test",
+    "LOG_ANALYTICS_ID": INCIDENT_GROUP + "/providers/Microsoft.OperationalInsights/workspaces/law-orders-test",
+    "LOG_ANALYTICS_CUSTOMER_ID": "00000000-0000-0000-0000-000000000002",
+    "POSTGRESQL_FAULT_RULE_RESOURCE_ID": (
+        INCIDENT_GROUP + "/providers/Microsoft.Network/networkSecurityGroups/"
+        "nsg-orders-test/securityRules/PostgreSqlFaultInjection"),
+}
+INCIDENT_PLAN_PATH = EXTENDED + "incidentFilters/orders-incident-workflow"
+INCIDENT_AGENT_PATH = EXTENDED + "agents/orders-alert-investigator"
+INCIDENT_PATHS = [
+    *(EXTENDED + "skills/" + name for name in workshop.INCIDENT_SKILLS),
+    INCIDENT_AGENT_PATH, INCIDENT_PLAN_PATH,
+]
+SOURCE_REPOSITORY = "https://github.com/workshop-learner/orders"
+INCIDENT_REPOSITORY = "https://github.com/workshop-learner/incidents"
+
+
+def incident_original_plan():
+    return {
+        "name": workshop.SRE_RESPONSE_PLAN_NAME, "type": "IncidentFilter", "tags": [],
+        "properties": {
+            "incidentPlatform": "AzMonitor", "isEnabled": True,
+            "priorities": ["Sev1", "Sev2"], "handlingAgent": "meta_agent",
+            "agentMode": "Review", "titleContains": "", "titleContainsAll": [],
+            "titleContainsAny": [], "titleNotContains": [],
+            "mergeEnabled": True, "mergeWindowHours": 3,
+            "maxAutomatedInvestigationAttempts": 3,
+        },
+    }
+
+
+class FakeIncidentAgent(FakeSreAgent):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.resources[RESPONSE_PLAN_PATH] = incident_original_plan()
+        self.optional = {}
+        self.versions = {}
+        self.history = []
+        self.fail_after_activation = False
+
+    def request(self, endpoint, token, path, method="GET", body=None, *,
+                if_match=None, with_etag=False):
+        self.history.append((method, path, copy.deepcopy(body), if_match))
+        if if_match is not None and if_match != f'"{self.versions.get(path, 0)}"':
+            raise workshop.SreAgentRequestError("precondition failed", status=412)
+        if method == "GET" and path == EXTENDED + "incidentFilters":
+            self.calls.append((method, path))
+            document = {"value": [
+                copy.deepcopy(item) for key, item in self.resources.items()
+                if key.startswith(path + "/")]}
+        elif method == "GET" and path in self.optional:
+            self.calls.append((method, path))
+            document = copy.deepcopy(self.optional[path])
+        else:
+            document = copy.deepcopy(super().request(endpoint, token, path, method, body))
+            if method in {"PUT", "DELETE"}:
+                self.versions[path] = self.versions.get(path, 0) + 1
+            if (self.fail_after_activation and path == INCIDENT_PLAN_PATH and method == "PUT"
+                    and body["properties"]["isEnabled"]):
+                self.fail_after_activation = False
+                raise workshop.SreAgentRequestError("activation response lost", status=503, retryable=True)
+        return (document, f'"{self.versions.get(path, 0)}"') if with_etag else document
+
+    def connect_followups(self):
+        self.optional.update({
+            "/api/v2/repos": {"value": [
+                {"name": "source", "properties": {"url": SOURCE_REPOSITORY}},
+                {"name": "incidents", "properties": {"url": INCIDENT_REPOSITORY}},
+            ]},
+            "/api/v2/github/domains": {"values": ["github.com"]},
+            "/api/v2/agent/settings/global": {"permissions": {
+                "allow": ["RunAzCliReadCommands"],
+                "ask": ["CreateGithubIssue", "SendOutlookEmail"],
+                "deny": ["RunAzCliWriteCommands"],
+            }},
+            "/api/v2/connectorV2/mcpservers/office365": {"properties": {
+                "connectors": [{"name": "office365", "connectionName": "office365"}]}},
+            "/api/v2/connectorV2/connections/office365": {
+                "properties": {"overallStatus": "Connected"}},
+        })
+
+
+class IncidentWorkflowTests(unittest.TestCase):
+    @contextmanager
+    def patched(self, fake=None, connectors=None, mutate_parent=None, mutate_alert=None):
+        fake = fake or FakeIncidentAgent()
+
+        def azure(*arguments, **kwargs):
+            url = arguments[-1]
+            if url.endswith("/DataConnectors?api-version=2025-05-01-preview"):
+                return connectors or connector_response()
+            if "/providers/Microsoft.Insights/metricAlerts/" in url:
+                return {
+                    "id": url.split("https://management.azure.com")[1].split("?")[0],
+                    "name": "alert-orders-high-cpu",
+                    "properties": {
+                        "enabled": True, "severity": 2,
+                        "scopes": [INCIDENT_VALUES["VM_RESOURCE_ID"]],
+                        "description": "Orders API VM CPU utilization is sustained above the configured threshold.",
+                    },
+                }
+            if "/providers/Microsoft.Insights/scheduledQueryRules/" in url:
+                name = url.split("/scheduledQueryRules/")[1].split("?")[0]
+                alert = {
+                    "id": url.split("https://management.azure.com")[1].split("?")[0],
+                    "name": name,
+                    "properties": {
+                        "enabled": True, "severity": 1,
+                        "scopes": [INCIDENT_VALUES["LOG_ANALYTICS_ID"]],
+                        "displayName": "Orders PostgreSQL dependency failures"
+                        if name.endswith("connectivity") else "Orders API HTTP 5xx responses",
+                    },
+                }
+                if mutate_alert:
+                    mutate_alert(alert)
+                return alert
+            parent = {
+                "id": INCIDENT_VALUES["SRE_AGENT_RESOURCE_ID"],
+                "properties": {
+                    "agentEndpoint": INCIDENT_VALUES["SRE_AGENT_ENDPOINT"],
+                    "actionConfiguration": {"accessLevel": "Low", "mode": "Review"},
+                    "incidentManagementConfiguration": {"type": "AzMonitor"},
+                    "knowledgeGraphConfiguration": {"managedResources": [INCIDENT_GROUP]},
+                },
+            }
+            if mutate_parent:
+                mutate_parent(parent)
+            return parent
+
+        with tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
+            stack.enter_context(patch.object(workshop, "ROOT", Path(temporary)))
+            self.azure = stack.enter_context(patch.object(workshop, "az", side_effect=azure))
+            self.auth = stack.enter_context(patch.object(
+                workshop, "sre_agent_token", return_value="secret-token", autospec=True))
+            stack.enter_context(patch.object(workshop, "sre_agent_request", side_effect=fake.request))
+            stack.enter_context(patch.object(workshop.time, "sleep"))
+            stack.enter_context(patch.object(workshop, "progress"))
+            yield fake, Path(temporary)
+
+    def install(self, settings=None):
+        return workshop.ensure_incident_workflow(
+            INCIDENT_VALUES, settings, attempts=1, retry_seconds=0)
+
+    def remove(self):
+        return workshop.remove_incident_workflow(
+            INCIDENT_VALUES, attempts=1, retry_seconds=0)
+
+    def test_definition_composes_canonical_context_and_separate_skills(self):
+        definition = workshop.load_incident_definition()
+        self.assertEqual(definition["name"], "orders-incident-workflow")
+        self.assertEqual(definition["agent"], "orders-alert-investigator")
+        self.assertEqual([skill["name"] for skill in definition["skills"]], list(workshop.INCIDENT_SKILLS))
+        content = definition["skills"][0]["content"]
+        for expected in ("PostgreSqlFaultInjection", 'DependencyType == "PostgreSQL"',
+                         "The VM is a single point of failure", "causal reasoning",
+                         "orders-api-postgresql", "fault reset-postgresql"):
+            self.assertIn(expected.lower(), content.lower())
+        self.assertNotIn("APP_FAULT_ENABLED", content)
+        self.assertEqual(set(definition["tools"]), workshop.INCIDENT_READ_TOOLS)
+        self.assertEqual(set(definition["approvalTools"]), workshop.INCIDENT_APPROVAL_TOOLS)
+        _, agent = workshop.skill_agent_documents(definition)
+        self.assertNotIn("agentType", agent["properties"])
+        self.assertIs(agent["properties"]["enableVanillaMode"], False)
+
+    def test_unsafe_definitions_fail_before_writes(self):
+        cases = [
+            lambda d: d["custom_agent"]["tools"]["read_only"].append("RunAzCliWriteCommands"),
+            lambda d: d["custom_agent"]["tools"]["ask_approval"].append("CreateFile"),
+            lambda d: d["custom_agent"].update(action_mode="Automatic"),
+            lambda d: d["trigger"]["filters"].update(severities=["Sev1"]),
+            lambda d: d["trigger"]["filters"].update(alert_rules=["flu"]),
+            lambda d: d["trigger"]["filters"].update(merge_window_hours=4),
+            lambda d: d["custom_agent"]["skills"][0].update(name="another-skill"),
+            lambda d: d["custom_agent"]["skills"][0].update(source="../../outside.md"),
+            lambda d: d["custom_agent"]["context_sources"].__setitem__(0, "../../outside.md"),
+            lambda d: d.update(name="another-plan"),
+        ]
+        for mutate in cases:
+            with self.subTest(mutate=mutate), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary) / "agent"
+                shutil.copytree(workshop.AGENT_DEFINITIONS, root)
+                template = root / "workflows" / "orders-incident-workflow.yaml"
+                document = yaml.safe_load(template.read_text())
+                mutate(document)
+                template.write_text(yaml.safe_dump(document), encoding="utf-8")
+                with patch.object(workshop, "AGENT_DEFINITIONS", root), \
+                        self.assertRaises(workshop.DeploymentError):
+                    workshop.load_incident_definition(template)
+
+    def test_invalid_yaml_is_reported_as_a_deployment_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            template = Path(temporary) / "invalid.yaml"
+            template.write_text("name: [unclosed", encoding="utf-8")
+            with self.assertRaisesRegex(workshop.DeploymentError, "valid YAML"):
+                workshop.load_incident_definition(template)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "agent"
+            root.mkdir()
+            skill = root / "SKILL.md"
+            skill.write_text("---\nname: [unclosed\n---\nBody\n", encoding="utf-8")
+            with patch.object(workshop, "AGENT_DEFINITIONS", root), \
+                    self.assertRaisesRegex(workshop.DeploymentError, "frontmatter"):
+                workshop.read_health_check_skill(skill, "orders-azure-monitor-rca")
+
+    def test_install_stages_partition_then_enables_and_saves_nonsecret_evidence(self):
+        with self.patched() as (fake, temporary):
+            original = copy.deepcopy(fake.resources[RESPONSE_PLAN_PATH])
+            fake.resources[HEALTH_TASK_PATH] = {"name": "unrelated-health-task"}
+            result = self.install()
+            state = workshop.incident_read_state(INCIDENT_VALUES)
+            evidence = json.loads(
+                (workshop.incident_state_path(INCIDENT_VALUES).parent
+                 / workshop.INCIDENT_WORKFLOW_EVIDENCE).read_text())
+            writes = [item for item in fake.history if item[0] == "PUT"]
+            self.assertEqual([item[1] for item in writes], [
+                *INCIDENT_PATHS, RESPONSE_PLAN_PATH, INCIDENT_PLAN_PATH])
+            self.assertFalse(writes[4][2]["properties"]["isEnabled"])
+            self.assertTrue(writes[-1][2]["properties"]["isEnabled"])
+            self.assertIsNotNone(writes[5][3])
+            self.assertTrue(result["ok"] and result["installed"] and result["matchesDefinition"])
+            self.assertEqual(evidence, result)
+            self.assertEqual(state["originalPlan"], original)
+            self.assertEqual(state["phase"], "active")
+            self.assertNotIn("secret-token", json.dumps(state))
+            self.assertNotIn("secret-token", json.dumps(evidence))
+            self.assertIn(HEALTH_TASK_PATH, fake.resources)
+            self.assertTrue(fake.resources[RESPONSE_PLAN_PATH]["properties"]["isEnabled"])
+            self.assertTrue(fake.resources[INCIDENT_PLAN_PATH]["properties"]["isEnabled"])
+            for path in (RESPONSE_PLAN_PATH, INCIDENT_PLAN_PATH):
+                self.assertEqual(fake.resources[path]["properties"]["priorities"], ["Sev1", "Sev2"])
+                self.assertEqual(fake.resources[path]["properties"]["agentMode"], "Review")
+            self.assertEqual(len(result["routing"]["includedTitles"]), 2)
+            self.assertEqual(result["routing"]["workflowTitleContains"], "postgresql")
+            self.assertEqual(result["routing"]["originalTitleContains"], "alert-orders-h")
+            tools = fake.resources[INCIDENT_AGENT_PATH]["properties"]["tools"]
+            self.assertEqual(set(tools), workshop.HEALTH_CHECK_TOOLS | set(workshop.HEALTH_CONNECTOR_TOOLS.values()))
+            self.assertFalse(result["followups"]["github"]["enabled"])
+            self.assertFalse(result["followups"]["email"]["enabled"])
+            self.auth.assert_called_with(INCIDENT_VALUES)
+
+    def test_real_name_and_display_title_fixtures_are_complementary(self):
+        with self.patched() as (fake, _):
+            result = self.install()
+            baseline = fake.resources[RESPONSE_PLAN_PATH]["properties"]
+            module = fake.resources[INCIDENT_PLAN_PATH]["properties"]
+            for title in result["routing"]["includedTitles"]:
+                for shaped in (title, "[Fired] " + title, title.upper()):
+                    self.assertFalse(workshop.incident_title_matches(baseline, shaped))
+                    self.assertTrue(workshop.incident_title_matches(module, shaped))
+            self.assertTrue(workshop.incident_title_matches(baseline, "alert-orders-high-cpu"))
+            self.assertFalse(workshop.incident_title_matches(module, "alert-orders-high-cpu"))
+            self.assertTrue(workshop.incident_title_matches(baseline, "alert-orders-http-5xx"))
+            self.assertFalse(workshop.incident_title_matches(module, "alert-orders-http-5xx"))
+            self.assertFalse(workshop.incident_title_matches(baseline, "another alert"))
+            self.assertFalse(workshop.incident_title_matches(module, "another alert"))
+
+    def test_install_is_idempotent_and_never_resnapshots_partitioned_filters(self):
+        with self.patched() as (fake, _):
+            self.install()
+            saved = workshop.incident_read_state(INCIDENT_VALUES)
+            before = copy.deepcopy(fake.resources)
+            writes = len(fake.methods("PUT"))
+            again = self.install()
+            self.assertTrue(again["matchesDefinition"])
+            self.assertEqual(len(fake.methods("PUT")), writes)
+            self.assertEqual(fake.resources, before)
+            self.assertEqual(workshop.incident_read_state(INCIDENT_VALUES), saved)
+
+    def test_explicit_followups_require_connected_bindings_and_exact_ask_policies(self):
+        fake = FakeIncidentAgent()
+        fake.connect_followups()
+        settings = workshop.incident_settings(
+            SOURCE_REPOSITORY, INCIDENT_REPOSITORY, "office365", ["operator@example.invalid"])
+        with self.patched(fake):
+            result = self.install(settings)
+            tools = fake.resources[INCIDENT_AGENT_PATH]["properties"]["tools"]
+            for expected in ("ReadFile", "FetchGithubIssues", "CreateGithubIssue",
+                             "ListOutlookEmails", "SendOutlookEmail"):
+                self.assertIn(expected, tools)
+            self.assertTrue(all(item["enabled"] for item in result["followups"].values()))
+            text = fake.resources[INCIDENT_AGENT_PATH]["properties"]["instructions"]
+            self.assertIn(SOURCE_REPOSITORY, text)
+            self.assertIn(INCIDENT_REPOSITORY, text)
+            self.assertIn("operator@example.invalid", text)
+            self.assertNotIn("RunAzCliWriteCommands", tools)
+            self.assertEqual(fake.resources[INCIDENT_AGENT_PATH]["properties"]["mcpTools"], [])
+            self.assertEqual(fake.resources[INCIDENT_AGENT_PATH]["properties"]["connectors"], [])
+            self.install()
+
+    def test_missing_or_ambiguous_approval_policies_keep_writes_unattached(self):
+        for category, value in (
+            ("ask", []), ("ask", ["*"]), ("allow", ["*"]),
+            ("allow", ["CreateGithubIssue", "SendOutlookEmail"]), ("deny", ["*"]),
+        ):
+            with self.subTest(category=category, value=value):
+                fake = FakeIncidentAgent()
+                fake.connect_followups()
+                fake.optional["/api/v2/agent/settings/global"]["permissions"][category] = value
+                settings = workshop.incident_settings(
+                    github_repository=INCIDENT_REPOSITORY,
+                    outlook_connector="office365", email_to=["operator@example.invalid"])
+                with self.patched(fake):
+                    result = self.install(settings)
+                    self.assertTrue(result["matchesDefinition"])
+                    self.assertFalse(result["followups"]["github"]["enabled"])
+                    self.assertFalse(result["followups"]["email"]["enabled"])
+                    tools = fake.resources[INCIDENT_AGENT_PATH]["properties"]["tools"]
+                    self.assertNotIn("CreateGithubIssue", tools)
+                    self.assertNotIn("SendOutlookEmail", tools)
+
+    def test_missing_connections_leave_explicit_drafts_without_blocking_core(self):
+        settings = workshop.incident_settings(
+            SOURCE_REPOSITORY, INCIDENT_REPOSITORY, "office365", ["operator@example.invalid"])
+        with self.patched() as (fake, _):
+            result = self.install(settings)
+            self.assertTrue(result["installed"])
+            self.assertTrue(all(not item["enabled"] and item["reason"]
+                                for item in result["followups"].values()))
+            tools = fake.resources[INCIDENT_AGENT_PATH]["properties"]["tools"]
+            self.assertNotIn("ReadFile", tools)
+            self.assertNotIn("CreateGithubIssue", tools)
+            self.assertNotIn("SendOutlookEmail", tools)
+
+    def test_unauthenticated_or_multiple_outlook_bindings_do_not_grant_send(self):
+        for status in ("Unauthenticated", "Error", "Unknown", None):
+            with self.subTest(status=status):
+                fake = FakeIncidentAgent()
+                fake.connect_followups()
+                fake.optional["/api/v2/connectorV2/connections/office365"]["properties"]["overallStatus"] = status
+                with self.patched(fake):
+                    result = self.install(workshop.incident_settings(
+                        outlook_connector="office365", email_to=["operator@example.invalid"]))
+                    self.assertFalse(result["followups"]["email"]["enabled"])
+                    self.assertNotIn("SendOutlookEmail", fake.resources[INCIDENT_AGENT_PATH]["properties"]["tools"])
+        fake = FakeIncidentAgent()
+        fake.connect_followups()
+        fake.optional["/api/v2/connectorV2/mcpservers/office365"]["properties"]["connectors"].append(
+            {"name": "office365", "connectionName": "other-mailbox"})
+        with self.patched(fake):
+            self.assertFalse(self.install(workshop.incident_settings(
+                outlook_connector="office365", email_to=["operator@example.invalid"]))["followups"]["email"]["enabled"])
+
+    def test_unsafe_destination_options_are_rejected(self):
+        for repository in ("http://github.com/owner/repo", "https://example.com/owner/repo",
+                           "https://github.com/user/repo/issues", "https://github.com/user/..",
+                           "https://github.com/user/repo.git", "https://user@github.com/user/repo"):
+            with self.subTest(repository=repository), self.assertRaises(workshop.DeploymentError):
+                workshop.incident_settings(github_repository=repository)
+        for recipient in ("user@example.invalid\r\nBcc: other@example.invalid",
+                          "Person <user@example.invalid>", "a@example.invalid,b@example.invalid"):
+            with self.subTest(recipient=recipient), self.assertRaises(workshop.DeploymentError):
+                workshop.incident_settings(outlook_connector="office365", email_to=[recipient])
+        with self.assertRaises(workshop.DeploymentError):
+            workshop.incident_settings(outlook_connector="office365")
+        with self.assertRaises(workshop.DeploymentError):
+            workshop.incident_settings(email_to=["user@example.invalid"])
+        with self.assertRaises(workshop.DeploymentError):
+            workshop.incident_settings(outlook_connector="../office365", email_to=["user@example.invalid"])
+
+    def test_prerequisite_failures_make_no_configuration_write(self):
+        mutations = [
+            lambda p: p["properties"]["actionConfiguration"].update(accessLevel="High"),
+            lambda p: p["properties"]["actionConfiguration"].update(mode="Automatic"),
+            lambda p: p["properties"]["incidentManagementConfiguration"].update(type="Other"),
+            lambda p: p["properties"]["knowledgeGraphConfiguration"].update(managedResources=[]),
+            lambda p: p["properties"]["knowledgeGraphConfiguration"].update(
+                managedResources=[INCIDENT_GROUP, "/another-group"]),
+            lambda p: p["properties"].update(agentEndpoint="https://another.australiaeast.azuresre.ai"),
+            lambda p: p["properties"].update(actionConfiguration=None),
+        ]
+        for mutate in mutations:
+            with self.subTest(mutate=mutate), self.patched(mutate_parent=mutate) as (fake, _):
+                with self.assertRaises(workshop.DeploymentError):
+                    self.install()
+                self.assertFalse(fake.methods("PUT"))
+        with self.patched(connectors=connector_response(log_analytics="Failed")) as (fake, _):
+            with self.assertRaisesRegex(workshop.DeploymentError, "log-analytics"):
+                self.install()
+            self.assertFalse(fake.methods("PUT"))
+
+    def test_changed_or_disabled_alerts_fail_before_writes(self):
+        for mutate in (
+            lambda a: a["properties"].update(enabled=False),
+            lambda a: a["properties"].update(severity=2),
+            lambda a: a["properties"].update(severity=True),
+            lambda a: a["properties"].update(displayName="CPU\nand PostgreSQL"),
+            lambda a: a["properties"].update(displayName="cpu"),
+            lambda a: a["properties"].update(displayName="Orders API"),
+            lambda a: a["properties"].update(scopes=["/another-workspace"]),
+        ):
+            with self.subTest(mutate=mutate), self.patched(mutate_alert=mutate) as (fake, _):
+                with self.assertRaises(workshop.DeploymentError):
+                    self.install()
+                self.assertFalse(fake.methods("PUT"))
+
+    def test_resource_scope_id_comparisons_follow_arm_case_insensitivity(self):
+        with self.patched(mutate_alert=lambda a: a["properties"].update(
+                scopes=[INCIDENT_VALUES["LOG_ANALYTICS_ID"].upper()])):
+            self.assertTrue(self.install()["matchesDefinition"])
+
+    def test_unowned_components_and_other_overlapping_plans_are_never_replaced(self):
+        for path in INCIDENT_PATHS:
+            fake = FakeIncidentAgent()
+            fake.resources[path] = {"name": path.rsplit("/", 1)[1], "properties": {"owner": "another"}}
+            with self.subTest(path=path), self.patched(fake):
+                with self.assertRaises(workshop.DeploymentError):
+                    self.install()
+                self.assertFalse(fake.methods("PUT"))
+                self.assertIn(path, fake.resources)
+        fake = FakeIncidentAgent()
+        other = incident_original_plan()
+        other["name"] = "another-active-plan"
+        fake.resources[EXTENDED + "incidentFilters/another-active-plan"] = other
+        with self.patched(fake):
+            with self.assertRaisesRegex(workshop.DeploymentError, "another enabled"):
+                self.install()
+            self.assertFalse(fake.methods("PUT"))
+
+    def test_dropped_scalar_title_aborts_before_activation_and_restores_original(self):
+        fake = FakeIncidentAgent(on_put={
+            RESPONSE_PLAN_PATH: lambda body: body["properties"].update(titleContains="")})
+        with self.patched(fake):
+            original = copy.deepcopy(fake.resources[RESPONSE_PLAN_PATH])
+            with self.assertRaisesRegex(workshop.DeploymentError, "read-back"):
+                self.install()
+            self.assertEqual(fake.resources, {RESPONSE_PLAN_PATH: original})
+            activations = [item for item in fake.history if item[0] == "PUT"
+                           and item[1] == INCIDENT_PLAN_PATH and item[2]["properties"]["isEnabled"]]
+            self.assertFalse(activations)
+            self.assertFalse(workshop.incident_state_path(INCIDENT_VALUES).exists())
+
+    def test_lost_activation_response_is_reconciled_by_disable_and_rollback_not_blind_retry(self):
+        fake = FakeIncidentAgent()
+        fake.fail_after_activation = True
+        with self.patched(fake):
+            original = copy.deepcopy(fake.resources[RESPONSE_PLAN_PATH])
+            with self.assertRaisesRegex(workshop.DeploymentError, "activation response lost"):
+                self.install()
+            self.assertEqual(fake.resources, {RESPONSE_PLAN_PATH: original})
+            activations = [item for item in fake.history if item[0] == "PUT"
+                           and item[1] == INCIDENT_PLAN_PATH and item[2]["properties"]["isEnabled"]]
+            self.assertEqual(len(activations), 1)
+
+    def test_incomplete_disabled_plan_restores_original_before_refusing_changed_component_deletion(self):
+        with self.patched() as (fake, _):
+            original = copy.deepcopy(fake.resources[RESPONSE_PLAN_PATH])
+            self.install()
+            fake.resources[INCIDENT_PLAN_PATH]["properties"].update(
+                isEnabled=False, titleContainsAny=["operator-edited-title"])
+            with self.assertRaisesRegex(workshop.DeploymentError, "refusing to delete"):
+                self.remove()
+            self.assertEqual(fake.resources[RESPONSE_PLAN_PATH], original)
+            self.assertFalse(fake.resources[INCIDENT_PLAN_PATH]["properties"]["isEnabled"])
+            self.assertEqual(workshop.incident_read_state(INCIDENT_VALUES)["phase"], "removing")
+
+    def test_status_reads_only_and_detects_live_filter_tool_and_definition_drift(self):
+        with self.patched() as (fake, _):
+            self.install()
+            writes = len(fake.methods("PUT"))
+            status = workshop.incident_workflow_status(INCIDENT_VALUES)
+            self.assertTrue(status["matchesDefinition"])
+            self.assertEqual(len(fake.methods("PUT")), writes)
+            fake.resources[INCIDENT_AGENT_PATH]["properties"]["tools"].append("RunAzCliWriteCommands")
+            status = workshop.incident_workflow_status(INCIDENT_VALUES)
+            self.assertFalse(status["matchesDefinition"])
+            self.assertTrue(any("orders-alert-investigator" in item for item in status["problems"]))
+            fake.resources[RESPONSE_PLAN_PATH]["properties"]["titleContains"] = ""
+            self.assertFalse(workshop.incident_workflow_status(INCIDENT_VALUES)["matchesDefinition"])
+            self.assertEqual(len(fake.methods("PUT")), writes)
+            with self.assertRaises(workshop.DeploymentError):
+                self.install()
+
+    def test_changed_notification_policy_is_visible_without_success_shaped_fallback(self):
+        fake = FakeIncidentAgent()
+        fake.connect_followups()
+        with self.patched(fake):
+            self.install(workshop.incident_settings(github_repository=INCIDENT_REPOSITORY))
+            fake.optional["/api/v2/agent/settings/global"]["permissions"]["ask"] = []
+            report = workshop.incident_workflow_status(INCIDENT_VALUES)
+            self.assertFalse(report["matchesDefinition"])
+            self.assertFalse(report["followups"]["github"]["enabled"])
+            self.assertTrue(report["problems"])
+
+    def test_component_checks_reject_malformed_tools_and_nonboolean_enabled_state(self):
+        with self.patched() as (fake, _):
+            self.install()
+            expected = workshop.incident_read_state(INCIDENT_VALUES)["documents"]
+            fake.resources[INCIDENT_PLAN_PATH]["properties"]["isEnabled"] = 1
+            self.assertFalse(workshop.incident_component_matches(
+                fake.resources[INCIDENT_PLAN_PATH], expected[INCIDENT_PLAN_PATH]))
+            fake.resources[INCIDENT_AGENT_PATH]["properties"]["tools"] = [{}]
+            self.assertFalse(workshop.incident_component_matches(
+                fake.resources[INCIDENT_AGENT_PATH], expected[INCIDENT_AGENT_PATH]))
+
+    def test_live_skill_dto_uses_envelope_name_without_redundant_property_name(self):
+        fake = FakeIncidentAgent(on_put={
+            EXTENDED + "skills/" + name: lambda body: body["properties"].pop("name")
+            for name in workshop.INCIDENT_SKILLS})
+        with self.patched(fake):
+            self.assertTrue(self.install()["matchesDefinition"])
+            self.assertTrue(self.remove()["ok"])
+        definition = workshop.load_incident_definition()
+        skills, _ = workshop.skill_agent_documents(definition)
+        actual = copy.deepcopy(skills[0])
+        actual["properties"]["name"] = "a-different-skill"
+        self.assertFalse(workshop.incident_component_matches(actual, skills[0]))
+
+    def test_live_plan_dto_null_tags_and_server_timestamps_are_not_configuration_drift(self):
+        def returned_plan(body):
+            body["tags"] = None
+            body["properties"].update(
+                createdAt="2026-10-13T00:00:00Z",
+                updatedAt="2026-10-13T00:01:00Z",
+                configurationWarning="Server-calculated diagnostic")
+
+        fake = FakeIncidentAgent(on_put={
+            RESPONSE_PLAN_PATH: returned_plan, INCIDENT_PLAN_PATH: returned_plan})
+        returned_plan(fake.resources[RESPONSE_PLAN_PATH])
+        original = workshop.incident_plan_document(fake.resources[RESPONSE_PLAN_PATH])
+        with self.patched(fake):
+            self.assertTrue(self.install()["matchesDefinition"])
+            state = workshop.incident_read_state(INCIDENT_VALUES)
+            self.assertFalse(
+                set(state["originalPlan"]["properties"]) & workshop.INCIDENT_PLAN_READ_ONLY_PROPERTIES)
+            fake.resources[RESPONSE_PLAN_PATH]["properties"]["updatedAt"] = "2026-10-13T00:02:00Z"
+            self.assertTrue(workshop.incident_workflow_status(INCIDENT_VALUES)["matchesDefinition"])
+            self.assertTrue(self.remove()["ok"])
+            self.assertEqual(workshop.incident_plan_document(fake.resources[RESPONSE_PLAN_PATH]), original)
+
+    def test_status_reports_absence_or_orphans_without_writes(self):
+        with self.patched() as (fake, _):
+            result = workshop.incident_workflow_status(INCIDENT_VALUES)
+            self.assertFalse(result["installed"])
+            self.assertEqual(result["phase"], "absent")
+            self.assertFalse(result["unownedComponents"])
+            self.assertFalse(fake.methods("PUT"))
+            fake.resources[INCIDENT_AGENT_PATH] = {"name": "orders-alert-investigator"}
+            self.assertEqual(workshop.incident_workflow_status(INCIDENT_VALUES)["unownedComponents"],
+                             ["orders-alert-investigator"])
+            with self.assertRaises(workshop.DeploymentError):
+                self.remove()
+            self.assertFalse(fake.methods("DELETE"))
+
+    def test_removal_restores_exact_original_filters_and_keeps_shared_resources(self):
+        with self.patched() as (fake, _):
+            original = fake.resources[RESPONSE_PLAN_PATH]
+            original["properties"]["titleNotContains"] = ["unrelated incident"]
+            original["tags"] = ["operator-owned-tag"]
+            original["properties"]["owningTeamId"] = "existing-team"
+            expected = copy.deepcopy(original)
+            self.install()
+            fake.optional["/api/v2/repos"] = {"value": []}
+            fake.resources[HEALTH_TASK_PATH] = {"name": "unrelated-health-task"}
+            start = len(fake.history)
+            result = self.remove()
+            self.assertTrue(result["ok"])
+            self.assertEqual(fake.resources[RESPONSE_PLAN_PATH], expected)
+            self.assertEqual(set(fake.resources), {RESPONSE_PLAN_PATH, HEALTH_TASK_PATH})
+            writes = [item for item in fake.history[start:] if item[0] == "PUT"]
+            self.assertEqual([item[1] for item in writes], [INCIDENT_PLAN_PATH, RESPONSE_PLAN_PATH])
+            self.assertFalse(writes[0][2]["properties"]["isEnabled"])
+            self.assertIsNotNone(writes[1][3])
+            self.assertFalse(workshop.incident_state_path(INCIDENT_VALUES).exists())
+            self.assertEqual(self.remove()["removed"], [])
+            self.assertIn("/api/v2/repos", fake.optional)
+
+    def test_manual_plan_edits_stop_restoration_instead_of_overwriting(self):
+        with self.patched() as (fake, _):
+            self.install()
+            fake.resources[RESPONSE_PLAN_PATH]["properties"]["owningTeamId"] = "changed-team"
+            with self.assertRaisesRegex(workshop.DeploymentError, "Concurrent"):
+                self.remove()
+            self.assertEqual(fake.resources[RESPONSE_PLAN_PATH]["properties"]["owningTeamId"], "changed-team")
+            self.assertFalse(fake.resources[INCIDENT_PLAN_PATH]["properties"]["isEnabled"])
+            self.assertEqual(workshop.incident_read_state(INCIDENT_VALUES)["phase"], "removing")
+
+    def test_changed_destinations_require_removal(self):
+        with self.patched() as (fake, _):
+            self.install()
+            writes = len(fake.methods("PUT"))
+            with self.assertRaisesRegex(workshop.DeploymentError, "changing"):
+                self.install(workshop.incident_settings(github_repository=INCIDENT_REPOSITORY))
+            self.assertEqual(len(fake.methods("PUT")), writes)
+
+    def test_repeated_provisioning_preserves_active_partition_without_config_writes(self):
+        with self.patched() as (fake, _):
+            self.install()
+            before = copy.deepcopy(fake.resources)
+            writes = len(fake.methods("PUT"))
+            result = workshop.ensure_sre_response_plan(INCIDENT_VALUES, attempts=1)
+            self.assertEqual(result["incidentWorkflow"], "orders-incident-workflow")
+            self.assertEqual(fake.resources, before)
+            self.assertEqual(len(fake.methods("PUT")), writes)
+
+    def test_provisioning_refuses_to_restore_catchall_after_drift_or_lost_state(self):
+        for lost_state in (False, True):
+            with self.subTest(lost_state=lost_state), self.patched() as (fake, _):
+                self.install()
+                if lost_state:
+                    workshop.incident_state_path(INCIDENT_VALUES).unlink()
+                else:
+                    fake.resources[INCIDENT_AGENT_PATH]["properties"]["tools"].append("Terminal")
+                writes = len(fake.methods("PUT"))
+                with self.assertRaisesRegex(workshop.DeploymentError, "overlapping catch-all"):
+                    workshop.ensure_sre_response_plan(INCIDENT_VALUES, attempts=1)
+                self.assertEqual(len(fake.methods("PUT")), writes)
+                self.assertEqual(fake.resources[RESPONSE_PLAN_PATH]["properties"]["titleContains"], "alert-orders-h")
+
+    def test_state_is_bound_to_environment_and_rejects_tampered_partitions(self):
+        for key, value in (("agentResourceId", "/another-agent"), ("version", 99)):
+            with self.subTest(key=key), self.patched():
+                self.install()
+                state = workshop.incident_read_state(INCIDENT_VALUES)
+                state[key] = value
+                workshop.save_incident_state(INCIDENT_VALUES, state)
+                with self.assertRaises(workshop.DeploymentError):
+                    workshop.incident_read_state(INCIDENT_VALUES)
+        with self.patched():
+            self.install()
+            state = workshop.incident_read_state(INCIDENT_VALUES)
+            state["partitionedPlan"]["properties"]["priorities"] = ["Sev1"]
+            workshop.save_incident_state(INCIDENT_VALUES, state)
+            with self.assertRaises(workshop.DeploymentError):
+                self.remove()
+
+    def test_cli_destinations_are_install_only_and_use_selected_values(self):
+        with patch.object(workshop, "environment", return_value=INCIDENT_VALUES), \
+                patch.object(workshop, "incident_workflow", return_value={"ok": True}) as handler, \
+                patch.object(sys, "argv", ["workshop.py", "incident-workflow", "install",
+                                          "--github-repository", INCIDENT_REPOSITORY]), \
+                redirect_stdout(io.StringIO()):
+            workshop.main()
+        handler.assert_called_once_with(
+            INCIDENT_VALUES, "install", workshop.incident_settings(github_repository=INCIDENT_REPOSITORY))
+        with self.assertRaises(workshop.DeploymentError):
+            workshop.incident_workflow(INCIDENT_VALUES, "status",
+                                       workshop.incident_settings(github_repository=INCIDENT_REPOSITORY))
+        with self.assertRaises(workshop.DeploymentError):
+            workshop.incident_workflow(INCIDENT_VALUES, "bogus")
+        with patch.object(sys, "argv", ["workshop.py", "validate",
+                                      "--github-repository", INCIDENT_REPOSITORY]), \
+                self.assertRaises(workshop.DeploymentError):
+            workshop.main()
+
+    def test_data_plane_metadata_uses_conditional_etags_without_changing_normal_calls(self):
+        import email.message
+        headers = email.message.Message()
+        headers["ETag"] = '"version-1"'
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value = response
+        response.headers = headers
+        response.read.return_value = b'{"name":"test"}'
+        opener = unittest.mock.MagicMock()
+        opener.open.return_value = response
+        with patch.object(workshop.urllib.request, "build_opener", return_value=opener):
+            self.assertEqual(workshop.sre_agent_request(
+                INCIDENT_VALUES["SRE_AGENT_ENDPOINT"], "token", "/test"), {"name": "test"})
+            self.assertEqual(workshop.sre_agent_request(
+                INCIDENT_VALUES["SRE_AGENT_ENDPOINT"], "token", "/test", with_etag=True),
+                ({"name": "test"}, '"version-1"'))
+            workshop.sre_agent_request(
+                INCIDENT_VALUES["SRE_AGENT_ENDPOINT"], "token", "/test",
+                "PUT", {}, if_match='"version-1"')
+            self.assertEqual(opener.open.call_args.args[0].get_header("If-match"), '"version-1"')
+            headers.replace_header("ETag", 'W/"weak"')
+            with self.assertRaises(workshop.DeploymentError):
+                workshop.sre_agent_request(
+                    INCIDENT_VALUES["SRE_AGENT_ENDPOINT"], "token", "/test", with_etag=True)
+            del headers["ETag"]
+            self.assertEqual(workshop.sre_agent_request(
+                INCIDENT_VALUES["SRE_AGENT_ENDPOINT"], "token", "/test", with_etag=True),
+                ({"name": "test"}, None))
+        with self.assertRaises(workshop.DeploymentError):
+            workshop.sre_agent_request(
+                INCIDENT_VALUES["SRE_AGENT_ENDPOINT"], "token", "/test", "PUT", {}, if_match="*")
+
+
+class IncidentWorkflowDocumentationTests(unittest.TestCase):
+    REPO = HERE.parent
+    MODULE = ("docs", "sre", "incident-workflow", "index.md")
+
+    def read(self, *parts):
+        return self.REPO.joinpath(*parts).read_text(encoding="utf-8")
+
+    def test_optional_navigation_preserves_the_six_module_sequence(self):
+        navigation = self.read("mkdocs.yml")
+        self.assertLess(navigation.index("sre/04-incident-postgresql/index.md"),
+                        navigation.index("sre/incident-workflow/index.md"))
+        self.assertLess(navigation.index("sre/incident-workflow/index.md"),
+                        navigation.index("sre/05-scheduled-health-check/index.md"))
+        self.assertEqual(len(re.findall(r"  - Module 0[1-6] - ", navigation)), 6)
+        module = self.read(*self.MODULE)
+        self.assertIn("(../04-incident-postgresql/index.md)", module)
+        self.assertIn("(../05-scheduled-health-check/index.md)", module)
+        previous = self.read("docs", "sre", "04-incident-postgresql", "index.md")
+        self.assertIn("(../incident-workflow/index.md)", previous)
+        self.assertIn("(../05-scheduled-health-check/index.md)", previous)
+        self.assertIn("(docs/sre/incident-workflow/index.md)", self.read("README.md"))
+        self.assertIn("(sre/incident-workflow/index.md)", self.read("docs", "index.md"))
+
+    def test_every_lifecycle_action_and_destination_flag_is_documented(self):
+        module = self.read(*self.MODULE)
+        commands = set(re.findall(r"workshop\.py incident-workflow (\w+)", module))
+        self.assertEqual(commands, set(workshop.INCIDENT_WORKFLOW_ACTIONS))
+        for flag in ("--source-repository", "--github-repository", "--outlook-connector", "--email-to"):
+            self.assertIn(flag, module)
+        for name in (*workshop.INCIDENT_SKILLS, "orders-alert-investigator", "orders-incident-workflow",
+                     "titleContainsAny", "titleNotContains", "incident-workflow-state.json"):
+            self.assertIn(name, module)
+        cleanup = self.read("docs", "sre", "06-cleanup", "index.md")
+        self.assertIn("workshop.py incident-workflow remove", cleanup)
+        self.assertIn("workshop.py incident-workflow status", cleanup)
+        self.assertIn(workshop.INCIDENT_WORKFLOW_STATE, workshop.FRESH_ENVIRONMENT_EVIDENCE)
+        self.assertIn(workshop.INCIDENT_WORKFLOW_EVIDENCE, workshop.FRESH_ENVIRONMENT_EVIDENCE)
+
+    def test_module_and_definitions_follow_existing_documentation_standards(self):
+        text = self.read(*self.MODULE)
+        self.assertTrue(text.startswith("---\n"))
+        frontmatter = yaml.safe_load(text.split("---", 2)[1])
+        for key in ("title", "description", "ms.date", "ms.topic"):
+            self.assertIn(key, frontmatter)
+        fenced = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                if not fenced:
+                    self.assertRegex(stripped, r"^```\w+$")
+                fenced = not fenced
+            elif not fenced:
+                self.assertFalse(line.startswith("# "))
+        self.assertFalse(fenced)
+        self.assertNotIn("\u2014", text)
+        self.assertIsNone(re.search(r"\b(simply|easily|just|robust|seamless)\b", text, re.IGNORECASE))
+        self.assertIn('data-sre-incident="postgresql"', text)
+        self.assertIn("python scripts/workshop.py fault postgresql", text)
+        self.assertIn("25a42306d298c4d28f11dd11ef9bb93cb0393be8", text)
+        for path in (workshop.INCIDENT_WORKFLOW_TEMPLATE,
+                     *(workshop.AGENT_DEFINITIONS / "skills" / name / "SKILL.md"
+                       for name in workshop.INCIDENT_SKILLS)):
+            self.assertNotIn(b"\r", path.read_bytes(), path.name)
+            self.assertNotIn("\u2014", path.read_text(encoding="utf-8"), path.name)
 
 
 if __name__ == "__main__":
