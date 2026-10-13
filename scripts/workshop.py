@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-platform deployment, PostgreSQL smoke checks, and bounded fault actions."""
+"""Cross-platform deployment, PostgreSQL smoke checks, bounded fault actions, and the opt-in scheduled health check."""
 
 import argparse
 import base64
@@ -56,10 +56,26 @@ VM_FILES = ("install.sh", "orders-api.service", "faults.py", "inspect.py")
 TRANSIENT_HTTP = {408, 429, 502, 503, 504}
 SRE_RESPONSE_PLAN_NAME = "workshop-sev1-sev2-review"
 PUBLIC_IP_FEATURE = "AllowBringYourOwnPublicIpAddress"
+SRE_ARM_API_VERSION = "2025-05-01-preview"
+AGENT_DEFINITIONS = ROOT / "agent"
+HEALTH_CHECK_TEMPLATE = AGENT_DEFINITIONS / "scheduled-tasks" / "orders-daily-health-report.yaml"
+HEALTH_CHECK_EVIDENCE = "scheduled-health-check.json"
+HEALTH_CHECK_ACTIONS = ("install", "status", "remove")
+# Only these tools can ever be attached to the health-check custom agent.
+HEALTH_CHECK_TOOLS = frozenset({
+    "GetAzCliHelp", "RunAzCliReadCommands",
+    "PlotAreaChartWithCorrelation", "PlotBarChart",
+})
+# The installer adds the query tool for each healthy telemetry connector.
+HEALTH_CONNECTOR_TOOLS = {
+    "LogAnalytics": "QueryLogAnalyticsByWorkspaceId",
+    "AppInsights": "QueryAppInsightsUsingAppId",
+}
 FRESH_ENVIRONMENT_EVIDENCE = (
     "provision-start.json",
     "vm-deployment.json",
     "sre-agent-configuration.json",
+    HEALTH_CHECK_EVIDENCE,
     "smoke.json",
     "vm-inspection.json",
     "persistence-witness.json",
@@ -911,6 +927,390 @@ def ensure_sre_response_plan(values, attempts=8, retry_seconds=15):
     raise DeploymentError(f"Azure SRE Agent response plan failed: {last_error}")
 
 
+def health_check_name(value, label):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", value):
+        raise DeploymentError(f"{label} must contain only letters, digits, and hyphens.")
+    return value
+
+
+def health_check_text(value, label):
+    if not isinstance(value, str) or not value.strip():
+        raise DeploymentError(f"{label} must be a non-empty string.")
+    return value.strip()
+
+
+def health_check_mapping(value, label):
+    if not isinstance(value, dict):
+        raise DeploymentError(f"{label} must be a mapping.")
+    return value
+
+
+def health_check_tools(value, label):
+    if (not isinstance(value, list) or not value
+            or not all(isinstance(tool, str) and re.fullmatch(r"[A-Za-z0-9]+", tool)
+                       for tool in value)):
+        raise DeploymentError(f"{label} must be a non-empty list of tool names.")
+    return list(dict.fromkeys(value))
+
+
+def read_health_check_skill(path, name):
+    definitions = AGENT_DEFINITIONS.resolve()
+    resolved = path.resolve()
+    if definitions not in resolved.parents or not resolved.is_file():
+        raise DeploymentError(f"Skill {name} must be a file under {definitions.name}/.")
+    text = resolved.read_text(encoding="utf-8")
+    match = re.match(r"\A---\s*\n(.*?)\n---\s*\n", text, re.DOTALL)
+    metadata = yaml.safe_load(match.group(1)) if match else None
+    if not isinstance(metadata, dict) or metadata.get("name") != name:
+        raise DeploymentError(f"Skill {name} needs YAML frontmatter with a matching name.")
+    description = health_check_text(
+        metadata.get("description"), f"The description of skill {name}")
+    return {"name": name, "description": description, "content": text}
+
+
+def load_health_check_definition(template=None):
+    template = Path(template or HEALTH_CHECK_TEMPLATE)
+    document = health_check_mapping(
+        yaml.safe_load(template.read_text(encoding="utf-8")), "The health-check template")
+    trigger = health_check_mapping(document.get("trigger"), "trigger")
+    agent = health_check_mapping(document.get("custom_agent"), "custom_agent")
+    if trigger.get("type") != "scheduled-task":
+        raise DeploymentError("trigger.type must be scheduled-task.")
+    if trigger.get("enabled") is not True:
+        raise DeploymentError("trigger.enabled must be true.")
+    if trigger.get("action_mode") != "Review" or agent.get("action_mode") != "Review":
+        raise DeploymentError("The health check must run in Review mode.")
+    schedule = health_check_text(trigger.get("schedule"), "trigger.schedule")
+    fields = schedule.split()
+    if len(fields) != 5 or not all(re.fullmatch(r"[0-9*/,-]+", field) for field in fields):
+        raise DeploymentError("trigger.schedule must be a five-field UTC cron expression.")
+    agent_name = health_check_name(agent.get("name"), "custom_agent.name")
+    if health_check_name(trigger.get("handling_agent"), "trigger.handling_agent") != agent_name:
+        raise DeploymentError("trigger.handling_agent must match custom_agent.name.")
+    tools = health_check_mapping(agent.get("tools"), "custom_agent.tools")
+    if set(tools) - {"read_only", "deny"}:
+        raise DeploymentError("custom_agent.tools allows only read_only and deny.")
+    read_only = health_check_tools(tools.get("read_only"), "custom_agent.tools.read_only")
+    denied = health_check_tools(tools.get("deny"), "custom_agent.tools.deny")
+    unapproved = sorted(set(read_only) - HEALTH_CHECK_TOOLS)
+    if unapproved:
+        raise DeploymentError(
+            "Only approved read-only tools can be attached to the health-check agent: "
+            + ", ".join(unapproved) + ".")
+    if "RunAzCliWriteCommands" not in denied or set(read_only) & set(denied):
+        raise DeploymentError("RunAzCliWriteCommands must be denied and no denied tool can be attached.")
+    entries = agent.get("skills")
+    if not isinstance(entries, list) or not entries:
+        raise DeploymentError("custom_agent.skills must be a non-empty list.")
+    skills = []
+    for entry in entries:
+        entry = health_check_mapping(entry, "A custom_agent.skills entry")
+        name = health_check_name(entry.get("name"), "A skill name")
+        source = health_check_text(entry.get("source"), f"The source of skill {name}")
+        skills.append(read_health_check_skill(template.parent / source, name))
+    return {
+        "name": health_check_name(document.get("name"), "name"),
+        "description": health_check_text(trigger.get("description"), "trigger.description"),
+        "schedule": " ".join(fields),
+        "prompt": health_check_text(trigger.get("prompt"), "trigger.prompt"),
+        "agent": agent_name,
+        "handoffDescription": health_check_text(
+            agent.get("handoff_description"), "custom_agent.handoff_description"),
+        "instructions": health_check_text(agent.get("instructions"), "custom_agent.instructions"),
+        "tools": read_only,
+        "skills": skills,
+    }
+
+
+def health_check_documents(definition, telemetry_tools=()):
+    tools = list(dict.fromkeys([*definition["tools"], *telemetry_tools]))
+    skills = [{
+        "name": skill["name"], "type": "Skill", "tags": [],
+        "properties": {
+            "name": skill["name"], "description": skill["description"], "tools": [],
+            "skillContent": skill["content"], "additionalFiles": [],
+        },
+    } for skill in definition["skills"]]
+    agent = {
+        "name": definition["agent"], "type": "ExtendedAgent", "tags": [],
+        "properties": {
+            "instructions": definition["instructions"],
+            "handoffDescription": definition["handoffDescription"],
+            "handoffs": [], "tools": tools,
+            # The optional tool categories stay empty so only `tools` grants capability.
+            "mcpTools": [], "connectors": [], "agentsAsTools": [], "commonTools": [],
+            "agentType": "Autonomous", "temperature": 0.2,
+            "enableSkills": True, "addSystemSkills": False,
+            "allowedSkills": [skill["name"] for skill in definition["skills"]],
+        },
+    }
+    task = {
+        "name": definition["name"], "type": "ScheduledTask", "tags": [],
+        "properties": {
+            "name": definition["name"], "description": definition["description"],
+            "cronExpression": definition["schedule"], "agentPrompt": definition["prompt"],
+            "agent": definition["agent"], "agentMode": "Review", "isEnabled": True,
+        },
+    }
+    return skills, agent, task
+
+
+def health_check_telemetry_tools(values):
+    agent_id = required(values, "SRE_AGENT_RESOURCE_ID")
+    if not re.fullmatch(
+            r"/subscriptions/[0-9a-fA-F-]+/resourceGroups/[\w.()-]+/"
+            r"providers/Microsoft\.App/agents/[\w-]+", agent_id):
+        raise DeploymentError("Unexpected SRE Agent resource identifier.")
+    response = az(
+        "rest", "--method", "get", "--url",
+        f"https://management.azure.com{agent_id}/DataConnectors"
+        f"?api-version={SRE_ARM_API_VERSION}",
+    )
+    connectors = response.get("value") if isinstance(response, dict) else None
+    if not isinstance(connectors, list):
+        raise DeploymentError("Azure returned an invalid SRE Agent connector collection.")
+    healthy = set()
+    for item in connectors:
+        properties = item.get("properties") if isinstance(item, dict) else None
+        if (isinstance(properties, dict)
+                and properties.get("provisioningState") in {"Succeeded", "Running"}):
+            healthy.add(properties.get("dataConnectorType"))
+    if "LogAnalytics" not in healthy:
+        raise DeploymentError(
+            "The log-analytics connector is not healthy. The health check queries the App*, "
+            "Heartbeat, and Perf tables through it; open the agent's Connectors page, "
+            "wait for it to report healthy, and run the command again.")
+    return [tool for kind, tool in HEALTH_CONNECTOR_TOOLS.items() if kind in healthy]
+
+
+def health_check_state(endpoint, token, definition):
+    def read(path):
+        try:
+            return sre_agent_request(endpoint, token, path)
+        except SreAgentRequestError as error:
+            if error.status == 404:
+                return None
+            raise
+
+    skills = {
+        skill["name"]: read(f"/api/v2/extendedAgent/skills/{skill['name']}")
+        for skill in definition["skills"]
+    }
+    agent = read(f"/api/v2/extendedAgent/agents/{definition['agent']}")
+    listing = read("/api/v2/extendedAgent/scheduledtasks")
+    tasks = listing.get("value", []) if isinstance(listing, dict) else (listing or [])
+    if not isinstance(tasks, list):
+        raise DeploymentError("Azure SRE Agent returned an invalid scheduled-task collection.")
+    task = next((item for item in tasks
+                 if isinstance(item, dict) and item.get("name") == definition["name"]), None)
+    return {"skills": skills, "agent": agent, "task": task}
+
+
+def health_check_text_matches(actual, expected):
+    # Text the service does not return cannot be compared, so it is not a difference.
+    if not isinstance(actual, str):
+        return True
+
+    def normalized(text):
+        return "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").strip().split("\n"))
+
+    return normalized(actual) == normalized(expected)
+
+
+def health_check_skill_matches(item, skill):
+    properties = item.get("properties") if isinstance(item, dict) else None
+    properties = properties if isinstance(properties, dict) else {}
+    actual = next((properties[key] for key in ("skillContent", "skillMdContent")
+                   if isinstance(properties.get(key), str)), None)
+
+    def body(text):
+        frontmatter = re.match(r"\A---\s*\n.*?\n---\s*\n", text, re.DOTALL)
+        return text[frontmatter.end():] if frontmatter else text
+
+    return actual is None or health_check_text_matches(body(actual), body(skill["content"]))
+
+
+def health_check_report(state, definition, expected_tools):
+    expected_skills = {skill["name"]: skill for skill in definition["skills"]}
+    skills = {
+        name: isinstance(item, dict) and item.get("name") == name
+        for name, item in state["skills"].items()
+    }
+    problems = []
+    for name, present in skills.items():
+        if not present:
+            problems.append(f"Skill {name} is not installed.")
+        elif not health_check_skill_matches(state["skills"][name], expected_skills[name]):
+            problems.append(f"Skill {name} content differs from the definition.")
+    agent = state["agent"]
+    agent_properties = agent.get("properties") if isinstance(agent, dict) else None
+    custom_agent = None
+    if not isinstance(agent_properties, dict) or agent.get("name") != definition["agent"]:
+        problems.append(f"Custom agent {definition['agent']} is not installed.")
+    else:
+        attached = agent_properties.get("tools")
+        attached = [tool for tool in attached if isinstance(tool, str)] if isinstance(attached, list) else []
+        custom_agent = {"name": definition["agent"], "tools": sorted(attached)}
+        missing = sorted(set(expected_tools) - set(attached))
+        if missing:
+            problems.append("Custom agent is missing tools: " + ", ".join(missing) + ".")
+        approved = HEALTH_CHECK_TOOLS | set(HEALTH_CONNECTOR_TOOLS.values())
+        unapproved = sorted(set(attached) - approved)
+        if unapproved:
+            problems.append(
+                "Custom agent has tools outside the read-only set: " + ", ".join(unapproved) + ".")
+        for key in ("mcpTools", "connectors", "agentsAsTools", "commonTools"):
+            if agent_properties.get(key):
+                problems.append(f"Custom agent property {key} is not empty.")
+        if agent_properties.get("addSystemSkills"):
+            problems.append("Custom agent property addSystemSkills is enabled.")
+        for key, expected in (("instructions", definition["instructions"]),
+                              ("handoffDescription", definition["handoffDescription"])):
+            if not health_check_text_matches(agent_properties.get(key), expected):
+                problems.append(f"Custom agent property {key} differs from the definition.")
+        allowed = agent_properties.get("allowedSkills")
+        absent = sorted(set(skills) - set(allowed if isinstance(allowed, list) else []))
+        if absent:
+            problems.append("Custom agent does not allow skills: " + ", ".join(absent) + ".")
+    task = state["task"]
+    task_properties = task.get("properties") if isinstance(task, dict) else None
+    scheduled_task = None
+    if not isinstance(task_properties, dict):
+        problems.append(f"Scheduled task {definition['name']} is not installed.")
+    else:
+        enabled = task_properties.get("isEnabled") is True or task_properties.get("status") == "Active"
+        scheduled_task = {
+            "name": definition["name"],
+            "cronExpression": task_properties.get("cronExpression"),
+            "agent": task_properties.get("agent"),
+            "agentMode": task_properties.get("agentMode"),
+            "enabled": enabled,
+        }
+        for key, expected in (("cronExpression", definition["schedule"]),
+                              ("agent", definition["agent"]), ("agentMode", "Review")):
+            if task_properties.get(key) != expected:
+                problems.append(
+                    f"Scheduled task {key} is {task_properties.get(key)!r}; "
+                    f"the definition expects {expected!r}.")
+        for key, expected in (("agentPrompt", definition["prompt"]),
+                              ("description", definition["description"])):
+            if not health_check_text_matches(task_properties.get(key), expected):
+                problems.append(f"Scheduled task property {key} differs from the definition.")
+        if not enabled:
+            problems.append("Scheduled task is not enabled.")
+    return {
+        "installed": all(skills.values()) and custom_agent is not None and scheduled_task is not None,
+        "matchesDefinition": not problems,
+        "scheduledTask": scheduled_task,
+        "customAgent": custom_agent,
+        "skills": skills,
+        "problems": problems,
+        "checkedUtc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def retry_sre_agent(label, action, attempts, retry_seconds):
+    for attempt in range(1, attempts + 1):
+        try:
+            return action()
+        except SreAgentRequestError as error:
+            if not error.retryable or attempt == attempts:
+                raise SreAgentRequestError(
+                    f"{label} failed: {error}", status=error.status, retryable=error.retryable,
+                ) from error
+            progress(
+                f"[health-check] {label} is not ready; retrying in "
+                f"{retry_seconds}s ({attempt}/{attempts}): {error}"
+            )
+            time.sleep(retry_seconds)
+
+
+def ensure_health_check(values, attempts=8, retry_seconds=15):
+    definition = load_health_check_definition()
+    endpoint = sre_agent_url(values)
+    skills, agent, task = health_check_documents(
+        definition, health_check_telemetry_tools(values))
+    expected_tools = agent["properties"]["tools"]
+    token = sre_agent_token()
+    base = "/api/v2/extendedAgent/"
+
+    def install():
+        for skill in skills:
+            sre_agent_request(endpoint, token, f"{base}skills/{skill['name']}", "PUT", skill)
+        sre_agent_request(endpoint, token, f"{base}agents/{agent['name']}", "PUT", agent)
+        sre_agent_request(endpoint, token, f"{base}scheduledtasks/{task['name']}", "PUT", task)
+        report = health_check_report(
+            health_check_state(endpoint, token, definition), definition, expected_tools)
+        if report["problems"]:
+            raise SreAgentRequestError(
+                "The health check is not visible yet: " + " ".join(report["problems"]),
+                retryable=True,
+            )
+        return report
+
+    result = {"ok": True, **retry_sre_agent("Health check install", install, attempts, retry_seconds)}
+    write_json(state_directory(values) / HEALTH_CHECK_EVIDENCE, result)
+    progress(
+        f"[health-check] Installed {definition['name']} ({definition['schedule']} UTC, "
+        "Review mode, read-only tool list).")
+    return result
+
+
+def health_check_status(values):
+    definition = load_health_check_definition()
+    state = health_check_state(sre_agent_url(values), sre_agent_token(), definition)
+    # The skill queries the App*, Heartbeat, and Perf tables, so install always attaches this tool.
+    expected_tools = [*definition["tools"], HEALTH_CONNECTOR_TOOLS["LogAnalytics"]]
+    return health_check_report(state, definition, expected_tools)
+
+
+def remove_health_check(values, attempts=8, retry_seconds=15):
+    definition = load_health_check_definition()
+    endpoint = sre_agent_url(values)
+    token = sre_agent_token()
+    targets = [
+        ("scheduledtasks", definition["name"]),
+        ("agents", definition["agent"]),
+        *(("skills", skill["name"]) for skill in definition["skills"]),
+    ]
+
+    def remove():
+        for kind, name in targets:
+            try:
+                sre_agent_request(endpoint, token, f"/api/v2/extendedAgent/{kind}/{name}", "DELETE")
+            except SreAgentRequestError as error:
+                if error.status != 404:
+                    raise
+        report = health_check_report(
+            health_check_state(endpoint, token, definition), definition, [])
+        if report["scheduledTask"] or report["customAgent"] or any(report["skills"].values()):
+            raise SreAgentRequestError(
+                "The health check is still visible after deletion. If this persists, delete "
+                f"{definition['name']} from the agent's Scheduled tasks page.",
+                retryable=True,
+            )
+        return report
+
+    retry_sre_agent("Health check removal", remove, attempts, retry_seconds)
+    (state_directory(values) / HEALTH_CHECK_EVIDENCE).unlink(missing_ok=True)
+    progress(f"[health-check] Removed {definition['name']}, its custom agent, and its skill.")
+    return {
+        "ok": True,
+        "removed": [name for _, name in targets],
+        "checkedUtc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def health_check(values, action):
+    if action not in HEALTH_CHECK_ACTIONS:
+        raise DeploymentError("Health-check action must be install, status, or remove.")
+    return {
+        "install": ensure_health_check,
+        "status": health_check_status,
+        "remove": remove_health_check,
+    }[action](values)
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise DeploymentError("Unexpected redirect from the public Orders API.")
@@ -1407,7 +1807,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=(
         "validate", "prepare", "preprovision", "postprovision", "export",
-        "smoke", "inspect", "fault", "telemetry", "verify-restart", "benchmark",
+        "smoke", "inspect", "fault", "health-check", "telemetry", "verify-restart",
+        "benchmark",
     ))
     parser.add_argument("arguments", nargs="*")
     args = parser.parse_args()
@@ -1421,6 +1822,10 @@ def main():
     values = environment()
     if args.command == "fault":
         result = fault(values, args.arguments[0] if args.arguments else "status", args.arguments[1:])
+    elif args.command == "health-check":
+        if len(args.arguments) > 1:
+            raise DeploymentError("health-check accepts one action: install, status, or remove.")
+        result = health_check(values, args.arguments[0] if args.arguments else "status")
     else:
         if args.arguments:
             raise DeploymentError(f"{args.command} does not accept positional arguments.")

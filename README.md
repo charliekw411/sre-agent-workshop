@@ -1,13 +1,15 @@
 ---
 title: Azure SRE Agent Workshop
-description: A hands-on workshop for investigating VM saturation and private PostgreSQL connectivity incidents with Azure SRE Agent.
-ms.date: 2026-10-06
+description: A hands-on workshop for investigating VM saturation and private PostgreSQL connectivity incidents, and scheduling a proactive health check, with Azure SRE Agent.
+ms.date: 2026-10-12
 ms.topic: overview
 keywords:
   - azure sre agent
   - site reliability engineering
   - postgresql
   - incident response
+  - scheduled tasks
+  - live reports
 ---
 
 # Azure SRE Agent Workshop
@@ -16,8 +18,9 @@ keywords:
 
 Deploy a small but realistic Azure workload, establish an evidence baseline,
 trigger two controlled incidents, and use Azure SRE Agent to investigate the
-resulting alerts. The six-module path takes about three and a half hours and does
-not require an instructor.
+resulting alerts. Then schedule a proactive agent health check and build a Live
+Report. The six-module path takes about three and a half hours and does not
+require an instructor.
 
 **[Start the workshop](https://charliekw411.github.io/sre-agent-workshop/)**
 
@@ -30,7 +33,8 @@ not require an instructor.
 * Correlate customer behavior, VM metrics, PostgreSQL dependencies, availability
   results, and Azure control-plane changes.
 * Distinguish observed evidence from inference in an AI-generated investigation.
-* Turn verified incident evidence into monitoring and response improvements.
+* Schedule a read-only agent health check and build a refreshable Live Report
+  from the same telemetry.
 
 ## Learning path
 
@@ -40,7 +44,7 @@ not require an instructor.
 | 02 | Operate the SRE Agent Response Plan | 25 min |
 | 03 | Respond to High CPU | 40 min |
 | 04 | Respond to PostgreSQL Connectivity Loss | 40 min |
-| 05 | Review and Improve the Response | 40 min |
+| 05 | Schedule a Health Check and Build a Live Report | 40 min |
 | 06 | Preserve Evidence and Clean Up | 20 min |
 
 ## What gets deployed
@@ -90,6 +94,7 @@ tradeoffs.
 
 ```text
 .
+├── agent/              Health-check skill, custom agent, and scheduled-task definitions
 ├── azure.yaml          Azure Developer CLI project definition
 ├── docs/               Workshop content published to GitHub Pages
 ├── infra/              Bicep templates and the azd deployment entry point
@@ -300,6 +305,41 @@ Prefer a custom role at the narrowest supported scope rather than broad VM or
 network contributor access. See
 [Configure the Site Azure Connection](docs/sre/30-appendix/05-site-azure-connection.md).
 
+## Scheduled health check and Live Report
+
+Module 05 adds a proactive scenario that introduces no fault. It is opt-in, so
+`azd up` does not install it:
+
+```bash
+python scripts/workshop.py health-check install
+python scripts/workshop.py health-check status
+python scripts/workshop.py health-check remove
+```
+
+`install` writes a skill (`proactive-health-check`), a custom agent
+(`health-report-investigator`), and a scheduled task
+(`orders-daily-health-report`) to the SRE Agent, reads all three back, and
+records `.workshop/<environment>/scheduled-health-check.json`. The definitions
+live under `agent/`. The installer attaches only read-only tools to the custom
+agent, pins its optional tool categories empty, and runs the task in Review mode,
+and the agent's Azure role is Reader. In testing, scheduled runs did not apply
+the custom agent's tool list, so Module 05 has you verify every tool call in the
+run's thread. `remove` deletes only those three items.
+
+The SRE Agent evaluates the schedule in UTC. The task runs Monday to Friday at
+09:00 New Zealand Standard Time (NZST, UTC+12) using the cron expression
+`0 21 * * 0-4`. During New Zealand daylight time (NZDT, UTC+13) it runs at 10:00
+local time; use `0 20 * * 0-4` for 09:00 NZDT. Reports show New Zealand time
+beside UTC. You can also run the task on demand from the portal.
+
+You create the Live Report in the SRE Agent portal from a prompt in Module 05.
+Live Reports is a preview feature and has no template or documented API.
+Creating a report, and running its queries when you open or reload it, needs the
+SRE Agent Standard User, SRE Agent Author, or SRE Agent Administrator role.
+Approving the report's tool needs Administrator, which `azd up` gives to the
+person who deployed the agent. Each task run and each report creation or update
+consumes Azure Agent Units, so remove the task when you finish.
+
 ## Cost and cleanup
 
 The VM, PostgreSQL Flexible Server, private DNS and network resources,
@@ -308,7 +348,9 @@ incident restores connectivity but does not stop billing.
 
 Scenario-specific resets do not change the other fault. Before collecting final
 healthy evidence or deleting the environment, run the explicitly global
-`python scripts/workshop.py fault reset`. When finished:
+`python scripts/workshop.py fault reset`. If you installed the Module 05 health
+check, also run `python scripts/workshop.py health-check remove`; the recurring
+task uses agent units on every scheduled run. When finished:
 
 ```bash
 azd down --purge --force

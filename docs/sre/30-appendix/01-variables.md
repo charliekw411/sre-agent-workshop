@@ -1,7 +1,7 @@
 ---
 title: Workshop Variables and Evidence
 description: Reference for the PostgreSQL workshop's non-secret exports, supported commands, and local validation evidence.
-ms.date: 2026-10-06
+ms.date: 2026-10-12
 ms.topic: reference
 keywords:
   - environment variables
@@ -139,6 +139,9 @@ site and its authenticated Azure controls.
 | `python scripts/workshop.py fault reset-cpu` | Stop only CPU pressure; do not change the PostgreSQL rule |
 | `python scripts/workshop.py fault reset-postgresql` | Verify `Allow`, recycle only the API, and require PostgreSQL recovery; do not change CPU |
 | `python scripts/workshop.py fault reset` | Explicitly reset and verify both scenarios for final cleanup |
+| `python scripts/workshop.py health-check install` | Write and read back the Module 05 skill, custom agent, and scheduled task; opt-in and safe to repeat |
+| `python scripts/workshop.py health-check status` | Read the same items without writing; report `installed`, `matchesDefinition`, and any `problems` |
+| `python scripts/workshop.py health-check remove` | Delete only the health-check task, custom agent, and skill |
 | `python scripts/workshop.py export` | Rebuild generated shell exports |
 
 The wrapper scripts call the same implementation:
@@ -178,6 +181,7 @@ Common files include:
 | `deployment.json` | Deployment stage durations and outcomes |
 | `vm-deployment.json` | Guest installation and inspection result |
 | `sre-agent-configuration.json` | Response-plan read-back |
+| `scheduled-health-check.json` | Module 05 skill, custom agent, and scheduled-task read-back: schedule, mode, enabled state, and tools |
 | `smoke.json` | Public order, database-status, and retired-route checks |
 | `vm-inspection.json` | Service, private DNS, TLS, PostgreSQL version, migration, seed, and health checks |
 | `persistence-witness.json` | Order and bound `postgresqlServerResourceId` |
@@ -209,7 +213,9 @@ is discarded and inbound SSH is blocked. Administration uses VM Run Command.
 ## Incident timestamps
 
 `INCIDENT_START` is a local shell value, not a deployment output. Record all
-incident times in UTC. For PostgreSQL, keep the rule-change time, first failed
+incident times in UTC. Module 05 also shows New Zealand time beside UTC; keep UTC
+as the reference when you correlate evidence. For PostgreSQL, keep the
+rule-change time, first failed
 dependency, first HTTP 503, alert time, reset, first successful dependency, and
 alert resolution as separate events.
 

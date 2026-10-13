@@ -12,7 +12,7 @@ docs/assets/images/
 ├── 02-operate-response-plan/
 ├── 03-incident-high-cpu/
 ├── 04-incident-postgresql/
-├── 05-review-and-improve/
+├── 05-scheduled-health-check/
 └── 06-cleanup/
 ```
 
