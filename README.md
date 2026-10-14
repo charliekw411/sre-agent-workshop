@@ -169,6 +169,9 @@ contain a PostgreSQL password or access token.
 
 ### Deploy a participant cohort
 
+For the short organizer sequence from identity preparation through cleanup, use
+the [facilitator end-to-end runbook](facilitator-process/README.md).
+
 Use the cohort wrapper when the Entra users already exist and each participant
 needs Contributor access to one isolated resource group plus SRE Agent Standard
 User access to that group's agent:

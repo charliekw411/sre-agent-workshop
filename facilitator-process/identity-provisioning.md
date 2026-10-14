@@ -1,5 +1,8 @@
 # Identity provisioning
 
+For the complete workshop sequence, start with the
+[facilitator end-to-end runbook](README.md).
+
 Run these commands from the repository root in PowerShell 7.4+ on Windows, using your organizer account. Keep the same tenant and cohort throughout.
 
 1. **Create the 20 users and workshop group.** Replace the tenant/domain placeholders. Existing users are reused; no Azure access is assigned.

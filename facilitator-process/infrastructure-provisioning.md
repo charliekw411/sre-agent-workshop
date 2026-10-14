@@ -1,5 +1,8 @@
 # Infrastructure provisioning
 
+For the complete workshop sequence, start with the
+[facilitator end-to-end runbook](README.md).
+
 Run these commands from the repository root in PowerShell 7.4+ on Windows, using your organizer account. Complete the `prepare` phase of identity provisioning first so the participant users exist. TAPs can be issued later, shortly before participant sign-in.
 
 1. **Sign in with the deployment identity.** Azure CLI and Azure Developer CLI must use the same principal and tenant. The identity needs permission to deploy resources and register providers in all target subscriptions, plus permission to create role assignments, such as Owner or Contributor with User Access Administrator.
