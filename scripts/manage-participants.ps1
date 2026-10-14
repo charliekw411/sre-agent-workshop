@@ -581,10 +581,11 @@ function Show-WorkshopTaps {
         [pscustomobject]@{
             Alias = $key; Username = $participant.username; TemporaryAccessPass = $pass
             Expires = $expires.ToLocalTime().ToString('yyyy-MM-dd HH:mm zzz')
+            'Workshop URL' = 'https://charliekw411.github.io/sre-agent-workshop/'
         }
     })
     Write-Warning 'Plaintext credentials: use a private terminal/printer without transcription or logging. A previously used single-use TAP will not work.'
-    $rows | Format-List Alias, Username, TemporaryAccessPass, Expires
+    $rows | Format-List Alias, Username, TemporaryAccessPass, Expires, 'Workshop URL'
 }
 
 function Remove-WorkshopHandoff {

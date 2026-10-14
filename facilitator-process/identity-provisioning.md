@@ -25,6 +25,6 @@ Run these commands from the repository root in PowerShell 7.4+ on Windows, using
    notepad $printPath
    ```
 
-   In Notepad, review the layout and use **File > Print**. Each block contains a username, TAP, and expiration; give each participant only their own block.
+   In Notepad, review the layout and use **File > Print**. Each block contains an alias, username, TAP, expiration, and workshop URL; give each participant only their own block.
 
 **The text file contains plaintext secrets.** Use a private terminal without logging and a trusted printer; delete the file after printing. Printing does not consume TAPs, but their one-hour validity runs from issuance. Check each expiration: rerunning `issue-taps` retains usable passes rather than resetting their timer.
