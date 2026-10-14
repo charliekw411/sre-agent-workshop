@@ -1,7 +1,7 @@
 ---
-title: Workshop Variables and Evidence
-description: Reference for the PostgreSQL workshop's non-secret exports, supported commands, and local validation evidence.
-ms.date: 2026-10-12
+title: Terminal Setup, Variables, and Evidence
+description: Prepare an optional terminal for your assigned environment and understand its non-secret values and command evidence.
+ms.date: 2026-10-14
 ms.topic: reference
 keywords:
   - environment variables
@@ -13,8 +13,71 @@ estimated_reading_time: 8
 
 ## Overview
 
-The selected Azure Developer CLI environment stores deployment inputs and
-outputs. After `azd up`, the workshop writes an explicit non-secret allowlist:
+The browser modules do not need a terminal. Use this reference only for a
+terminal alternative or deeper checks.
+
+The command helper reads a local Azure Developer CLI (azd) environment.
+Loading a shell export alone does **not** prepare that environment. You do not
+need to have run `azd up`, but the matching local deployment metadata must
+already be available.
+
+## Terminal setup for an assigned environment
+
+Ask your facilitator for a prepared local azd environment for your assigned
+resource group. It must contain the matching deployment outputs, including
+`AZURE_ENV_NAME` and `AZURE_SUBSCRIPTION_ID`. Receive these privately; do not
+copy the organizer's whole `.azure` directory, credentials, or cohort state.
+
+You also need a repository checkout, Azure CLI 2.60+, azd 1.18+, Python 3.10+
+with `requirements.txt`, and Bash with `curl`/`jq` or PowerShell 7.
+
+!!! warning "No matching local state means no terminal fallback"
+    Stop if the prepared environment is missing or names another resource
+    group. Continue with the browser or ask your facilitator. Do not run
+    `azd up` to create participant state, or request wider subscription access
+    to recover deployment outputs.
+
+From the repository root, sign in with the supplied account and select the
+prepared environment. Clear any old shell selection first:
+
+=== "Bash"
+
+    ```bash
+    unset AZURE_ENV_NAME WORKSHOP_COHORT_MODE
+    az login --tenant "<supplied-tenant>"
+    az account set --subscription "<assigned-subscription-id>"
+    azd env select "<assigned-environment>"
+    python scripts/workshop.py export
+    source .workshop/workshop.env
+    printf 'Environment: %s\nResource group: %s\n' \
+      "${AZURE_ENV_NAME}" "${RESOURCE_GROUP}"
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    Remove-Item Env:AZURE_ENV_NAME,Env:WORKSHOP_COHORT_MODE -ErrorAction SilentlyContinue
+    az login --tenant "<supplied-tenant>"
+    az account set --subscription "<assigned-subscription-id>"
+    azd env select "<assigned-environment>"
+    python .\scripts\workshop.py export
+    . .\.workshop\workshop.ps1
+    "Environment: $env:AZURE_ENV_NAME"
+    "Resource group: $env:RESOURCE_GROUP"
+    ```
+
+Check the printed values against your handout before running a fault.
+If any command fails, stop rather than using old exports. Browser sign-in
+does not sign Azure CLI in.
+
+The helper uses azd values to target resources, not edited shell variables.
+Terminal PostgreSQL actions also need resource-group deployment permission;
+the browser's narrow rule permission alone is not enough. Your facilitator
+must verify the terminal path separately.
+
+## Export files
+
+The export command writes only an allowlist of non-secret values:
 
 * `.workshop/workshop.env` for Bash
 * `.workshop/workshop.ps1` for PowerShell
@@ -23,30 +86,10 @@ These files contain resource names, IDs, private and public DNS names, and the
 Orders API URL. They do not contain a PostgreSQL password, Microsoft Entra
 access token, VM private key, API credential, or SRE Agent token.
 
-## Select and load an environment
-
-=== "Bash"
-
-    ```bash
-    azd env select "<your-environment>"
-    source .workshop/workshop.env
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    azd env select "<your-environment>"
-    . ./.workshop/workshop.ps1
-    ```
-
-Regenerate the allowlisted files without provisioning:
-
-```bash
-python scripts/workshop.py export
-```
-
-The helper selects the subscription recorded by azd before issuing Azure CLI
-operations.
+These are the top-level files for a single selected environment. Cohort
+deployment instead writes a pair under `.workshop/<environment>/` for each
+participant. Keep the pairs separate; never distribute the whole cohort
+directory.
 
 ## Core variables
 
@@ -78,7 +121,7 @@ operations.
 | `POSTGRESQL_PRIVATE_DNS_ZONE_NAME` | `private.postgres.database.azure.com` |
 | `POSTGRESQL_PRIVATE_DNS_ZONE_RESOURCE_ID` | Private DNS zone ARM ID |
 | `POSTGRESQL_FAULT_RULE_NAME` | `PostgreSqlFaultInjection` |
-| `POSTGRESQL_FAULT_RULE_RESOURCE_ID` | Exact NSG child rule used by Module 04 |
+| `POSTGRESQL_FAULT_RULE_RESOURCE_ID` | Exact NSG child rule used by Module 03 |
 
 `POSTGRESQL_USER` is an identity name, not a password. Azure runtime
 authentication uses the VM's system-assigned identity and a short-lived
@@ -132,19 +175,16 @@ site and its authenticated Azure controls.
 | `python scripts/workshop.py smoke` | Validate public orders, PostgreSQL status, and absent HTTP fault routes |
 | `python scripts/workshop.py inspect` | Verify service, private DNS, TLS, managed identity, PostgreSQL 16, migration, seed, and health |
 | `python scripts/workshop.py telemetry` | Wait for required VM, request, PostgreSQL dependency, and availability signals |
-| `python scripts/workshop.py verify-restart` | Restart the VM and prove order persistence in the same PostgreSQL resource |
+| `python scripts/workshop.py verify-restart` | Optional owner check: restart the VM and prove order persistence; needs VM restart permission |
 | `python scripts/workshop.py fault status` | Read CPU unit and PostgreSQL NSG rule, liveness, readiness, and order-operation state |
 | `python scripts/workshop.py fault cpu [seconds] [workers]` | Start CPU pressure; defaults to 300 seconds and two workers |
 | `python scripts/workshop.py fault postgresql` | Verify `Deny`, recycle only the API, and require controlled PostgreSQL 503s |
 | `python scripts/workshop.py fault reset-cpu` | Stop only CPU pressure; do not change the PostgreSQL rule |
 | `python scripts/workshop.py fault reset-postgresql` | Verify `Allow`, recycle only the API, and require PostgreSQL recovery; do not change CPU |
 | `python scripts/workshop.py fault reset` | Explicitly reset and verify both scenarios for final cleanup |
-| `python scripts/workshop.py health-check install` | Write and read back the Module 05 skill, custom agent, and scheduled task; opt-in and safe to repeat |
+| `python scripts/workshop.py health-check install` | Optional setup: write and read back the Module 04 skill, custom agent, and task; needs configuration access |
 | `python scripts/workshop.py health-check status` | Read the same items without writing; report `installed`, `matchesDefinition`, and any `problems` |
-| `python scripts/workshop.py health-check remove` | Delete only the health-check task, custom agent, and skill |
-| `python scripts/workshop.py incident-workflow install` | Opt in to a dedicated investigator and complementary title filters on two active Sev1/Sev2 plans |
-| `python scripts/workshop.py incident-workflow status` | Read component, routing, definition, and optional-capability state without changing the agent |
-| `python scripts/workshop.py incident-workflow remove` | Disable the optional plan, restore the original filters, and delete only the optional plan, investigator, and three skills |
+| `python scripts/workshop.py health-check remove` | Optional owner cleanup: delete only the health-check task, custom agent, and skill |
 | `python scripts/workshop.py export` | Rebuild generated shell exports |
 
 The wrapper scripts call the same implementation:
@@ -158,7 +198,7 @@ The wrapper scripts call the same implementation:
 === "PowerShell"
 
     ```powershell
-    ./scripts/inject-fault.ps1 status
+    .\scripts\inject-fault.ps1 status
     ```
 
 CPU uses authenticated VM Run Command. PostgreSQL fault and its specific reset first use an
@@ -184,9 +224,7 @@ Common files include:
 | `deployment.json` | Deployment stage durations and outcomes |
 | `vm-deployment.json` | Guest installation and inspection result |
 | `sre-agent-configuration.json` | Response-plan read-back |
-| `scheduled-health-check.json` | Module 05 skill, custom agent, and scheduled-task read-back: schedule, mode, enabled state, and tools |
-| `incident-workflow-state.json` | Exact original response-plan snapshot, agent binding, component definitions, and trusted destinations; retain until removal |
-| `incident-workflow.json` | Optional workflow component, complementary routing, and capability read-back |
+| `scheduled-health-check.json` | Module 04 skill, custom agent, and scheduled-task read-back: schedule, mode, enabled state, and tools |
 | `smoke.json` | Public order, database-status, and retired-route checks |
 | `vm-inspection.json` | Service, private DNS, TLS, PostgreSQL version, migration, seed, and health checks |
 | `persistence-witness.json` | Order and bound `postgresqlServerResourceId` |
@@ -203,17 +241,13 @@ Common files include:
 | `fault-reset-partial.json` | Rule reached `Allow`, but recycle/data-plane recovery verification failed |
 | `fresh-benchmark.json` | Fresh deployment duration and stage evidence |
 
+Files exist only when their corresponding helper ran locally. Browser actions
+do not create them on your machine. Organizer deployment evidence is not a
+participant prerequisite.
+
 These files can contain Azure resource IDs and operational timestamps. Handle
 them according to your organization's policy. Put working notes under
 `.workshop/notes/` and copy needed evidence elsewhere before cleanup.
-
-Incident installation accepts `--source-repository`, `--github-repository`,
-`--outlook-connector`, and repeatable `--email-to` options. These are explicit
-trusted bindings, not deployment exports or credentials. They are valid only
-with `incident-workflow install`; see the
-[optional module](../incident-workflow/index.md). Recipient and repository
-details stay in the ignored rollback state and installed instructions, not
-`SAFE_OUTPUTS`. Do not commit or publicly share them.
 
 ## Authentication is not exported
 
@@ -226,7 +260,7 @@ is discarded and inbound SSH is blocked. Administration uses VM Run Command.
 ## Incident timestamps
 
 `INCIDENT_START` is a local shell value, not a deployment output. Record all
-incident times in UTC. Module 05 also shows New Zealand time beside UTC; keep UTC
+incident times in UTC. Module 04 also shows New Zealand time beside UTC; keep UTC
 as the reference when you correlate evidence. For PostgreSQL, keep the
 rule-change time, first failed
 dependency, first HTTP 503, alert time, reset, first successful dependency, and

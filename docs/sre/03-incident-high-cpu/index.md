@@ -1,395 +1,168 @@
 ---
-title: Module 03 - Respond to High CPU
-description: Trigger bounded CPU pressure through authenticated VM Run Command, follow the alert into an SRE Agent investigation, verify the diagnosis, and recover.
-ms.date: 2026-10-06
+title: Module 02 - Configure SRE and Respond to High CPU
+description: Save the workshop response-plan settings, start a CPU fault, watch the agent investigate, and check recovery.
+ms.date: 2026-10-14
 ms.topic: how-to
 keywords:
-  - cpu saturation
-  - azure virtual machines
+  - cpu
+  - response plan
   - azure sre agent
   - incident response
-estimated_reading_time: 20
+estimated_reading_time: 8
 ---
 
 <ul class="sre-meta">
-<li class="duration">Estimated time: 40 minutes</li>
-<li>Module 03</li>
+<li class="duration">Estimated time: 30 minutes</li>
+<li>Module 02</li>
 <li class="incident">Incident 1 of 2</li>
 </ul>
 
 ## Overview
 
-This incident consumes the VM's two vCPUs with a time-limited `systemd` unit.
-You will see the change directly in the VM's **Percentage CPU** chart, observe
-the effect on API latency, wait for the Sev2 alert, and review the investigation
-created by the SRE Agent response plan.
+Configure how the agent receives alerts, then make your VM busy for ten
+minutes. Watch the alert start an investigation, check the agent's explanation,
+and reset the fault.
 
-The fault is not an API feature. The helper authenticates to Azure, invokes VM
-Run Command, and starts a bounded guest process. It expires automatically and can
-also be stopped with `fault reset-cpu`, which does not change PostgreSQL access.
+You are changing SRE configuration, not deploying infrastructure.
 
-## Learning objectives
+## What changes
 
-* Inject CPU pressure through the authenticated control plane.
-* Compare healthy and incident CPU visually on the VM Metrics blade.
-* Correlate VM saturation with public API latency.
-* Follow a fired Azure Monitor alert into the SRE Agent response-plan workflow.
-* Verify the agent's causal claims with raw telemetry and Activity Log evidence.
-* Apply a human-approved mitigation and prove recovery.
-
-## Incident loop
-
-```mermaid
-flowchart LR
-    B[Healthy traffic] --> F[Run Command starts bounded CPU fault]
-    F --> M[VM Percentage CPU rises]
-    M --> I[API latency changes]
-    M --> A[Sev2 CPU alert fires]
-    A --> R[Response plan starts investigation]
-    R --> V[Human verifies evidence]
-    V --> X[Human resets fault]
-    X --> H[Charts and API return to healthy levels]
-```
-
-## Interactive incident launcher
-
-Connect to Azure from the control in the top-right site header, select your
-workshop environment, and use the launcher below. Documentation remains public,
-but run, reset, status, and telemetry requests stay disabled until the
-single-tenant connection succeeds.
-
-<div data-sre-incident="cpu">
-<p><strong>JavaScript is required for the interactive launcher.</strong> Use the terminal fallback in Task 2 when browser controls are unavailable.</p>
-</div>
-
-The graph reads **Percentage CPU** from Azure Monitor Metrics with Average
-aggregation, one-minute granularity, a rolling 30-minute window, and automatic
-refresh. The buttons invoke only the same bounded VM-local commands used by the
-terminal helper; no command text can be supplied from the browser.
-
-!!! tip "Keep the operator and customer views separate"
-    Use this authenticated documentation tab to start, inspect, and reset the
-    incident. Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a second tab for the
-    public Orders GUI. The first changes workshop state; the second only makes
-    customer and status API requests.
+The fault starts two CPU workers on your assigned VM through Azure VM Run
+Command. It has a ten-minute limit, a 256 MiB memory cap, and reduced scheduling
+priority. It does not change PostgreSQL.
 
 ## Tasks
 
-### Task 1: Prepare healthy traffic and notes
+### Task 1: Apply the response-plan settings
 
-=== "Bash"
+Open your assigned SRE Agent. Go to **Response plans** or
+**Builder > Incident response plans** and open `workshop-sev1-sev2-review`.
+The deployment already created it.
 
-    ```bash
-    source .workshop/workshop.env
-    python scripts/workshop.py fault reset-cpu
-    python scripts/workshop.py smoke
-    ```
+Apply these settings and select **Save**:
 
-=== "PowerShell"
+| Setting | Value |
+| --- | --- |
+| Incident platform | Azure Monitor |
+| Severity | Sev1 and Sev2 |
+| Handling agent | Coordinating or main agent |
+| Autonomy level | Review |
+| Enabled | On |
 
-    ```powershell
-    . ./.workshop/workshop.ps1
-    python scripts/workshop.py fault reset-cpu
-    python scripts/workshop.py smoke
-    ```
+Open the plan again and check the saved values. Keep its existing
+merge/reinvestigation settings. Do not add another overlapping plan.
 
-Start normal traffic in another terminal:
+If the plan is missing or you cannot save it, ask your facilitator. They must
+prepare configuration access on your agent; you do not need subscription
+ownership.
 
-=== "Bash"
+In **Azure Monitor > Alerts > Alert rules**, filter to your resource group.
+Check that `alert-orders-high-cpu` is enabled, is Sev2, and watches average CPU
+above 80 percent for five minutes.
 
-    ```bash
-    source .workshop/workshop.env
-    ./scripts/generate-load.sh "${SERVICE_ORDERS_API_ENDPOINT_URL}" 5 900
-    ```
+<!-- SCREENSHOT: Assigned agent's saved Azure Monitor response plan with Sev1/Sev2 and Review mode -->
 
-=== "PowerShell"
+### Task 2: Check the starting state
 
-    ```powershell
-    . ./.workshop/workshop.ps1
-    $until = (Get-Date).AddMinutes(15)
-    $products = 'SKU-1001','SKU-1002','SKU-1003','SKU-1004','SKU-1005'
-    while ((Get-Date) -lt $until) {
-      $body = @{
-        customerId = "cpu-incident-$((Get-Random -Maximum 500))"
-        productId  = $products | Get-Random
-        quantity   = Get-Random -Minimum 1 -Maximum 6
-      } | ConvertTo-Json
-      Invoke-RestMethod `
-        -Method Post `
-        -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" `
-        -ContentType 'application/json' `
-        -Body $body | Out-Null
-      Start-Sleep -Milliseconds 200
-    }
-    ```
+Confirm the site header shows your assigned environment. In the launcher below,
+select **Check fault status**. Both faults should be inactive, PostgreSQL access
+should be `Allow`, and application connectivity should be `ready`.
 
-Record the start time:
+Open your Orders GUI and select **Refresh status** and **Refresh orders**.
+Note the normal response time. Keep that tab visible for its regular status
+checks.
 
-=== "Bash"
+Look at the CPU graph below and note the healthy CPU range. Record the fault
+start time in your notes; use UTC when comparing it with portal events.
 
-    ```bash
-    mkdir -p .workshop/notes
-    INCIDENT_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf '# CPU incident\n\nFault requested at UTC: %s\n\n' "${INCIDENT_START}" \
-      > .workshop/notes/incident-01-cpu.md
-    echo "${INCIDENT_START}"
-    ```
+### Task 3: Start the CPU fault
 
-=== "PowerShell"
+Select **Run CPU incident**.
 
-    ```powershell
-    New-Item -ItemType Directory -Force .workshop/notes | Out-Null
-    $INCIDENT_START = (Get-Date).ToUniversalTime().ToString(
-      'yyyy-MM-ddTHH:mm:ssZ'
-    )
-    "# CPU incident`n`nFault requested at UTC: $INCIDENT_START`n" |
-      Set-Content .workshop/notes/incident-01-cpu.md
-    $INCIDENT_START
-    ```
+<div data-sre-incident="cpu">
+<p><strong>JavaScript is required for the launcher.</strong> If it is unavailable, use the terminal alternative below after your facilitator has prepared it.</p>
+</div>
 
-Open the workshop VM's **Monitoring** > **Metrics** blade before injecting the
-fault. Select **Percentage CPU**, **Average**, **1 minute**, and **Last 30
-minutes**. Leave the chart open.
+The graph shows average CPU in one-minute intervals. It refreshes automatically.
+You should see CPU rise above the alert threshold.
 
-### Task 2: Inject bounded CPU pressure
+!!! warning "Check before retrying"
+    A timed-out request may still have started the fault. Select **Check fault
+    status** before trying again. Do not start the PostgreSQL fault at the same
+    time.
 
-Select **Run CPU incident** in the inline launcher. If browser authentication or
-JavaScript is unavailable, use the equivalent terminal fallback:
+??? info "Terminal alternative"
+    First complete [terminal setup](../30-appendix/01-variables.md#terminal-setup-for-an-assigned-environment).
+    Do not run these commands against an unprepared or different environment.
 
-=== "Bash"
+    === "Bash"
 
-    ```bash
-    python scripts/workshop.py fault cpu 600 2
-    ```
+        ```bash
+        python scripts/workshop.py fault cpu 600 2
+        python scripts/workshop.py fault status
+        ```
 
-=== "PowerShell"
+    === "PowerShell"
 
-    ```powershell
-    python scripts/workshop.py fault cpu 600 2
-    ```
+        ```powershell
+        python .\scripts\workshop.py fault cpu 600 2
+        python .\scripts\workshop.py fault status
+        ```
 
-This starts two CPU workers for ten minutes. Valid durations are 10 through 1800
-seconds and valid worker counts are 1 through 8. The fault process has a 256 MiB
-memory limit and runs at a reduced scheduling priority.
+### Task 4: Watch the alert and the agent
 
-!!! warning "Inspect before retrying"
-    If the Run Command request times out, the guest operation may still have
-    succeeded. Run `python scripts/workshop.py fault status` before submitting
-    another injection. A second active CPU fault is rejected.
+In the Orders GUI, select **Refresh orders** during the fault. Record any
+slower response, timeout, or failure. Requests may still succeed; high CPU
+does not guarantee a complete outage.
 
-### Task 3: Hit the API and observe customer impact
+Use **Open Azure Monitor alert**, or open **Monitor > Alerts** and filter to
+your resource group. Wait for `alert-orders-high-cpu` to show **Fired**.
+It uses a five-minute average, so it will not fire immediately.
 
-Optionally keep `SERVICE_ORDERS_API_ENDPOINT_URL` open in a browser as the
-customer-impact view. Select **Refresh orders** during the fault and note the
-reported latency, timeout, or failure state. The status cards continue their
-low-rate 30-second refresh and make recovery visible, but they do not replace the
-load generator or the timed terminal sample below.
+Select **Open SRE Agent incidents**. Find the investigation for that alert
+and watch its tool calls and findings appear. It may update an existing thread.
 
-While the fault is active, poll the endpoint:
+Record the alert time and investigation link. If the alert does not fire or
+no investigation appears, use [troubleshooting](../30-appendix/02-troubleshooting.md#telemetry-and-alerts);
+do not widen the fault.
 
-=== "Bash"
+### Task 5: Check the agent's explanation
 
-    ```bash
-    for i in $(seq 1 40); do
-      curl --silent --output /dev/null --max-time 20 \
-        --write-out "$(date -u +%H:%M:%S) status=%{http_code} seconds=%{time_total}\n" \
-        "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders"
-      sleep 10
-    done
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    1..40 | ForEach-Object {
-      $timer = [System.Diagnostics.Stopwatch]::StartNew()
-      try {
-        $response = Invoke-WebRequest `
-          -Uri "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" `
-          -TimeoutSec 20 `
-          -SkipHttpErrorCheck `
-          -ErrorAction Stop
-        $status = [int]$response.StatusCode
-      }
-      catch {
-        $status = 0
-      }
-      $timer.Stop()
-      '{0} status={1} seconds={2:N3}' -f @(
-        (Get-Date).ToUniversalTime().ToString('HH:mm:ss')
-        $status
-        $timer.Elapsed.TotalSeconds
-      )
-      Start-Sleep -Seconds 10
-    }
-    ```
-
-Watch the load-generator response counts at the same time. Depending on Azure
-host scheduling and current load, requests can remain successful but become
-slower, or some can time out. Saturation is the required signal; a complete API
-outage is not.
-
-### Task 4: Watch the CPU rise in the VM portal
-
-Return to the VM **Percentage CPU** chart. Refresh it until the fault window
-appears. Hover over the line and record:
-
-* The last pre-fault value.
-* The first value above 80 percent.
-* The maximum value.
-* The time the line returns below the threshold.
-
-Add a horizontal threshold line at 80 percent if the Metrics blade offers that
-chart option. Keep the time range wide enough to show both the healthy traffic
-from Module 01 and the incident.
-
-<!-- SCREENSHOT: VM Monitoring Metrics blade showing Percentage CPU rising above 80 percent -->
-
-In Application Insights, open **Live Metrics** or **Performance** and view the
-same interval. Compare request rate, duration, and failures with the CPU line.
-The API calls supply the customer-side evidence; the VM chart supplies the
-resource-side evidence.
-
-### Task 5: Wait for the alert and response plan
-
-The rule evaluates a five-minute average every minute. Expect several minutes
-between fault start and the alert firing.
-
-In the portal:
-
-1. Open **Monitor** > **Alerts**.
-2. Filter to the workshop resource group.
-3. Open `alert-orders-high-cpu` when it reaches **Fired**.
-4. Record its start time, severity, threshold, and affected VM.
-5. Open Azure SRE Agent and find the incident or investigation created by
-   `workshop-sev1-sev2-review`.
-
-If you configured `ALERT_EMAIL`, the action group also sends a common-alert
-schema email. Email is optional; the portal alert and SRE response plan are not.
-
-<!-- SCREENSHOT: Fired alert-orders-high-cpu and its linked SRE Agent investigation -->
-
-### Task 6: Review the agent investigation
-
-Start with the automatically collected findings, then ask:
+Read the initial findings before adding a prompt. If you need more detail, ask:
 
 ```text
-Investigate the high-CPU alert for the Orders VM.
-1. State when CPU first departed from baseline and when the alert fired.
-2. Quantify the customer impact using request volume, success rate, and P95 duration.
-3. Check Azure Activity Log for a VM Run Command operation near the start.
-4. Identify which evidence supports CPU pressure as the cause rather than an API,
-   network, or PostgreSQL failure.
-5. Propose a mitigation, but do not claim that you executed it.
-Cite every chart, metric, or query used.
+Explain the high-CPU alert on the Orders VM. Show when CPU rose, how requests
+were affected, and any VM Run Command event near the start. Cite the evidence
+for your cause and proposed recovery. Do not make changes.
 ```
 
-Review mode means the answer is a proposal. Do not approve a causal claim merely
-because it is plausible.
+Check three things yourself:
 
-### Task 7: Verify the investigation independently
+* The CPU chart agrees with the agent's values and time range.
+* The Orders GUI or Application Insights **Performance** supports its claim
+  about customer impact.
+* Your resource group's **Activity log** shows the VM Run Command near the
+  fault start.
 
-Query the platform metric:
+Record which claims you checked and correct anything unsupported. Do not
+accept a cause only because it sounds plausible.
 
-=== "Bash"
+<!-- SCREENSHOT: CPU spike, fired alert, and agent findings for the same assigned VM and time range -->
 
-    ```bash
-    az monitor metrics list \
-      --resource "${VM_RESOURCE_ID}" \
-      --metric "Percentage CPU" \
-      --interval PT1M \
-      --aggregation Average Maximum \
-      --start-time "${INCIDENT_START}" \
-      --output table
-    ```
+### Task 6: Reset CPU
 
-=== "PowerShell"
+Select **Reset incident** in the CPU launcher, then **Check fault status**.
+CPU should be inactive; the PostgreSQL state should be unchanged.
 
-    ```powershell
-    az monitor metrics list `
-      --resource $env:VM_RESOURCE_ID `
-      --metric "Percentage CPU" `
-      --interval PT1M `
-      --aggregation Average Maximum `
-      --start-time $INCIDENT_START `
-      --output table
-    ```
+Refresh orders and status. Watch the newest CPU samples return toward the
+healthy range. The alert resolves after its evaluation window is healthy.
+If the ten-minute fault already expired, still check recovery.
 
-Query request impact:
+Save the reset and recovery times. Do not start the next incident until the
+app is healthy.
 
-=== "Bash"
-
-    ```bash
-    az monitor log-analytics query \
-      --workspace "${LOG_ANALYTICS_CUSTOMER_ID}" \
-      --analytics-query "
-    AppRequests
-    | where TimeGenerated > ago(45m)
-    | where AppRoleName == 'orders-api'
-    | summarize
-        Requests = sum(ItemCount),
-        SuccessRate = round(100.0 * sumif(ItemCount, Success == true) / sum(ItemCount), 2),
-        P95Ms = round(percentile(DurationMs, 95), 1)
-      by bin(TimeGenerated, 1m)
-    | order by TimeGenerated asc
-    " \
-      --output table
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    $query = @'
-    AppRequests
-    | where TimeGenerated > ago(45m)
-    | where AppRoleName == 'orders-api'
-    | summarize
-        Requests = sum(ItemCount),
-        SuccessRate = round(100.0 * sumif(ItemCount, Success == true) / sum(ItemCount), 2),
-        P95Ms = round(percentile(DurationMs, 95), 1)
-      by bin(TimeGenerated, 1m)
-    | order by TimeGenerated asc
-    '@
-
-    az monitor log-analytics query `
-      --workspace $env:LOG_ANALYTICS_CUSTOMER_ID `
-      --analytics-query $query `
-      --output table
-    ```
-
-Check the control-plane change:
-
-=== "Bash"
-
-    ```bash
-    az monitor activity-log list \
-      --resource-id "${VM_RESOURCE_ID}" \
-      --offset 2h \
-      --query "[].{Time:eventTimestamp, Operation:operationName.localizedValue, Status:status.value, Caller:caller}" \
-      --output table
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    az monitor activity-log list `
-      --resource-id $env:VM_RESOURCE_ID `
-      --offset 2h `
-      --query "[].{Time:eventTimestamp, Operation:operationName.localizedValue, Status:status.value, Caller:caller}" `
-      --output table
-    ```
-
-The expected causal chain is: authenticated Run Command started a bounded guest
-unit, VM CPU crossed the threshold, and request behavior changed in the same
-window. PostgreSQL dependency failures are not required and should not be
-invented.
-
-### Task 8: Mitigate and prove recovery
-
-The fault stops after ten minutes, but reset it explicitly once you have enough
-evidence:
-
-=== "Bash"
+??? info "Terminal reset"
+    With the [prepared terminal](../30-appendix/01-variables.md#terminal-setup-for-an-assigned-environment):
 
     ```bash
     python scripts/workshop.py fault reset-cpu
@@ -397,53 +170,30 @@ evidence:
     python scripts/workshop.py smoke
     ```
 
-=== "PowerShell"
+    In PowerShell, use `python .\scripts\workshop.py` for the same commands.
 
-    ```powershell
-    python scripts/workshop.py fault reset-cpu
-    python scripts/workshop.py fault status
-    python scripts/workshop.py smoke
-    ```
+## Check before moving on
 
-Keep the load generator running for another five minutes. In the VM Metrics
-blade, watch **Percentage CPU** return toward its healthy range. In
-Application Insights, confirm request duration also recovers. The Azure Monitor
-alert auto-resolves after the evaluation window is healthy.
+* [ ] You saved and checked the Review response plan.
+* [ ] CPU crossed the threshold and the alert reached the agent.
+* [ ] You checked the agent's cause and impact claims.
+* [ ] CPU is inactive and the Orders app is healthy.
 
-In the optional Orders GUI, select **Refresh orders** and **Refresh status**.
-Confirm that any slow, timeout, or unavailable state returns to a successful
-response with normal latency.
+## Quick check
 
-Record fault start, degradation start, alert time, mitigation time, recovery
-time, and alert resolution in `.workshop/notes/incident-01-cpu.md`.
+??? question "Why does the alert arrive after CPU first rises?"
+    The rule needs a five-minute average above its threshold. Detection is
+    later than the start of the problem.
 
-## Validation
+??? question "Did stopping the fault fix a production CPU problem?"
+    No. It ended this exercise. A real incident still needs the offending
+    workload, demand, or capacity problem understood.
 
-* [x] CPU pressure was started through authenticated Run Command.
-* [x] The VM chart visibly crossed 80 percent CPU.
-* [x] You compared API behavior with the same chart window.
-* [x] `alert-orders-high-cpu` fired at Sev2.
-* [x] The response plan created or updated an SRE Agent investigation.
-* [x] You verified the diagnosis with platform metrics, requests, and Activity Log.
-* [x] CPU and request behavior returned to baseline after reset.
-* [x] The optional Orders GUI showed customer-facing degradation and recovery, or the terminal fallback captured both.
+## Next
 
-## Knowledge check
-
-??? question "Why is the alert time later than the degradation start?"
-    The metric must be sampled, the five-minute average must cross the threshold, and the rule must evaluate. The difference is detection latency. Record both times rather than treating the alert timestamp as the incident start.
-
-??? question "Does resetting the fault remediate the underlying production risk?"
-    It mitigates this synthetic event. A real CPU incident still needs identification of the offending workload, capacity policy, code path, or demand change, followed by a durable engineering change. Stopping the worker restores service but does not make future saturation impossible.
-
-??? question "Why is Activity Log evidence important here?"
-    CPU metrics prove saturation but not what started it. The Run Command operation supplies a correlated control-plane event. Together they support causation more strongly than two telemetry lines moving at the same time.
-
-## Next steps
-
-[Next: Module 04 - Respond to PostgreSQL Connectivity Loss :material-arrow-right:](../04-incident-postgresql/index.md){ .md-button .md-button--primary }
+[Respond to PostgreSQL connectivity loss :material-arrow-right:](../04-incident-postgresql/index.md){ .md-button .md-button--primary }
 
 <div class="sre-nav" markdown>
-[:material-arrow-left: Module 02 - Operate the Response Plan](../02-operate-response-plan/index.md)
-[Module 04 - Respond to PostgreSQL Connectivity Loss :material-arrow-right:](../04-incident-postgresql/index.md)
+[:material-arrow-left: Module 01 - Access and Understand the Workshop](../01-deploy-and-validate/index.md)
+[Module 03 - Respond to PostgreSQL Connectivity Loss :material-arrow-right:](../04-incident-postgresql/index.md)
 </div>

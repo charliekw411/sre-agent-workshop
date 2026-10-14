@@ -1,285 +1,77 @@
 ---
 title: Cost Management
-description: Understand, monitor, reduce, and stop the costs of the Orders VM, private PostgreSQL, monitoring, and Azure SRE Agent workshop.
-ms.date: 2026-10-12
+description: Know what continues to cost money and who stops workshop activity and deletes the resources.
+ms.date: 2026-10-14
 ms.topic: concept
 keywords:
-  - azure cost management
-  - postgresql flexible server costs
-  - virtual machine costs
-  - azure monitor costs
-estimated_reading_time: 9
+  - azure costs
+  - scheduled tasks
+  - workshop cleanup
+estimated_reading_time: 4
 ---
 
-## Overview
+## What participants need to know
 
-The workshop is disposable but not free. Charges continue until resources are
-deleted. Pricing varies by subscription, region, currency, agreement, usage,
-and Azure SRE Agent offer. Use the Azure pricing calculator and Cost Management
-rather than treating a workshop estimate as a quote.
+Resetting an incident restores the app. It does not stop Azure charges.
+Closing the browser does not stop the VM, database, or scheduled task.
 
-Resetting CPU or PostgreSQL connectivity only restores the normal service state.
-It does not stop any resource or stop billing.
+In [Module 05](../06-cleanup/index.md), reset both faults, turn off your
+recurring task, and save your evidence. Leave resource deletion to your
+facilitator.
 
-## Cost drivers
+## What costs money
 
-| Resource | Workshop configuration and cost characteristic |
+| Resource | Cost continues while |
 | --- | --- |
-| Ubuntu VM | `Standard_D2as_v5` by default; compute is billed while allocated |
-| VM supporting resources | The VM's required compute storage, NIC, and public endpoint remain until deletion |
-| PostgreSQL Flexible Server | PostgreSQL 16, `Standard_B1ms`, Burstable compute |
-| PostgreSQL storage | 32 GiB provisioned with auto-grow enabled |
-| PostgreSQL backup | Seven-day locally redundant backup retention; usage and policy determine billed backup consumption |
-| Private networking | VNet, delegated subnet, private DNS zone, and link; review current service pricing |
-| Standard public IP | Can incur charges while retained |
-| Log Analytics | Ingestion and retention; workshop daily cap is 1 GB |
-| Application Insights | Workspace-based request, dependency, exception, and availability telemetry |
-| PostgreSQL diagnostics | Server logs and metrics sent to the workspace contribute to ingestion |
-| Azure Monitor alerts | Metric and scheduled-query rule evaluation can incur charges |
-| Azure SRE Agent | Current agent and model pricing; always-on charges can apply |
-| Optional incident workflow | Reuses the workload and agent; repeat investigations and optional connector operations can add usage |
-| Scheduled health check and Live Reports | Each task run and each report creation or update consumes Azure Agent Units; reloading a report that only reads connector data does not |
-| Network transfer | Normally small for the workshop, but not guaranteed to be zero |
+| VM and its storage | The VM is allocated; storage remains even when it is stopped |
+| PostgreSQL | Compute, provisioned storage, and backups remain |
+| Public IP and private DNS | The resources remain |
+| Monitoring and alerts | Data is ingested/retained and rules are evaluated |
+| SRE Agent | The agent exists and agent operations run, according to the current offer |
+| Scheduled health check | The enabled task keeps running |
+| Live Report | You create/update it, or add model-generated analysis on refresh |
 
-The PostgreSQL incident changes one NSG rule between `Allow` and `Deny`. It does
-not resize, stop, or delete the server, so its cost continues during and after
-the exercise.
+Prices depend on region, subscription, agreement, and usage. Use the
+[Azure pricing calculator](https://azure.microsoft.com/pricing/calculator/)
+and actual Cost Management records, not a fixed workshop quote.
 
-The [optional incident workflow](../incident-workflow/index.md) adds no VM,
-database, or App Service. Repeating the incident still consumes agent units and
-telemetry ingestion. Complementary title filters prevent intentionally routing
-one alert to both plans, but related-alert merging is not an exactly-once
-execution guarantee. Remove the workflow after preserving evidence:
+The lab uses one VM and a small, private PostgreSQL server without high
+availability. These save cost at the expense of resilience. They are not
+production recommendations.
 
-```bash
-python scripts/workshop.py incident-workflow remove
-```
+## Health-check and report usage
 
-Removal restores routing; it does not stop the existing agent's billing,
-delete shared connections, remove a GitHub issue, or recall email.
+Each scheduled run and report creation/update consumes Azure Agent Units.
+Reloading a report that only queries connector data does not consume
+active-flow units. Model-generated analysis on each refresh does, so the
+workshop report excludes it.
 
-## Architecture and cost tradeoff
+Use the prepared report in the core module. If you author one in the optional
+exercise, update the existing report rather than creating copies.
 
-Running PostgreSQL on the Orders VM could reduce resource count, but it would
-couple application and database lifecycle and remove the private dependency
-boundary taught in Module 04. A public managed database could avoid private DNS
-configuration but would expose a public endpoint.
+Check **Settings > Agent consumption** in the SRE Agent portal. Usage records
+can lag. The configured 500-unit monthly limit and Log Analytics 1 GB/day cap
+are safeguards, not a complete spending limit.
 
-Private Flexible Server was selected for repeatable provisioning, managed
-database lifecycle, private networking, Entra authentication, and a realistic
-dependency incident. To keep the lab affordable, it uses `Standard_B1ms`, no
-HA, one application VM, one region, and seven-day locally redundant backups.
-Those choices reduce cost and resilience together. They are not production
-recommendations.
+## Organizer cost controls
 
-## Free Account considerations
+Before class, set a budget and notifications for the workshop scopes.
+Include the subscription owner. A budget notifies; it does not stop or
+delete resources.
 
-Initial Free Account credit can pay for eligible services while valid. It does
-not make the default application VM or PostgreSQL Flexible Server permanently
-free.
+Review **Cost Management > Cost analysis**, filtered to the relevant resource
+groups. Participants may not have billing access. Records can arrive after
+the workshop or after deletion.
 
-Preflight reports VM quota and regional restrictions and checks that PostgreSQL
-16 with `Standard_B1ms` is advertised. It never:
+Do not deallocate participant VMs while exercises or alert collection are
+running. Stopping the VM alone leaves database, storage, monitoring, IP,
+and agent costs.
 
-* Upgrades a subscription.
-* Removes a spending limit.
-* Requests quota.
-* Changes region.
-* Substitutes another VM or PostgreSQL SKU.
-
-The Log Analytics 1 GB/day setting and any SRE Agent usage limit are safeguards,
-not complete monetary caps. Ingestion can be delayed, and service-specific
-charges can continue after a cap affects data or active usage.
-
-## Scheduled health check and Live Report
-
-The Module 05 scheduled task asks the agent to plan, query, chart, and write a
-report on every run. Each run consumes Azure Agent Units, and the task repeats on
-weekdays until you remove it. Creating or updating a Live Report also consumes
-units. Reloading a report that only retrieves data through connector tools does
-not, but a section that asks a model to summarize the data consumes units on
-every refresh, so the workshop prompt excludes model-assisted analysis.
-
-In testing, about an hour of Live Report authoring (three report builds, one
-update, and several follow-up messages) showed 45 of the 500 monthly units
-used. The usage figure updates in batches and lagged by more than ten minutes, so
-read it after the work rather than during it. Ask each student to build the
-report once and to fix defects in its authoring thread instead of starting new
-reports.
-
-The agent has a 500 unit monthly limit. Like the Log Analytics cap, it is a
-safeguard rather than a complete monetary cap. Check **Settings** > **Agent
-consumption** in the SRE Agent portal, and remove the schedule when you finish:
-
-```bash
-python scripts/workshop.py health-check remove
-```
-
-Deleting the environment also deletes the agent, its tasks, and its Live
-Reports.
-
-## Monitor actual cost
-
-In the Azure portal:
-
-1. Open **Cost Management + Billing**.
-2. Select **Cost analysis**.
-3. Filter to the workshop subscription and resource group.
-4. Group by **Resource type**, then by **Resource**.
-5. Use a range that includes deployment and cleanup.
-
-Look separately for Compute, PostgreSQL Flexible Server, Azure Monitor, public
-IP, and Azure SRE Agent charges. Cost records can lag by 8 to 24 hours and can
-appear after resource deletion.
-
-If the subscription exposes consumption records:
-
-=== "Bash"
-
-    ```bash
-    source .workshop/workshop.env
-    az consumption usage list \
-      --start-date "<yyyy-mm-dd>" \
-      --end-date "<yyyy-mm-dd>" \
-      --query "[?resourceGroup=='${RESOURCE_GROUP}'].{Resource:instanceName,Cost:pretaxCost,Currency:currency}" \
-      --output table
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    . ./.workshop/workshop.ps1
-    az consumption usage list `
-      --start-date "<yyyy-mm-dd>" `
-      --end-date "<yyyy-mm-dd>" `
-      --query "[?resourceGroup=='$env:RESOURCE_GROUP'].{Resource:instanceName,Cost:pretaxCost,Currency:currency}" `
-      --output table
-    ```
-
-Sponsored, enterprise, and classroom subscriptions can expose different billing
-views or withhold this command from participants.
-
-## Pause the application VM
-
-For a short break, deallocate the VM:
-
-=== "Bash"
-
-    ```bash
-    az vm deallocate \
-      --resource-group "${RESOURCE_GROUP}" \
-      --name "${VM_NAME}"
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    az vm deallocate `
-      --resource-group $env:RESOURCE_GROUP `
-      --name $env:VM_NAME
-    ```
-
-Deallocation stops application VM compute charges. It does not remove or stop:
-
-* PostgreSQL Flexible Server compute, storage, or backup retention.
-* Private DNS or network resources.
-* The public IP and VM supporting resources.
-* Monitoring, scheduled-query alerts, or retained telemetry.
-* Azure SRE Agent.
-
-The public API and new application telemetry are unavailable while the VM is
-deallocated.
-
-Start and revalidate before continuing:
-
-=== "Bash"
-
-    ```bash
-    az vm start \
-      --resource-group "${RESOURCE_GROUP}" \
-      --name "${VM_NAME}"
-    python scripts/workshop.py fault reset
-    python scripts/workshop.py smoke
-    python scripts/workshop.py inspect
-    python scripts/workshop.py telemetry
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    az vm start `
-      --resource-group $env:RESOURCE_GROUP `
-      --name $env:VM_NAME
-    python scripts/workshop.py fault reset
-    python scripts/workshop.py smoke
-    python scripts/workshop.py inspect
-    python scripts/workshop.py telemetry
-    ```
-
-Do not deallocate during an incident or while waiting for alert evidence.
-
-## Configure a budget
-
-Before a class:
-
-1. Open **Cost Management** > **Budgets**.
-2. Select the subscription or workshop resource-group scope.
-3. Choose an amount and end date based on current regional prices.
-4. Add notifications below, at, and above expected spend.
-5. Include the organizer or subscription owner as a recipient.
-
-A budget sends notifications. It does not automatically reset incidents, stop
-resources, or delete the environment.
-
-## Stop all workshop costs
-
-First restore the normal state so final evidence and deletion begin from a known
-configuration:
-
-=== "Bash"
-
-    ```bash
-    source .workshop/workshop.env
-    python scripts/workshop.py fault reset
-    python scripts/workshop.py fault status
-    python scripts/workshop.py health-check remove
-    azd down --purge --force
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    . ./.workshop/workshop.ps1
-    python scripts/workshop.py fault reset
-    python scripts/workshop.py fault status
-    python scripts/workshop.py health-check remove
-    azd down --purge --force
-    ```
-
-Cleanup removes the resource group and its:
-
-* VM, public endpoint, and supporting resources.
-* VNet, subnets, NSG, private DNS zone, and link.
-* PostgreSQL server, database, and retained backups.
-* Log Analytics, Application Insights, diagnostics, and alerts.
-* SRE Agent, connectors, identities, scheduled tasks, and Live Reports.
-
-Verify removal:
-
-=== "Bash"
-
-    ```bash
-    az group exists --name "${RESOURCE_GROUP}"
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    az group exists --name $env:RESOURCE_GROUP
-    ```
-
-The expected result is `false`. Billing entries already incurred can arrive
-later.
+After participants finish, follow
+[organizer cleanup](07-organizer-guide.md#after-the-workshop). For your own
+independent deployment, use
+[self-deployment cleanup](06-self-deployment.md#delete-your-own-environment).
+Verify deletion; an unreachable Orders URL is not enough.
 
 <div class="sre-nav" markdown>
 [:material-arrow-left: Troubleshooting](02-troubleshooting.md)

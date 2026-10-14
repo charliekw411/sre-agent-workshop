@@ -1,333 +1,101 @@
 ---
-title: Module 02 - Operate the SRE Agent Response Plan
-description: Verify the read-only Azure SRE Agent, inspect its Azure Monitor response plan, and rehearse the human review workflow before an alert fires.
-ms.date: 2026-10-12
-ms.topic: how-to
+title: SRE Configuration Reference
+description: Settings, permissions, and monitoring used by the reactive and proactive workshop exercises.
+ms.date: 2026-10-14
+ms.topic: reference
 keywords:
   - azure sre agent
   - response plan
-  - azure monitor alerts
-  - review mode
-estimated_reading_time: 16
+  - scheduled tasks
+estimated_reading_time: 5
 ---
 
-<ul class="sre-meta">
-<li class="duration">Estimated time: 25 minutes</li>
-<li>Module 02</li>
-<li>Hands-on</li>
-</ul>
+This is an optional reference. Start the hands-on configuration work in
+[Module 02](../03-incident-high-cpu/index.md).
 
-## Overview
+## Response plan
 
-`azd up` creates an enabled response plan named
-`workshop-sev1-sev2-review`. It accepts Azure Monitor Sev1 and Sev2 alerts,
-routes them to the SRE Agent's coordinating agent, allows related alerts to be
-merged within three hours, and runs in **Review** mode.
+The existing `workshop-sev1-sev2-review` plan sends Azure Monitor alerts to the
+agent. Edit this plan rather than adding a second plan with the same filters.
 
-Review mode defines the operating workflow for both incidents:
-
-1. Azure Monitor detects a threshold breach.
-2. The response plan routes the alert to Azure SRE Agent.
-3. The agent gathers resource and telemetry evidence.
-4. You review its findings and verify material claims.
-5. You run any mitigation through your own authenticated session.
-6. Azure Monitor and the agent observe recovery.
-
-The runtime is intentionally read-only. It can investigate, but it cannot run VM
-fault commands, restart the VM, change the API, or delete resources.
-
-## Learning objectives
-
-* Inspect the SRE Agent resource and monitoring connectors.
-* Verify the enabled Sev1/Sev2 response plan and Review mode.
-* Explain the identities and least-privilege boundary.
-* Inspect the alert rules that feed the response plan.
-* Tie healthy Orders GUI activity to API and PostgreSQL dependency telemetry.
-* Rehearse a healthy-state agent assessment and verify it visually.
-
-## Response workflow
-
-```mermaid
-sequenceDiagram
-    participant GUI as Orders browser GUI
-    participant API as Orders API and VM
-    participant DB as Private PostgreSQL
-    participant Monitor as Azure Monitor
-    participant Plan as Response plan
-    participant Agent as Azure SRE Agent
-    participant Human as Workshop operator
-
-    Human->>GUI: Browse orders or refresh status
-    GUI->>API: Customer and health requests
-    API->>DB: Entra-authenticated TLS queries
-    API->>Monitor: Requests and dependency telemetry
-    DB->>Monitor: Resource diagnostics
-    Monitor->>Plan: Sev1 or Sev2 alert
-    Plan->>Agent: Start or merge investigation
-    Agent->>Monitor: Read resources, metrics, logs, and traces
-    Agent-->>Human: Findings and proposed response
-    Human->>Monitor: Verify charts and raw evidence
-    Human->>API: Run approved CPU reset through Azure RBAC
-    Human->>Monitor: Restore the scoped PostgreSQL NSG rule when required
-    API->>Monitor: Recovery requests and dependencies
-    Human-->>Agent: Accept, correct, or reject conclusions
-```
-
-## Tasks
-
-### Task 1: Verify the agent resource
-
-=== "Bash"
-
-    ```bash
-    source .workshop/workshop.env
-
-    az resource show \
-      --ids "${SRE_AGENT_RESOURCE_ID}" \
-      --api-version 2025-05-01-preview \
-      --query "{Name:name, State:properties.provisioningState, Endpoint:properties.agentEndpoint, Access:properties.actionConfiguration.accessLevel, Mode:properties.actionConfiguration.mode}" \
-      --output table
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    . ./.workshop/workshop.ps1
-
-    az resource show `
-      --ids $env:SRE_AGENT_RESOURCE_ID `
-      --api-version 2025-05-01-preview `
-      --query "{Name:name, State:properties.provisioningState, Endpoint:properties.agentEndpoint, Access:properties.actionConfiguration.accessLevel, Mode:properties.actionConfiguration.mode}" `
-      --output table
-    ```
-
-Expect `Succeeded`, access level `Low`, and action mode `Review`.
-
-In the Azure portal, open the SRE Agent resource from the workshop resource
-group. Confirm that the Application Insights and Log Analytics data connectors
-refer to this workshop's resources.
-
-### Task 2: Verify the response plan
-
-In the SRE Agent experience, open **Response plans** and select
-`workshop-sev1-sev2-review`. Confirm:
-
-| Setting | Expected value |
+| Setting | Workshop value |
 | --- | --- |
 | Incident platform | Azure Monitor |
-| Priorities | Sev1 and Sev2 |
-| Handling agent | Coordinating or meta agent |
-| Mode | Review |
-| Enabled | Yes |
-| Merge related incidents | Enabled |
-| Merge window | 3 hours |
+| Severity | Sev1 and Sev2 |
+| Handling agent | Coordinating or main agent |
+| Autonomy level | Review |
+| Status | On |
+| Merge/reinvestigation window | 3 hours |
 | Maximum investigation attempts | 3 |
 
-The post-provision hook read the configuration back after creating it. Its local
-evidence is stored in:
+An alert can update an existing investigation instead of starting a new
+thread. Match the alert, resource, and timestamps before deciding that an
+investigation is missing.
 
-=== "Bash"
+## Alert rules
 
-    ```bash
-    cat ".workshop/${AZURE_ENV_NAME}/sre-agent-configuration.json"
-    ```
+Find these enabled rules in your assigned resource group:
 
-=== "PowerShell"
-
-    ```powershell
-    Get-Content ".workshop/$env:AZURE_ENV_NAME/sre-agent-configuration.json"
-    ```
-
-Do not create a second catch-all response plan. Two overlapping enabled plans
-make alert routing and investigation ownership ambiguous.
-
-The [optional incident-workflow module](../incident-workflow/index.md) after
-Module 04 demonstrates a safe two-plan setup. Its installer keeps both plans
-enabled but uses disjoint scalar title filters: PostgreSQL uses the new plan,
-while CPU and HTTP 5xx use this plan. Removal restores this plan's original
-configuration. Do not reproduce that setup by adding only a positive filter to
-a second plan, or by trusting stored advanced arrays without a dispatch test.
-
-<!-- SCREENSHOT: SRE Agent response plan showing Sev1/Sev2 Azure Monitor routing in Review mode -->
-
-### Task 3: Review the permission boundary
-
-The agent uses both system-assigned and operational user-assigned identities for
-resource and connector access. Review the assignments:
-
-=== "Bash"
-
-    ```bash
-    az role assignment list \
-      --assignee "${SRE_AGENT_PRINCIPAL_ID}" \
-      --all \
-      --query "[].{Role:roleDefinitionName, Scope:scope}" \
-      --output table
-
-    az role assignment list \
-      --assignee "${SRE_AGENT_IDENTITY_PRINCIPAL_ID}" \
-      --all \
-      --query "[].{Role:roleDefinitionName, Scope:scope}" \
-      --output table
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    az role assignment list `
-      --assignee $env:SRE_AGENT_PRINCIPAL_ID `
-      --all `
-      --query "[].{Role:roleDefinitionName, Scope:scope}" `
-      --output table
-
-    az role assignment list `
-      --assignee $env:SRE_AGENT_IDENTITY_PRINCIPAL_ID `
-      --all `
-      --query "[].{Role:roleDefinitionName, Scope:scope}" `
-      --output table
-    ```
-
-The intended grants are resource read access and Log Analytics read access.
-Neither identity should have `Owner`, `Contributor`, VM administration, NSG
-write, or fault execution rights.
-
-!!! important "Configuration access is not runtime authority"
-    You receive an agent-scoped administrator role so deployment can configure
-    the response plan and so you can install the Module 05 scheduled task and
-    create Live Reports. That does not grant the agent runtime permission to
-    change the VM or the PostgreSQL fault rule. The human operator and the
-    read-only agent have different identities and responsibilities.
-
-### Task 4: Inspect the alert inputs
-
-In the Azure portal, open **Monitor** > **Alerts** > **Alert rules** and filter
-to the workshop resource group. Confirm these enabled rules:
-
-| Alert | Severity | Condition |
+| Rule | Severity | Condition |
 | --- | --- | --- |
-| `alert-orders-high-cpu` | Sev2 | VM average Percentage CPU above 80 percent for 5 minutes |
-| `alert-orders-postgresql-connectivity` | Sev1 | Any failed `PostgreSQL` application dependency in 5 minutes |
+| `alert-orders-high-cpu` | Sev2 | Average VM CPU above 80 percent for 5 minutes |
+| `alert-orders-postgresql-connectivity` | Sev1 | Any failed PostgreSQL dependency in 5 minutes |
 | `alert-orders-http-5xx` | Sev1 | More than 10 HTTP 5xx responses in 5 minutes |
 
-The CPU and PostgreSQL exercises deliberately trigger the first two rules. The
-PostgreSQL exercise can also trigger the HTTP 5xx rule when repeated
-database-backed requests return 503. The dependency rule identifies the
-underlying boundary, while the 5xx rule captures customer-facing impact. There
-is no public HTTP endpoint that fabricates errors.
+The database fault can trigger both the dependency and HTTP 5xx alerts.
+They show the failed connection and the customer impact, respectively.
 
-### Task 5: Tie a healthy request to visual evidence
+## Your access and the agent's access
 
-Open the workshop VM's **Monitoring** > **Metrics** blade and configure the
-**Percentage CPU** chart exactly as in Module 01. Open
-`SERVICE_ORDERS_API_ENDPOINT_URL` in another tab, confirm that all three status
-cards are healthy, and select **Refresh orders** once. The third status card is
-PostgreSQL and calls `/database`.
+Your account runs the fault controls. The agent has separate Azure identities
+for reading resources and monitoring data.
 
-The GUI establishes the customer view. Run the loop below as well because it
-creates a fixed, repeatable sample for the telemetry exercise:
+| Operation | SRE Agent role needed |
+| --- | --- |
+| Chat and manage scheduled tasks | Standard User |
+| Edit response plans and create custom agents | Author |
+| Approve Live Report tools or delete a report | Administrator |
 
-=== "Bash"
+For the core exercises, your facilitator must arrange Standard User and
+Author access on your own agent, or an equivalent agent-scoped Administrator
+assignment. Azure Contributor alone does not replace these SRE Agent roles.
+Ask your facilitator if an operation is denied; do not assign yourself roles.
 
-    ```bash
-    for i in $(seq 1 30); do
-      curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/health/ready" > /dev/null
-      curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
-    done
-    ```
+The workshop agent is configured with resource and Log Analytics read access.
+**Review** mode asks for approval of Azure changes, but it is not a substitute
+for permissions or a read-only procedure. Do not approve resource changes in
+these exercises. You reset incidents through the workshop controls.
 
-=== "PowerShell"
+See the official [SRE Agent role reference](https://learn.microsoft.com/azure/sre-agent/user-roles)
+for the full permission table.
 
-    ```powershell
-    1..30 | ForEach-Object {
-      Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/health/ready" |
-        Out-Null
-      Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" |
-        Out-Null
-    }
-    ```
+## Proactive configuration
 
-Refresh the VM chart after one or two minutes. Also open Application Insights
-**Performance** and verify that the `GET /health/ready` and `GET /orders`
-operations are visible for the same time range.
+[Module 04](../05-scheduled-health-check/index.md) uses the definitions added in
+[#33](https://github.com/charliekw411/sre-agent-workshop/pull/33):
 
-In Log Analytics **Logs**, verify healthy PostgreSQL dependencies:
+| Component | Name | Purpose |
+| --- | --- | --- |
+| Skill | `proactive-health-check` | The read-only measurement and reporting procedure |
+| Custom agent | `health-report-investigator` | Instructions and configured read-only tools |
+| Scheduled task | `orders-daily-health-report` | Schedule, prompt, and Review mode |
+| Live Report | `Orders Service Health` | A saved view you refresh and check against the logs |
 
-```kusto
-AppDependencies
-| where TimeGenerated > ago(30m)
-| where AppRoleName == "orders-api"
-| where DependencyType == "PostgreSQL"
-| summarize Samples = sum(ItemCount), Failures = sumif(ItemCount, Success == false)
-  by Name, bin(TimeGenerated, 5m)
-| order by TimeGenerated asc
-```
+The task uses `0 21 * * 0-4`, evaluated in UTC. This is weekdays at 09:00
+New Zealand Standard Time, or 10:00 during daylight time. UTC is the reference
+for comparing incidents; reports also show New Zealand time.
 
-The GUI calls those same API routes, so its requests use the same operation
-names. Requests for `/`, `/app.js`, and `/app.css` load the interface itself;
-focus the investigation on the underlying customer and status operations.
+Scheduled runs did not use the custom agent's tool list in testing. Check
+the actual tool calls, not just the configuration. The runs used the Log
+Analytics `App*` tables when the Application Insights query tool was unavailable.
 
-The purpose is not to create an alert. It is to rehearse the evidence path you
-will use after the response plan opens an investigation.
+## More detail
 
-### Task 6: Ask the agent for a healthy-state assessment
-
-Open the agent's chat experience and enter:
-
-```text
-Describe the workload in this resource group using only current Azure resource
-configuration and telemetry. Identify the public request path, the process that
-runs the API, the private PostgreSQL resource and network path, the workload
-identity, the monitoring data sources, and the current alert state. State which
-facts are directly observed and which are inferred.
-```
-
-Then ask:
-
-```text
-For the last 30 minutes, summarize Orders API request volume, success rate, P95
-duration, PostgreSQL dependency success, availability results, and VM CPU.
-State the current Azure Monitor alert state. Cite the metric or table behind
-each value. Do not propose a change unless you first identify an active
-incident.
-```
-
-Compare the answer with:
-
-* The VM **Percentage CPU** chart.
-* Application Insights **Performance**.
-* Azure Monitor **Alerts**.
-
-Save the response to `.workshop/notes/agent-healthy-state.md`. Mark unsupported
-or incorrect claims now; the same verification discipline applies during
-incidents.
-
-## Validation
-
-* [x] The SRE Agent is provisioned and connected to this workshop's telemetry.
-* [x] `workshop-sev1-sev2-review` is enabled for Sev1 and Sev2 in Review mode.
-* [x] The CPU, PostgreSQL connectivity, and HTTP 5xx alert rules are enabled.
-* [x] The agent identities have no workload write role.
-* [x] Healthy Orders GUI activity appeared under the expected API operation
-  names and `PostgreSQL` dependency type.
-* [x] A healthy endpoint call appears in the VM and Application Insights views.
-* [x] The agent's healthy-state assessment agrees with independently viewed evidence.
-
-## Knowledge check
-
-??? question "What does Review mode change?"
-    The agent can investigate and present a proposed response, but a human reviews the evidence and decides what action to execute. It is not permission to mutate the VM, and the Azure RBAC boundary remains authoritative even if a prompt asks for a change.
-
-??? question "Why can several alerts be merged into one incident?"
-    One underlying failure can cross multiple thresholds. PostgreSQL connectivity loss can produce both failed dependencies and HTTP 503 responses. Merging related alerts within a bounded window reduces duplicate investigations, but the human must still verify that their times, resources, and operations support one cause.
-
-??? question "Why retain an HTTP 5xx alert without an error-injection endpoint?"
-    Real applications can fail without a planned exercise. The alert covers genuine server errors while the workshop avoids placing a destructive unauthenticated control on the public API.
-
-## Next steps
-
-[Next: Module 03 - Respond to High CPU :material-arrow-right:](../03-incident-high-cpu/index.md){ .md-button .md-button--primary }
+* [Terminal setup and environment values](../30-appendix/01-variables.md)
+* [Troubleshooting](../30-appendix/02-troubleshooting.md)
+* [Optional health-check setup and Live Report authoring](../30-appendix/08-proactive-extensions.md)
 
 <div class="sre-nav" markdown>
-[:material-arrow-left: Module 01 - Deploy and Validate](../01-deploy-and-validate/index.md)
-[Module 03 - Respond to High CPU :material-arrow-right:](../03-incident-high-cpu/index.md)
+[Module 02 - Configure SRE and Respond to High CPU](../03-incident-high-cpu/index.md)
+[Workshop home :material-home:](../../index.md)
 </div>

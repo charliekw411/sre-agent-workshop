@@ -1,5 +1,5 @@
 site_name: Azure SRE Agent - Workshop
-site_description: A hands-on workshop for detecting, investigating, and resolving production incidents with Azure SRE Agent
+site_description: Configure Azure SRE Agent, investigate two faults, and run proactive checks on a prepared Orders workload
 site_url: https://charliekw411.github.io/sre-agent-workshop/
 
 repo_url: https://github.com/charliekw411/sre-agent-workshop
@@ -8,20 +8,22 @@ edit_uri: edit/main/docs
 
 nav:
   - Homepage: index.md
-  - Module 01 - Deploy and Validate: sre/01-deploy-and-validate/index.md
-  - Module 02 - Operate the Response Plan: sre/02-operate-response-plan/index.md
-  - Module 03 - Respond to High CPU: sre/03-incident-high-cpu/index.md
-  - Module 04 - Respond to PostgreSQL Connectivity Loss: sre/04-incident-postgresql/index.md
-  - Optional Module - Build an Incident Workflow: sre/incident-workflow/index.md
-  - Module 05 - Schedule a Health Check and Build a Live Report: sre/05-scheduled-health-check/index.md
-  - Module 06 - Preserve Evidence and Clean Up: sre/06-cleanup/index.md
+  - Module 01 - Access and Understand the Workshop: sre/01-deploy-and-validate/index.md
+  - Module 02 - Configure SRE and Respond to High CPU: sre/03-incident-high-cpu/index.md
+  - Module 03 - Respond to PostgreSQL Connectivity Loss: sre/04-incident-postgresql/index.md
+  - Module 04 - Deploy and Evaluate Proactive SRE Checks: sre/05-scheduled-health-check/index.md
+  - Module 05 - Reset and Preserve Evidence: sre/06-cleanup/index.md
   - About The Authors: sre/29-about-the-authors/index.md
   - Appendix:
-      - Workshop Variables: sre/30-appendix/01-variables.md
+      - SRE Configuration Reference: sre/02-operate-response-plan/index.md
+      - Terminal Setup, Variables, and Evidence: sre/30-appendix/01-variables.md
       - Troubleshooting: sre/30-appendix/02-troubleshooting.md
       - Cost Management: sre/30-appendix/03-cost-management.md
       - Running Locally or in Codespaces: sre/30-appendix/04-local-and-codespaces.md
-      - Site Azure Connection: sre/30-appendix/05-site-azure-connection.md
+      - Health-check Setup and Report Authoring (Optional): sre/30-appendix/08-proactive-extensions.md
+      - Self-deployment (Optional): sre/30-appendix/06-self-deployment.md
+      - Organizer Preparation and Cleanup: sre/30-appendix/07-organizer-guide.md
+      - Site Azure Connection (Organizers): sre/30-appendix/05-site-azure-connection.md
 
 theme:
   name: material

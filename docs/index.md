@@ -1,201 +1,82 @@
 ---
 title: Azure SRE Agent Workshop
-description: Deploy a public Orders API with private PostgreSQL, investigate CPU and database-connectivity incidents, verify Azure SRE Agent findings, and schedule a proactive health check.
-ms.date: 2026-10-12
+description: Use your prepared environment to configure SRE response, investigate two faults, and run proactive health checks.
+ms.date: 2026-10-14
 ms.topic: overview
 keywords:
   - azure sre agent
-  - site reliability engineering
-  - azure virtual machines
-  - postgresql
   - incident response
   - scheduled tasks
   - live reports
-estimated_reading_time: 7
+estimated_reading_time: 3
 ---
 
-<div class="sre-hero" markdown>
-<h1>Azure SRE Agent Workshop</h1>
-<p>Exercise a public API, observe its private managed database dependency, trigger two controlled incidents, verify how Azure SRE Agent responds, and schedule a proactive health check.</p>
-</div>
+Use your assigned Azure environment to configure SRE response, trigger two
+controlled faults, and watch the agent investigate. Then run a scheduled health
+check and review a Live Report.
 
-## What you deploy
+The infrastructure and your account are prepared before you arrive. The
+browser exercises do not require a local terminal or an Azure deployment.
 
-The workshop creates one same-region application and database environment:
+## Before you start
 
-* One Ubuntu 24.04 VM running the .NET 8 Orders API and browser GUI as a
-  hardened, non-root `orders-api` service.
-* A private Azure Database for PostgreSQL Flexible Server 16 using
-  `Standard_B1ms`, 32 GiB auto-grow storage, no high availability, and
-  seven-day locally redundant backups.
-* An Orders subnet at `10.240.0.0/27` and a delegated PostgreSQL subnet at
-  `10.240.0.32/27`.
-* Private DNS through `private.postgres.database.azure.com`, with database
-  public access disabled.
-* A public static IP and DNS name for the Orders API on HTTP port 8080.
-* Azure Monitor Agent, Log Analytics, workspace-based Application Insights,
-  and CPU, PostgreSQL dependency, and HTTP 5xx alerts.
-* A read-only Azure SRE Agent with a Sev1/Sev2 response plan in Review mode.
+Get your account, sign-in and MFA instructions, assigned resource group, and
+Orders GUI and SRE Agent links from your facilitator. Use that account and
+environment throughout the workshop.
 
-There is no public SSH or fault endpoint. CPU pressure uses authenticated Azure
-VM Run Command. The PostgreSQL incident changes one scoped outbound NSG child
-rule from `Allow` to `Deny`, then recycles only `orders-api` so stateful pooled
-connections cannot hide the outage.
-
-The Orders GUI on the VM is the customer view. This documentation site is the
-operator view. After Microsoft Entra sign-in, its incident launchers use the
-participant's delegated Azure token and RBAC. The Orders GUI never receives
-Azure tokens or administrative controls.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    User[Customer or workshop user] -->|HTTP :8080| IP[Static public IP and DNS]
-    IP --> VM[Ubuntu VM<br/>10.240.0.0/27]
-    VM --> API[orders-api<br/>.NET 8 and systemd]
-    API -->|Private DNS, TLS VerifyFull<br/>Entra managed identity, TCP 5432| PG[(PostgreSQL Flexible Server 16<br/>10.240.0.32/27)]
-
-    API --> AI[Application Insights]
-    VM --> AMA[Azure Monitor Agent]
-    AMA --> LAW[Log Analytics]
-    AI --> LAW
-    PG --> LAW
-    LAW --> Alerts[Azure Monitor alerts]
-    Alerts --> Agent[Azure SRE Agent]
-
-    Operator[Workshop operator] -->|Azure RBAC| RC[VM Run Command]
-    RC -->|CPU fault or orders-api-only recycle| VM
-    Operator -->|Scoped rule GET and PUT| Rule[PostgreSqlFaultInjection]
-    Rule -.Allow or Deny TCP 5432.-> PG
-```
-
-The VM's system-assigned managed identity is both the PostgreSQL Entra
-administrator and the runtime database identity. This keeps a disposable lab
-credential-free and repeatable, but it is more privileged than a production
-application should be. Production should separate schema administration from
-runtime access.
-
-A database on the same VM would be cheaper but would share lifecycle and
-failure with the API and would not provide a meaningful network dependency
-incident. A public managed database would retain managed lifecycle but add a
-public endpoint. Private Flexible Server provides independent lifecycle,
-private name resolution, and a realistic dependency boundary. The single API
-VM and no-HA database remain deliberate cost and failure-domain compromises.
-
-## What you learn
-
-* Establish a healthy customer, application, dependency, and infrastructure
-  baseline.
-* Prove that data survives an application VM restart because PostgreSQL has a
-  separate lifecycle.
-* Follow Azure Monitor alerts into an SRE Agent response-plan investigation.
-* Correlate failures with a specific authenticated control-plane change.
-* Verify agent claims with portal charts, Kusto queries, API responses, and
-  Activity Log.
-* Restore a narrowly scoped network rule without modifying database data.
-* Schedule a read-only agent health check and build a refreshable Live Report.
-* Preserve evidence and delete every workshop resource.
+The Orders app runs on one VM and stores synthetic orders in private
+PostgreSQL. Azure Monitor records its activity and sends alerts to the SRE
+Agent. You check the agent's findings and reset the faults yourself.
 
 ## Learning path
 
+| Module | What you do | Time |
+| --- | --- | --- |
+| [01 - Access and Understand the Workshop](sre/01-deploy-and-validate/index.md) | Sign in, review the architecture, and check the healthy app | 20 min |
+| [02 - Configure SRE and Respond to High CPU](sre/03-incident-high-cpu/index.md) | Save response-plan settings, trigger CPU pressure, watch the agent, and recover | 30 min |
+| [03 - Respond to PostgreSQL Connectivity Loss](sre/04-incident-postgresql/index.md) | Block one database connection, check the investigation, and restore it | 30 min |
+| [04 - Deploy and Evaluate Proactive SRE Checks](sre/05-scheduled-health-check/index.md) | Configure and run a scheduled task, check its findings, and refresh a report | 30 min |
+| [05 - Reset and Preserve Evidence](sre/06-cleanup/index.md) | Stop faults and the recurring task, save evidence, and hand back the environment | 10 min |
+
+Allow about two hours. Monitoring and alert waits vary.
+
 ```mermaid
 flowchart LR
-    M1[01 Deploy and validate]
-    M1 --> M2[02 Operate response plan]
-    M2 --> M3[03 Respond to high CPU]
-    M3 --> M4[04 Respond to PostgreSQL connectivity loss]
-    M4 -.Optional.-> IW[Build an incident workflow]
-    IW -.Return to the learning path.-> M5
-    M4 -->     M5[05 Schedule health check and Live Report]
-    M5 --> M6[06 Preserve evidence and clean up]
-
-    classDef setup fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a
-    classDef incident fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
-    classDef learn fill:#dcfce7,stroke:#15803d,color:#14532d
-
-    class M1,M2 setup
-    class M3,M4,IW incident
-    class M5,M6 learn
+    Access[Access and architecture] --> CPU[CPU exercise]
+    CPU --> PG[PostgreSQL exercise]
+    PG --> Health[Proactive checks]
+    Health --> Finish[Reset and save evidence]
 ```
 
-| Module | Outcome | Evidence |
-| --- | --- | --- |
-| 01 | Deploy, exercise the GUI, prove VM-independent persistence, and confirm telemetry | Healthy GUI, private database inspection, VM CPU, API and dependency telemetry |
-| 02 | Rehearse the Sev1/Sev2 Review response plan | Resource roles, response plan, alert rules, and healthy agent assessment |
-| 03 | Detect, investigate, and recover from CPU saturation | VM CPU, request duration, alert, Activity Log, and investigation |
-| 04 | Diagnose and restore PostgreSQL connectivity | NSG rule state, HTTP 503 readiness, failed dependencies, alert, and investigation |
-| 05 | Schedule a proactive health check and build a Live Report | Installed task, thread findings graded against KQL, and a refreshable report |
-| 06 | Preserve evidence and delete every workshop resource | Final healthy state, saved notes, report snapshot, resource inventory, and deletion proof |
-
-After Module 04, optionally
-[build an incident workflow](sre/incident-workflow/index.md) on the same
-environment. You install a dedicated investigator, partition two active
-response plans by title, grade an evidence-backed RCA, and review optional
-GitHub and Outlook follow-ups. Return to Module 05 without changing the
-numbered learning path.
-
-Allow about three and a half hours, including telemetry ingestion and alert
-evaluation waits.
-
-## Incident operating model
+For each incident, follow the same loop:
 
 ```text
-healthy signal -> authenticated bounded change -> customer and telemetry impact
-         -> Azure Monitor alert -> SRE Agent investigation
-         -> human verification -> human reset -> measured recovery -> learning
+configure SRE -> trigger the fault -> watch the agent -> check its claims -> reset
 ```
 
-The SRE Agent reads resources and telemetry and proposes a response. It has no
-permission to mutate the VM or NSG. You verify its claims and run an approved
-reset through your own authenticated session.
+## Ground rules
 
-Module 05 adds a proactive path that needs no fault: a scheduled, read-only agent
-health check and a refreshable Live Report. Both read the same telemetry, and
-neither changes Azure resources.
+* Use only your assigned environment and synthetic data.
+* Read the scope of each fault before starting it.
+* Check status before retrying an interrupted action.
+* Check important agent claims against the app, charts, or logs.
+* Reset one incident before starting the next.
+* Do not delete organizer-managed resources.
 
-The optional incident workflow adds no workload or new fault. It temporarily
-routes PostgreSQL titles to a dedicated investigator while the original plan
-uses the disjoint CPU/HTTP 5xx title prefix. Both remain
-Sev1/Sev2 Review plans. External issue/email follow-ups require separate,
-destination-specific approvals; workload recovery remains operator-owned.
-
-The PostgreSQL fault changes only `PostgreSqlFaultInjection`:
-
-```text
-Outbound TCP 5432
-10.240.0.0/27 -> 10.240.0.32/27
-priority 100
-Allow (healthy) -> Deny (incident) -> Allow (reset)
-```
-
-It does not change data, stop PostgreSQL, enable public access, or cause a broad
-network outage. `azd up` also reconciles the rule to `Allow`.
-
-## Workshop limitations
-
-This is not a production reference architecture:
-
-* The public API is unauthenticated HTTP.
-* The application and database are each single-instance.
-* PostgreSQL has no HA and its seven-day backups are locally redundant.
-* The application availability probe originates on the VM.
-* The VM runtime identity also holds database administrator privilege.
-* Only synthetic data belongs in the API.
-* Live Reports is a preview feature created in the portal, and the recurring
-  health check uses agent units until you remove it.
-* Azure resources continue to incur charges until deletion.
-
-Azure Policy must permit the public VM endpoint, private PostgreSQL resources,
-and required outbound access. The deployment creates no policy exemptions.
-
-## Get started
+If access or controls fail, ask your facilitator. Do not create replacement
+resources or add permissions yourself.
 
 [Start Module 01 :material-arrow-right:](sre/01-deploy-and-validate/index.md){ .md-button .md-button--primary }
-[Review cost considerations](sre/30-appendix/03-cost-management.md){ .md-button }
 
-!!! warning "Reset and delete the environment"
-    Resetting an incident does not stop billing. Before final evidence and
-    cleanup, run `python scripts/workshop.py fault reset`. Complete
-    [Module 06](sre/06-cleanup/index.md) with
-    `azd down --purge --force`.
+## Optional guides
+
+* [SRE configuration reference](sre/02-operate-response-plan/index.md)
+* [Terminal setup and environment values](sre/30-appendix/01-variables.md)
+* [Troubleshooting](sre/30-appendix/02-troubleshooting.md)
+* [Health-check setup and Live Report authoring](sre/30-appendix/08-proactive-extensions.md)
+* [Self-deployment](sre/30-appendix/06-self-deployment.md), if you are doing the
+  workshop independently
+* [Organizer preparation and cleanup](sre/30-appendix/07-organizer-guide.md)
+
+Resetting restores the app; it does not stop Azure charges. Organizers handle
+resource deletion after the workshop.
