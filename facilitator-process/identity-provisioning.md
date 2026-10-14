@@ -27,4 +27,26 @@ Run these commands from the repository root in PowerShell 7.4+ on Windows, using
 
    In Notepad, review the layout and use **File > Print**. Each block contains an alias, username, TAP, expiration, and workshop URL; give each participant only their own block.
 
-**The text file contains plaintext secrets.** Use a private terminal without logging and a trusted printer; delete the file after printing. Printing does not consume TAPs, but their one-hour validity runs from issuance. Check each expiration: rerunning `issue-taps` retains usable passes rather than resetting their timer.
+4. **Reissue TAPs only when the existing passes must be revoked.** Activate **Authentication Administrator** or **Privileged Authentication Administrator** in PIM first and wait until the role reports **Active**. The script requests a fresh device-code sign-in.
+
+   This example replaces the first five TAPs with single-use passes valid for six hours. The tenant TAP policy must allow at least 360 minutes.
+
+   ```powershell
+   $firstFive = 1..5 | ForEach-Object { 'participant-{0:d2}' -f $_ }
+
+   .\scripts\manage-participants.ps1 issue-taps @common `
+     -Alias $firstFive `
+     -ReplaceTaps `
+     -LifetimeMinutes 360
+
+   $handouts = .\scripts\manage-participants.ps1 show-taps @common `
+     -Alias $firstFive | Out-String -Width 240
+   if ([string]::IsNullOrWhiteSpace($handouts)) { throw 'No replacement handouts exported. Resolve the show-taps error above.' }
+   $printPath = Join-Path $env:LOCALAPPDATA "SreAgentWorkshop\$($common.TenantId)\$($common.Cohort)\replacement-handouts.txt"
+   Set-Content -LiteralPath $printPath -Value $handouts -Encoding utf8
+   notepad $printPath
+   ```
+
+   `-ReplaceTaps` immediately invalidates each participant's previous TAP. If an unused TAP only needs to be printed again, run `show-taps` without replacing it.
+
+**The text files contain plaintext secrets.** Use a private terminal without logging and a trusted printer; delete each file after printing. Printing does not consume TAPs or reset their validity window. Check each expiration: rerunning `issue-taps` without `-ReplaceTaps` retains usable passes rather than resetting their timer.
