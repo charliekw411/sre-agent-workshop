@@ -55,7 +55,47 @@ Run these commands from the repository root in PowerShell 7.4+ on Windows, using
    | SRE Agent reports `Forbidden: Access denied by PDP` | Rerun the cohort command to verify the agent-scoped SRE Agent Standard User assignment, then sign out and back in after RBAC propagation. |
    | A participant finishes with `Failed` | Resolve any external Azure registration or permission error, then rerun the exact same cohort command. Successful stages are skipped. |
 
-5. **Clean up after the workshop.** Delete the entire cohort the same day to stop Azure charges:
+5. **Start every participant VM on workshop day.** Run this after signing in with the deployment identity and before participants begin. It discovers the one VM in each saved participant resource group, starts it, and confirms Azure reports `VM running`.
+
+   ```powershell
+   $cohort = Get-Content .\.workshop\cohort\state.json -Raw | ConvertFrom-Json
+
+   foreach ($participant in $cohort.participants) {
+     $vms = @(az vm list `
+       --subscription $participant.subscriptionId `
+       --resource-group $participant.resourceGroup `
+       --show-details `
+       --output json | ConvertFrom-Json)
+
+     if ($LASTEXITCODE -ne 0 -or $vms.Count -ne 1) {
+       throw "Expected one VM for $($participant.participant) in $($participant.resourceGroup)."
+     }
+
+     $vm = $vms[0]
+     if ($vm.powerState -ne 'VM running') {
+       az vm start --ids $vm.id --only-show-errors
+       if ($LASTEXITCODE -ne 0) {
+         throw "Failed to start the VM for $($participant.participant)."
+       }
+     }
+
+     $powerState = az vm list `
+       --subscription $participant.subscriptionId `
+       --resource-group $participant.resourceGroup `
+       --show-details `
+       --query "[0].powerState" `
+       --output tsv
+
+     if ($powerState -ne 'VM running') {
+       throw "$($participant.participant) reported '$powerState' instead of 'VM running'."
+     }
+     Write-Host "[start] $($participant.participant): VM running"
+   }
+   ```
+
+   Do not issue participant handouts until every row reports `VM running`. Starting the VMs does not change TAP validity.
+
+6. **Clean up after the workshop.** Delete the entire cohort the same day to stop Azure charges:
 
    ```powershell
    python .\scripts\cohort.py cleanup --all --yes
