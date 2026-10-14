@@ -1,375 +1,131 @@
 ---
-title: Module 06 - Preserve Evidence and Clean Up
-description: Capture final portal evidence, stop workshop activity and the scheduled health check, preserve investigation artifacts, delete the Azure environment, and verify removal.
-ms.date: 2026-10-12
+title: Module 05 - Reset and Preserve Evidence
+description: Stop the workshop faults and recurring task, save useful evidence, and leave the environment for organizer cleanup.
+ms.date: 2026-10-14
 ms.topic: how-to
 keywords:
-  - cleanup
-  - azure developer cli
-  - cost management
+  - fault reset
   - incident evidence
-estimated_reading_time: 12
+  - workshop cleanup
+estimated_reading_time: 4
 ---
 
 <ul class="sre-meta">
-<li class="duration">Estimated time: 20 minutes</li>
-<li>Module 06</li>
+<li class="duration">Estimated time: 10 minutes</li>
+<li>Module 05</li>
 <li>Hands-on</li>
 </ul>
 
 ## Overview
 
-The workshop VM, PostgreSQL Flexible Server, private DNS and network resources,
-public IP, monitoring resources, and Azure SRE Agent continue to incur charges
-until deleted. Resetting an incident does not stop billing. This module captures
-final evidence, stops synthetic activity, restores the normal NSG state,
-preserves notes, removes the Azure environment, and verifies that the resource
-group is gone.
-
-Deleting the resource group permanently removes the PostgreSQL server, its
-locally redundant backups, and all synthetic orders. Preserve only evidence
-appropriate for your organization's data-handling policy.
-
-The recurring health check from Module 05 runs on weekdays and consumes agent
-units on every run. This module saves a snapshot of the Live Report, removes the
-scheduled task, and only then deletes the environment.
-
-## Learning objectives
-
-* Capture final healthy Orders GUI, CPU, PostgreSQL dependency, and API views.
-* Stop load generation and reset CPU and PostgreSQL fault controls.
-* Remove the recurring health-check task and save a Live Report snapshot.
-* Preserve notes, charts, alert history, and agent findings.
-* Review the exact Azure scope before deletion.
-* Delete and verify the workshop environment.
+Leave your environment healthy and save what you learned. Your facilitator
+deletes the Azure resources after the workshop; you do not delete them.
 
 ## Tasks
 
-### Task 1: Capture the final healthy visual state
-
-=== "Bash"
-
-    ```bash
-    source .workshop/workshop.env
-    python scripts/workshop.py fault reset
-    python scripts/workshop.py smoke
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    . ./.workshop/workshop.ps1
-    python scripts/workshop.py fault reset
-    python scripts/workshop.py smoke
-    ```
-
-Open `SERVICE_ORDERS_API_ENDPOINT_URL` in the Orders GUI. Select **Refresh
-orders** and **Refresh status**, confirm the service is available, and capture a
-final screenshot with only synthetic order data visible.
-
-Send one final minute of healthy traffic:
+### Task 1: Reset both faults
 
-=== "Bash"
-
-    ```bash
-    for i in $(seq 1 60); do
-      curl --silent --fail "${SERVICE_ORDERS_API_ENDPOINT_URL}/orders" > /dev/null
-      sleep 1
-    done
-    ```
+Stop any terminal load generator you chose to run with ++ctrl+c++.
 
-=== "PowerShell"
-
-    ```powershell
-    1..60 | ForEach-Object {
-      Invoke-RestMethod "$env:SERVICE_ORDERS_API_ENDPOINT_URL/orders" |
-        Out-Null
-      Start-Sleep -Seconds 1
-    }
-    ```
-
-Before deleting anything:
-
-1. Save the final healthy Orders GUI screenshot.
-2. Open the VM **Monitoring** > **Metrics** blade.
-3. Display **Percentage CPU** over the full workshop window.
-4. Confirm the current segment is healthy and the earlier CPU spike remains
-   visible.
-5. Open Application Insights **Performance** and confirm current endpoint
-   traffic.
-6. Open **Monitor** > **Alerts**, include resolved alerts, and capture the CPU
-   and PostgreSQL connectivity alert history.
-7. Save the final SRE Agent investigation summaries.
-8. Open the **Orders Service Health** Live Report from Module 05 and select
-   **Reload**. From the overflow menu, select **Download HTML** to save a static,
-   sanitized snapshot. The file cannot call SRE Agent tools, but handle it
-   according to the sensitivity of its data. Skip this step if you did not build
-   the report.
-9. In Log Analytics, capture the PostgreSQL dependency failure and recovery
-   window from Module 04.
-
-<!-- SCREENSHOT: Final VM CPU chart showing baseline, incident spike, and recovered state -->
-
-This is the final required portal checkpoint. After deletion, these resource
-blades and their retained telemetry are no longer available.
-
-### Task 2: Stop workshop activity
-
-Stop `generate-load.sh` with ++ctrl+c++ in any terminal where it is running.
-Then verify the guest fault state:
-
-=== "Bash"
-
-    ```bash
-    python scripts/workshop.py fault reset
-    python scripts/workshop.py fault status
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    python scripts/workshop.py fault reset
-    python scripts/workshop.py fault status
-    ```
-
-CPU should report `inactive`. PostgreSQL should report `inactive` with
-`postgresqlAccess` equal to `Allow` and `postgresqlConnectivity` equal to
-`ready`. Reset is safe to repeat. It stops the transient CPU unit, restores and
-reads back the fixed NSG rule, recycles only `orders-api`, and verifies
-readiness plus an order read; it does not alter database rows or restart the VM
-or PostgreSQL.
-
-Then remove the recurring health check so it stops consuming agent units:
-
-=== "Bash"
-
-    ```bash
-    python scripts/workshop.py health-check remove
-    python scripts/workshop.py health-check status
-    ```
+1. Open the [CPU exercise](../03-incident-high-cpu/index.md#task-6-reset-cpu)
+   and select **Reset incident** in its launcher.
+2. Open the [PostgreSQL exercise](../04-incident-postgresql/index.md#task-6-restore-the-connection)
+   and select **Reset incident** in its launcher.
+3. Select **Check fault status**. Confirm CPU and PostgreSQL are inactive,
+   PostgreSQL access is `Allow`, and application connectivity is `ready`.
 
-=== "PowerShell"
+Each button resets only its own scenario, so check both. PostgreSQL does not
+reset automatically when you close the browser.
 
-    ```powershell
-    python scripts/workshop.py health-check remove
-    python scripts/workshop.py health-check status
-    ```
+If a reset fails, keep the environment available and tell your facilitator
+which fault remains active. Do not delete resources to hide the failure.
 
-`remove` reports `"ok": true` and lists the scheduled task, custom agent, and
-skill it deleted. The following `status` reports `"installed": false`. The
-command deletes only those three items. It does not change the response plan,
-the connectors, or any Live Report, and it is safe to repeat. Live Reports and
-the task's run history are deleted with the agent in Task 5, which is why Task 1
-saves a snapshot first.
+??? info "Terminal alternative"
+    With a [prepared terminal](../30-appendix/01-variables.md#terminal-setup-for-an-assigned-environment):
 
-### Task 3: Preserve the evidence worth keeping
+    === "Bash"
 
-Create a directory outside `.workshop` and copy your notes:
+        ```bash
+        python scripts/workshop.py fault reset
+        python scripts/workshop.py fault status
+        python scripts/workshop.py smoke
+        ```
 
-=== "Bash"
+    === "PowerShell"
 
-    ```bash
-    mkdir -p "${HOME}/sre-workshop-artifacts"
-    cp -R .workshop/notes/. "${HOME}/sre-workshop-artifacts/" 2>/dev/null || true
-    find "${HOME}/sre-workshop-artifacts" -maxdepth 1 -type f -print
-    ```
+        ```powershell
+        python .\scripts\workshop.py fault reset
+        python .\scripts\workshop.py fault status
+        python .\scripts\workshop.py smoke
+        ```
 
-=== "PowerShell"
+    The unqualified `fault reset` resets both scenarios. It does not delete
+    resources or stop billing.
 
-    ```powershell
-    $destination = Join-Path $HOME 'sre-workshop-artifacts'
-    New-Item -ItemType Directory -Force $destination | Out-Null
-    if (Test-Path .workshop/notes) {
-      Copy-Item .workshop/notes/* $destination -Recurse -Force
-    }
-    Get-ChildItem $destination
-    ```
+### Task 2: Save the final state
 
-Keep:
+In the Orders GUI, select **Refresh orders** and **Refresh status**. Check
+that your saved order is readable and all status cards are healthy.
 
-* Baseline values and portal screenshots.
-* The final healthy Orders GUI screenshot.
-* CPU and PostgreSQL dependency timelines.
-* Alert and response-plan timestamps.
-* Agent drafts and your corrections.
-* Your health-check notes, graded claims, and the Live Report snapshot.
+Keep only useful evidence:
 
-The JSON files under `.workshop/<environment>/` are deployment and validation
-evidence. Copy them only if they are useful and permitted by your organization.
+* A healthy Orders screenshot and CPU/failure charts showing recovery
+* Fault, alert, investigation, reset, and recovery timestamps
+* Agent findings you checked, including claims you corrected
+* Your health-check thread and comparison notes
 
-### Task 4: Review the deletion scope
+Open **Orders Service Health**, select **Reload**, and use **Download HTML**
+from its menu to save a snapshot. If you could not use the report, record why.
+Treat the downloaded file as potentially sensitive.
 
-=== "Bash"
+Redact account, tenant, subscription, and resource identifiers before sharing.
+Do not save tokens, TAPs, or real customer data. Keep your files somewhere
+durable, not just in a temporary terminal session.
 
-    ```bash
-    echo "Environment:    ${AZURE_ENV_NAME}"
-    echo "Resource group: ${RESOURCE_GROUP}"
-    echo "Subscription:   ${SUBSCRIPTION_ID}"
+<!-- SCREENSHOT: Final healthy Orders state and recovered CPU/database charts, with identifiers redacted -->
 
-    az resource list \
-      --resource-group "${RESOURCE_GROUP}" \
-      --query "[].{Name:name, Type:type}" \
-      --output table
-    ```
+### Task 3: Turn off the scheduled task
 
-=== "PowerShell"
+In your SRE Agent's **Scheduled tasks**, turn off
+`orders-daily-health-report`. Check that its status is **Off**.
+If you cannot turn it off, ask your facilitator to do it.
 
-    ```powershell
-    "Environment:    $env:AZURE_ENV_NAME"
-    "Resource group: $env:RESOURCE_GROUP"
-    "Subscription:   $env:SUBSCRIPTION_ID"
+Leave the skill, custom agent, response plan, report, and run history in place
+for review. The scheduled task uses agent units while it is enabled.
 
-    az resource list `
-      --resource-group $env:RESOURCE_GROUP `
-      --query "[].{Name:name, Type:type}" `
-      --output table
-    ```
+### Task 4: Hand the environment back
 
-Expect resources for:
+Tell your facilitator that both faults are reset and the task is off, or
+give them the outstanding error. Select **Disconnect** in the workshop header.
 
-* The Ubuntu VM, its compute resources, NIC, public IP, VNet, both subnets, and
-  NSG.
-* PostgreSQL Flexible Server, the `orders` database, private DNS zone, and VNet
-  link.
-* Log Analytics, Application Insights, Azure Monitor Agent, and the data
-  collection rule.
-* CPU, PostgreSQL connectivity, and HTTP 5xx alert rules.
-* Azure SRE Agent, its connectors, and managed identity.
+!!! warning "Do not delete the workshop resource group"
+    Resetting faults does not stop Azure charges. Organizers handle resource
+    deletion through the [organizer guide](../30-appendix/07-organizer-guide.md#after-the-workshop).
+    Use the [self-deployment cleanup](../30-appendix/06-self-deployment.md#delete-your-own-environment)
+    only when you deployed and own an independent environment.
 
-Stop if the selected resource group is not the workshop group you intend to
-delete.
+## Final check
 
-### Task 5: Delete the environment
+* [ ] Both faults are inactive and database access is `Allow`.
+* [ ] The Orders app is healthy.
+* [ ] The recurring task is off.
+* [ ] You saved the evidence worth keeping.
+* [ ] Your facilitator knows the environment's final state.
 
-=== "Bash"
+## Quick check
 
-    ```bash
-    azd down --purge --force
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    azd down --purge --force
-    ```
-
-Read the interactive confirmation carefully. This removes the resource group,
-VM, private network and DNS resources, PostgreSQL server and backups, public
-endpoint, telemetry, alert history, response plan, SRE Agent, and any Live
-Reports it holds.
-
-Allow Azure several minutes to finish deletion.
-
-The Orders GUI becoming unreachable is expected after the public IP and VM are
-deleted, but it is not sufficient proof of cleanup. Verify Azure resource
-removal in the next task.
-
-### Task 6: Verify removal
-
-=== "Bash"
-
-    ```bash
-    az group exists --name "${RESOURCE_GROUP}"
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    az group exists --name $env:RESOURCE_GROUP
-    ```
-
-The expected result is `false`. Also check for any remaining resource that uses
-the deterministic workshop suffix:
-
-=== "Bash"
-
-    ```bash
-    az resource list \
-      --query "[?contains(name, '${WORKSHOP_SUFFIX}')].{Name:name, Type:type, Group:resourceGroup}" \
-      --output table
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    az resource list `
-      --query "[?contains(name, '$env:WORKSHOP_SUFFIX')].{Name:name, Type:type, Group:resourceGroup}" `
-      --output table
-    ```
-
-An empty table is expected. If deletion is still in progress, wait and repeat
-the checks. Resource locks or policy deny assignments are common reasons for a
-stalled deletion.
-
-### Task 7: Handle local environment state
-
-The local azd environment and generated exports contain no secrets, but they
-refer to resources that no longer exist. Remove them if you do not intend to
-redeploy:
-
-=== "Bash"
-
-    ```bash
-    azd env remove "${AZURE_ENV_NAME}"
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    azd env remove $env:AZURE_ENV_NAME
-    ```
-
-You can also remove the generated top-level export files after preserving notes:
-
-=== "Bash"
-
-    ```bash
-    rm -f .workshop/workshop.env .workshop/workshop.ps1
-    ```
-
-=== "PowerShell"
-
-    ```powershell
-    Remove-Item .workshop/workshop.env,.workshop/workshop.ps1 -ErrorAction SilentlyContinue
-    ```
-
-Do not delete the repository or your copied review artifacts.
-
-## Validation
-
-* [x] You captured the final healthy Orders GUI, VM CPU, API, alert, and SRE Agent views.
-* [x] All load generation and faults were stopped.
-* [x] `health-check remove` completed and `health-check status` reported
-  `installed` as `false`.
-* [x] You downloaded a Live Report snapshot, or recorded that you did not build
-  the report.
-* [x] Notes and screenshots were copied outside deployment state.
-* [x] You reviewed the resource inventory before deletion.
-* [x] `azd down --purge --force` completed.
-* [x] The resource group no longer exists and no suffix-matched resources remain.
-
-## Knowledge check
-
-??? question "Why capture portal charts before cleanup?"
-    Deleting the resource group removes the monitored resources and their convenient portal context. A timestamped chart that shows baseline, incident, and recovery is part of the incident evidence and cannot be reconstructed reliably after telemetry is deleted.
-
-??? question "Why reset faults before deleting the VM?"
-    It verifies that the control path still works, avoids leaving synthetic work active during a delayed deletion, and separates a clean operational shutdown from infrastructure removal.
-
-??? question "Why verify by suffix after the resource group is gone?"
-    The resource-group check proves the intended scope was deleted. The suffix search catches an unexpected workshop resource created outside that scope or left behind by a failed deployment path.
+??? question "Does a healthy environment mean billing has stopped?"
+    No. The VM, database, monitoring, and agent still exist. Organizers delete
+    them after everyone has saved their evidence.
 
 ## Workshop complete
 
-You deployed and validated a persistent single-VM workload, used its customer
-GUI, confirmed healthy telemetry, operated an SRE Agent response plan, handled
-CPU and PostgreSQL connectivity incidents, verified automated findings, and
-added a proactive scheduled health check and Live Report.
+You configured SRE response, watched two fault investigations, checked the
+agent's claims, and compared alerts with a scheduled check and a Live Report.
 
 [Return to workshop home :material-home:](../../index.md){ .md-button .md-button--primary }
-[Troubleshooting](../30-appendix/02-troubleshooting.md){ .md-button }
 
 <div class="sre-nav" markdown>
-[:material-arrow-left: Module 05 - Schedule a Health Check and Build a Live Report](../05-scheduled-health-check/index.md)
+[:material-arrow-left: Module 04 - Deploy and Evaluate Proactive SRE Checks](../05-scheduled-health-check/index.md)
 [About the authors :material-arrow-right:](../29-about-the-authors/index.md)
 </div>

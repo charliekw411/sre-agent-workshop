@@ -1,7 +1,7 @@
 ---
 title: Running Locally or in Codespaces
-description: Preview the site, test the Orders API with real PostgreSQL 16, run a disposable local database, or deploy Azure from local and hosted terminals.
-ms.date: 2026-10-06
+description: Optional developer and terminal workflows for site previews, application tests, and independent Azure deployments.
+ms.date: 2026-10-14
 ms.topic: how-to
 keywords:
   - local development
@@ -13,6 +13,11 @@ estimated_reading_time: 13
 ---
 
 ## Choose the workflow you need
+
+You do not need these tools for the browser modules. For an assigned workshop
+environment, use [terminal setup](01-variables.md#terminal-setup-for-an-assigned-environment)
+only if you choose a terminal alternative. The development and deployment
+workflows below are for contributors or independent environment owners.
 
 The repository has three distinct workflows:
 
@@ -285,6 +290,9 @@ NSG rule deployment and has no local equivalent.
 
 ## Deploy Azure from a local terminal
 
+This is not a participant task. The complete optional path is in
+[Self-deployment](06-self-deployment.md).
+
 Azure deployment needs:
 
 * Azure CLI 2.60 or later.
@@ -305,9 +313,14 @@ azd env set AZURE_LOCATION australiaeast
 azd up
 ```
 
-Follow [Module 01](../01-deploy-and-validate/index.md) for validation.
+Prepare the SRE components and site connection described in
+[Self-deployment](06-self-deployment.md), then start
+[Module 01](../01-deploy-and-validate/index.md).
 
 ## Use GitHub Codespaces
+
+For an assigned environment, obtain its prepared local state first. Do not
+create a second environment in the Codespace.
 
 Codespaces can host the documentation preview, application tests, or the Azure
 deployment terminal, but verify each prerequisite:
@@ -346,12 +359,13 @@ Codespaces can suspend an inactive environment:
 * An Azure CPU fault expires automatically, but a PostgreSQL NSG `Deny` remains
   until reset or a reconciling `azd up`.
 
-Always run `python scripts/workshop.py fault reset` after reconnecting and before
-final evidence or cleanup.
+With a prepared terminal, check fault status after reconnecting. Reset before
+final evidence or cleanup. An assigned environment remains organizer-managed.
 
 ## Use Azure Cloud Shell
 
-Cloud Shell is suitable for Azure workshop deployment:
+Cloud Shell is an optional organizer/owner deployment terminal. It does not
+automatically contain a participant's local azd state:
 
 ```bash
 git clone https://github.com/charliekw411/sre-agent-workshop.git
@@ -371,7 +385,8 @@ somewhere durable before cleanup or session reset.
 
 ## Helper parity
 
-After Azure deployment:
+After [terminal setup](01-variables.md#terminal-setup-for-an-assigned-environment),
+or your own Azure deployment:
 
 === "Bash"
 

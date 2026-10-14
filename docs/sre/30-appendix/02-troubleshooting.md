@@ -1,7 +1,7 @@
 ---
 title: Troubleshooting
-description: Diagnose deployment, private PostgreSQL, managed identity, schema, NSG fault, telemetry, SRE Agent, scheduled health check, and cleanup problems in the workshop.
-ms.date: 2026-10-12
+description: Resolve participant access and exercise problems, with separate technical checks for organizers and independent environment owners.
+ms.date: 2026-10-14
 ms.topic: troubleshooting
 keywords:
   - troubleshooting
@@ -14,8 +14,37 @@ estimated_reading_time: 20
 
 ## How to use this page
 
-Start with the failed workshop command and its evidence under
-`.workshop/<environment>/`. Load the selected environment:
+Start with the participant checks below. Use only your assigned environment.
+
+## Participant access and starting state
+
+| Problem | What to do |
+| --- | --- |
+| Sign-in pass expired or already used | Ask your facilitator for a replacement. Do not share the pass. |
+| MFA registration or sign-in is blocked | Follow the supplied onboarding steps and ask your facilitator. Do not bypass the tenant's policy. |
+| The site has no Azure connection configuration | Tell your facilitator; participants do not register the site application. |
+| No environment appears, or another participant's group is visible | Stop and report the account and visible group names privately. Do not choose a replacement environment. |
+| Response plan cannot be saved | Ask your facilitator to check your agent-scoped configuration access. Azure Contributor alone is not enough. |
+| Orders are unavailable before an exercise | Check fault status. Reset a leftover fault using its launcher; if the app stays unhealthy, ask your facilitator. |
+| Prepared skill, custom agent, or Live Report is missing | Ask your facilitator to finish preparation. Do not skip the check and call the exercise successful. |
+| Terminal helper cannot find azd state | Use the browser or obtain a prepared local environment. Sourcing exports alone does not fix it. |
+
+For an interrupted fault, select **Check fault status** before another action.
+CPU expires automatically; the PostgreSQL deny remains until reset. Use
+[Module 05](../06-cleanup/index.md) to reset both.
+
+## Organizer and owner diagnostics
+
+The detailed commands below are optional. Deployment, provider registration,
+role assignment, schema repair, and resource deletion belong to organizers
+or independent environment owners, not workshop participants. Where a repair
+says `azd up`, ask the organizer to do it for an assigned environment.
+
+For terminal checks, first complete
+[terminal setup](01-variables.md#terminal-setup-for-an-assigned-environment).
+Inspect the failed command's evidence under `.workshop/<environment>/` when
+that command ran locally. Browser actions do not create local evidence files.
+Load the prepared environment:
 
 === "Bash"
 
@@ -39,7 +68,7 @@ Before diagnosing normal connectivity, check the controlled fault state:
 python scripts/workshop.py fault status
 ```
 
-If PostgreSQL is `active` with access `Deny` outside Module 04, restore it:
+If PostgreSQL is `active` with access `Deny` outside Module 03, restore it:
 
 ```bash
 python scripts/workshop.py fault reset-postgresql
@@ -637,8 +666,9 @@ part of the safety model.
 ### PostgreSQL access is denied but requests still succeed
 
 Existing Npgsql pooled connections and Azure's stateful flow handling can delay
-the first failed new connection. Confirm the rule is `Deny`, keep the Module 04
-sample calls running, and record the first failure.
+the first failed new connection. Confirm the rule is `Deny`, keep making the
+Module 03 customer requests, and record the first failure. The launcher
+should recycle the API and verify the controlled failures before success.
 
 Do not broaden the deny, deny all outbound traffic, restart PostgreSQL, or alter
 data to force an immediate failure. If no dependency fails after the documented
@@ -749,7 +779,7 @@ AppDependencies
 ```
 
 If this query is empty, the alert has no qualifying evidence. Confirm the NSG
-rule is `Deny` and follow Module 04 without broadening the fault. If failures are
+rule is `Deny` and follow Module 03 without broadening the fault. If failures are
 present, allow for ingestion and the one-minute evaluation cycle, then inspect
 the alert rule state.
 
@@ -760,7 +790,7 @@ five-minute window. A shorter burst should not fire. Use the documented
 ten-minute, two-worker fault, adjusted only within the helper's validated worker
 range when the selected VM size requires it.
 
-### An HTTP 5xx alert also fires during Module 04
+### An HTTP 5xx alert also fires during Module 03
 
 This can be expected when more than ten database-backed requests return 5xx in
 five minutes. The HTTP alert demonstrates customer impact; the PostgreSQL
@@ -874,9 +904,10 @@ Reports is a preview feature, so record any limitation in your notes.
 Creating a report, and running its queries when you open or reload it, needs the
 SRE Agent Standard User, SRE Agent Author, or SRE Agent Administrator role on the
 agent. Approving the report's tool call, and deleting a report, needs SRE Agent
-Administrator. `azd up` assigns the Administrator role to the person who
-deployed the agent. For a shared agent, ask its owner to assign the role at the
-agent scope, wait a few minutes, then sign out of the portal and back in.
+Administrator. The deployer receives Administrator; participants do not
+automatically receive it. In the core exercise, a facilitator prepares and
+approves the report. Ask them to check its availability rather than adding
+roles yourself.
 
 ### The agent says its telemetry queries returned 403 InsufficientAccessError
 
@@ -896,7 +927,9 @@ The agent generates the report's code, so a saved report can have defects. In
 testing, one version showed PostgreSQL as No data although its table listed more
 than 1,200 calls, and an earlier wording marked healthy areas Degraded because a
 recovered outage was inside the 24-hour window. Compare each status with its
-table and your Task 5 queries. Then select **Open authoring thread** and describe
+table and the Module 04 Task 4 queries. For a prepared report, give the defect
+to your facilitator. If you are authoring your own report, select
+**Open authoring thread** and describe
 the defect, for example: "The PostgreSQL status shows No data but the table shows
 calls. Fix the status code for every area, test it against fresh query results,
 and save a new version."
@@ -911,17 +944,22 @@ Administrator. To change an existing report, open its authoring thread instead.
 
 ### Environment discovery returns no resource group
 
-The browser discovers only groups whose name uses the workshop prefix and whose
-architecture tag is `single-vm-postgresql-v1`. Confirm the participant can read
-the subscription, group, VM, workspace, NSG, PostgreSQL server, and optional SRE
-Agent resource.
+The browser currently requires the `rg-sre-agent-workshop-` name prefix and the
+`single-vm-postgresql-v1` architecture tag. Cohort deployment creates groups
+such as `rg-01`, which do not match that prefix. This is an existing runtime
+readiness gap, not a participant setup step or something documentation fixes.
+See the [organizer readiness checks](07-organizer-guide.md#check-before-inviting-participants).
+
+Also confirm the participant can read their assigned group, VM, workspace,
+NSG, PostgreSQL server, and SRE Agent. Do not widen their access to the cohort.
 
 ### CPU works but PostgreSQL control returns 403
 
 VM Run Command permission does not grant network rule write. The participant
 also needs read and write actions for the exact
-`POSTGRESQL_FAULT_RULE_RESOURCE_ID`. The deployment does not create this
-assignment.
+`POSTGRESQL_FAULT_RULE_RESOURCE_ID`. Single-environment deployment does not
+assign participants; the cohort and identity helpers have different access
+paths. Check the actual grants before changing them.
 
 Prefer a custom role assigned at the narrowest supported scope. Do not use a
 broad subscription-level Network Contributor assignment as a shortcut.
@@ -934,6 +972,9 @@ permission, tenant admin consent is complete, the participant can query the
 workspace, and dependency samples have arrived.
 
 ## Cleanup
+
+For a participant, cleanup means resetting faults, stopping the recurring
+task, and saving evidence. The deletion checks below are organizer/owner-only.
 
 ### `azd down --purge --force` stalls
 

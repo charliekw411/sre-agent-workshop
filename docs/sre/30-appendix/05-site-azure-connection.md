@@ -1,7 +1,7 @@
 ---
-title: Configure the Site Azure Connection
-description: Register the single-tenant SPA, configure GitHub Pages, assign least-privilege participant access, and validate CPU and PostgreSQL incident controls.
-ms.date: 2026-10-06
+title: Site Azure Connection (Organizers)
+description: Organizer setup for the shared sign-in, participant permissions, and browser incident controls.
+ms.date: 2026-10-14
 ms.topic: how-to
 keywords:
   - msal
@@ -13,8 +13,12 @@ keywords:
 estimated_reading_time: 12
 ---
 
+This is organizer setup, not a participant module. Configure the shared site
+before the workshop. Participants use
+[Module 01](../01-deploy-and-validate/index.md) to sign in.
+
 The workshop site is a public static GitHub Pages application. Authentication
-is used only for inline Azure controls and telemetry in Modules 03 and 04. The
+is used for Azure controls and telemetry in Modules 02 and 03. The
 site has no server component, client secret, embedded Azure credential, or
 public fault endpoint.
 
@@ -97,8 +101,10 @@ configured tenant and rejects a returned token whose `tid` does not match.
 ## Assign participant Azure RBAC
 
 Delegated API permissions allow the SPA to request tokens. They do not grant
-resource access. The workshop infrastructure does not provision participant
-role assignments.
+resource access. Single-environment infrastructure deployment does not assign
+participants. `cohort.py` currently grants Contributor on each assigned group
+and SRE Agent Standard User on its agent; the identity helper has a separate
+scoped-access path. Check what your chosen process actually grants.
 
 A participant using all controls needs:
 
@@ -108,6 +114,11 @@ A participant using all controls needs:
 | Log Analytics workspace | Query permission, such as Log Analytics Reader | Read PostgreSQL dependency telemetry |
 | Workshop VM | VM read plus `Microsoft.Compute/virtualMachines/runCommand/action` | CPU actions plus PostgreSQL API-pool drain and data-plane verification |
 | `POSTGRESQL_FAULT_RULE_RESOURCE_ID` | `Microsoft.Network/networkSecurityGroups/securityRules/read` and `Microsoft.Network/networkSecurityGroups/securityRules/write` | PostgreSQL deny, status, and allow reset |
+| Participant's SRE Agent | Standard User plus Author, or agent-scoped Administrator | Chat, save the core response-plan settings, and manage the scheduled task |
+
+Standard User alone does not allow response-plan editing or custom-agent
+creation. The facilitator needs Administrator on the agent to approve the
+prepared Live Report's query tool. Do not give the agent workload-write access.
 
 For a small isolated class, **Reader** on the resource group and **Log Analytics
 Reader** on the workspace supply the read paths. Do not assume they supply either
@@ -125,9 +136,9 @@ For writes, prefer custom roles:
   other rules.
 
 Avoid subscription-level Contributor, Virtual Machine Contributor, or Network
-Contributor when a narrower role and scope are available. A built-in VM role
-can be used for a short-lived isolated workshop, but document that it is broader
-than the launcher requires.
+Contributor when narrower access is available. The current cohort's
+resource-group Contributor grant is broader than the browser requires; do not
+describe it as a narrow fault-only role.
 
 The browser validates resource names, IDs, architecture tag, and fixed rule
 properties. These client checks reduce mistakes but do not replace RBAC.
@@ -197,16 +208,20 @@ Use a resource group tagged
 
 1. Open the Pages site and confirm it is readable before sign-in.
 2. Sign in with a participant account and complete tenant MFA.
-3. Select the intended subscription and workshop resource group.
+3. Confirm the participant discovers only their assigned workshop environment.
+   The current browser prefix excludes cohort names such as `rg-01`; resolve
+   that readiness gap before class, as described in the
+   [organizer guide](07-organizer-guide.md#check-before-inviting-participants).
 4. Confirm environment discovery shows one Orders VM, workspace, NSG,
    PostgreSQL server, and optional SRE Agent.
 5. Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a separate tab. Confirm liveness,
    readiness, and PostgreSQL status are healthy.
-6. In Module 03, start the CPU incident. Confirm the launcher uses the fixed
+6. In Module 02, save the response-plan settings and start the CPU incident.
+   Confirm the launcher uses the fixed
    ten-minute, two-worker action and the one-minute Average CPU graph updates.
 7. Select status before retrying any interrupted Run Command, then reset and
    verify CPU is inactive.
-8. In Module 04, confirm the launcher element uses
+8. In Module 03, confirm the launcher element uses
    `data-sre-incident="postgresql"`.
 9. Select **Block PostgreSQL access**. Confirm success reports PostgreSQL active,
    access `Deny`, `apiRecycled` true, connectivity unavailable, liveness 200,
@@ -216,7 +231,7 @@ Use a resource group tagged
     Npgsql sessions after rule read-back; it is not the root cause.
 11. Confirm the dependency graph shows failed `PostgreSQL` samples and the
     alert link targets `alert-orders-postgresql-connectivity`.
-12. Select reset in Module 04. Confirm access returns to `Allow`, only the API
+12. Select reset in Module 03. Confirm access returns to `Allow`, only the API
     is recycled, connectivity is `ready`, the CPU fault is unchanged, and a
     pre-incident order remains readable.
 13. Open the alert and SRE Agent investigation links.
@@ -224,6 +239,10 @@ Use a resource group tagged
     documentation and the independent public Orders GUI remain readable.
 15. Attempt sign-in with an account outside the configured tenant and verify it
     is rejected.
+
+Also test the Module 04 configuration save, on-demand task run, and prepared
+Live Report reload using a participant account. A successful organizer run
+does not prove that participant permissions are ready.
 
 If a PostgreSQL PUT or subsequent API recycle/verification is interrupted,
 select **Check fault status** before another operation. A verified NSG state
