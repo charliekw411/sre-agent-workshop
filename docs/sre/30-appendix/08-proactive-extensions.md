@@ -1,5 +1,5 @@
 ---
-title: Health-check Setup and Report Authoring (Optional)
+title: Health-check Setup and Report Authoring
 description: Install the supplied health-check components and author a Live Report when you have configuration and approval access.
 ms.date: 2026-10-14
 ms.topic: how-to
@@ -11,8 +11,9 @@ estimated_reading_time: 8
 ---
 
 The core [proactive exercise](../05-scheduled-health-check/index.md) uses
-prepared components and a report. Use this guide as an organizer, independent
-environment owner, or participant doing the optional authoring extension.
+prepared components and a report. Use this guide as an organizer or independent
+environment owner. Participants use the prepared configuration; authoring their
+own report remains an optional extension.
 
 ## Install the supplied components
 
@@ -61,8 +62,9 @@ If you edit the task in the portal, `matchesDefinition` can become `false`,
 including when you turn it off. Inspect the reported differences; do not
 automatically overwrite a deliberate edit.
 
-For class preparation, turn the installed task off until Module 04. It remains
-an opt-in configuration; infrastructure deployment does not install it.
+For class preparation, turn the installed task off until Module 04. It is a
+required post-provisioning step for the class; infrastructure deployment does
+not install it.
 
 ## Schedule and run safety
 

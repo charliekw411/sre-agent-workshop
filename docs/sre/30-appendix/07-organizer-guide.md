@@ -56,14 +56,18 @@ For every environment:
 
 1. Check `workshop-sev1-sev2-review` exists, uses Sev1/Sev2 and Review, and has
    no overlapping catch-all plan.
-2. Use [proactive setup](08-proactive-extensions.md) to install the skill and
+2. Use [incident-workflow setup](09-incident-workflow.md) to install Igor's
+   [#35](https://github.com/charliekw411/sre-agent-workshop/pull/35). Confirm
+   PostgreSQL titles use `orders-incident-workflow` and CPU/HTTP 5xx titles
+   remain on the original plan.
+3. Use [proactive setup](08-proactive-extensions.md) to install the skill and
    custom agent from Igor's [#33](https://github.com/charliekw411/sre-agent-workshop/pull/33).
    The existing installer also creates the scheduled task; participants can
    edit that task in Module 04. Turn it off until the exercise.
-3. Create **Orders Service Health**, approve only its read-only query tool,
+4. Create **Orders Service Health**, approve only its read-only query tool,
    and check the report against the logs. Participants reload this report;
    they do not need to author or approve it.
-4. Keep the agent's Azure runtime roles read-only.
+5. Keep the agent's Azure runtime roles read-only.
 
 Prepare one shared [site Azure connection](05-site-azure-connection.md) for
 the tenant. Do not ask attendees to register individual applications or set
@@ -83,6 +87,8 @@ Use an actual participant account, not just your organizer account, to check:
   resources visible.
 * The Orders GUI, database, VM monitoring, and connectors are healthy.
 * Response-plan save and scheduled-task create/edit work.
+* CPU alerts use the original response plan, while PostgreSQL alerts use
+  `orders-incident-workflow` and `orders-alert-investigator`.
 * CPU and PostgreSQL controls, recovery, and investigation links work.
 * The prepared Live Report reloads without an attendee approval step.
 

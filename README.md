@@ -94,7 +94,7 @@ tradeoffs.
 
 ```text
 .
-├── agent/              Health-check skill, custom agent, and scheduled-task definitions
+├── agent/              Health-check and incident-workflow definitions
 ├── azure.yaml          Azure Developer CLI project definition
 ├── docs/               Workshop content published to GitHub Pages
 ├── infra/              Bicep templates and the azd deployment entry point
@@ -308,10 +308,30 @@ Prefer a custom role at the narrowest supported scope rather than broad VM or
 network contributor access. See
 [Configure the Site Azure Connection](docs/sre/30-appendix/05-site-azure-connection.md).
 
+## Dedicated PostgreSQL incident workflow
+
+The participant class uses Igor's dedicated PostgreSQL incident workflow. A
+facilitator installs it after `azd up`:
+
+```bash
+python scripts/workshop.py incident-workflow install
+python scripts/workshop.py incident-workflow status
+```
+
+It adds `orders-incident-workflow`, `orders-alert-investigator`, and three
+incident skills. The installer gives the original plan the scalar filter
+`alert-orders-h` for CPU and HTTP 5xx alerts, while the dedicated plan uses
+`postgresql`. Both remain enabled for Sev1/Sev2 in Review mode without
+overlapping.
+
+The classroom installation leaves GitHub and Outlook destinations unbound, so
+issue and email follow-ups remain draft-only. See
+[Incident Workflow Setup and Routing](docs/sre/30-appendix/09-incident-workflow.md).
+
 ## Scheduled health check and Live Report
 
-Module 05 adds a proactive scenario that introduces no fault. It is opt-in, so
-`azd up` does not install it:
+The participant class also uses the proactive scenario. A facilitator installs
+it after `azd up`; self-deployments can run the same commands:
 
 ```bash
 python scripts/workshop.py health-check install
@@ -326,7 +346,7 @@ records `.workshop/<environment>/scheduled-health-check.json`. The definitions
 live under `agent/`. The installer attaches only read-only tools to the custom
 agent, pins its optional tool categories empty, and runs the task in Review mode,
 and the agent's Azure role is Reader. In testing, scheduled runs did not apply
-the custom agent's tool list, so Module 05 has you verify every tool call in the
+the custom agent's tool list, so Module 04 has you verify every tool call in the
 run's thread. `remove` deletes only those three items.
 
 The SRE Agent evaluates the schedule in UTC. The task runs Monday to Friday at
@@ -335,7 +355,7 @@ The SRE Agent evaluates the schedule in UTC. The task runs Monday to Friday at
 local time; use `0 20 * * 0-4` for 09:00 NZDT. Reports show New Zealand time
 beside UTC. You can also run the task on demand from the portal.
 
-You create the Live Report in the SRE Agent portal from a prompt in Module 05.
+You create the Live Report in the SRE Agent portal from a prompt in Module 04.
 Live Reports is a preview feature and has no template or documented API.
 Creating a report, and running its queries when you open or reload it, needs the
 SRE Agent Standard User, SRE Agent Author, or SRE Agent Administrator role.
@@ -351,7 +371,7 @@ incident restores connectivity but does not stop billing.
 
 Scenario-specific resets do not change the other fault. Before collecting final
 healthy evidence or deleting the environment, run the explicitly global
-`python scripts/workshop.py fault reset`. If you installed the Module 05 health
+`python scripts/workshop.py fault reset`. If you installed the Module 04 health
 check, also run `python scripts/workshop.py health-check remove`; the recurring
 task uses agent units on every scheduled run. When finished:
 

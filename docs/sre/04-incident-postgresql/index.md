@@ -20,8 +20,8 @@ estimated_reading_time: 8
 ## Overview
 
 Block the connection between your Orders VM and PostgreSQL. Watch how the
-customer app, alert, and agent respond. Then restore the connection and check
-that your order has not changed.
+customer app, alert, and dedicated incident investigator respond. Then restore
+the connection and check that your order has not changed.
 
 ## What changes
 
@@ -44,9 +44,16 @@ It does not restart the VM or PostgreSQL, change orders, or block other traffic.
 
 ### Task 1: Review the SRE and network settings
 
-In your SRE Agent, check that `workshop-sev1-sev2-review` is still On, handles
-Sev1 and Sev2, and uses **Review** mode. Reuse the plan you configured in
-Module 02.
+In your SRE Agent, check the two complementary response plans:
+
+| Plan | Title contains | Handling agent |
+| --- | --- | --- |
+| `workshop-sev1-sev2-review` | `alert-orders-h` | Coordinating or main agent |
+| `orders-incident-workflow` | `postgresql` | `orders-alert-investigator` |
+
+Both plans must be On, handle Sev1 and Sev2, and use **Review** mode. Do not
+remove either title filter; CPU and HTTP 5xx stay on the original plan while
+the PostgreSQL connectivity alert uses the dedicated investigator.
 
 In **Monitor > Alerts > Alert rules**, filter to your resource group.
 `alert-orders-postgresql-connectivity` should be enabled, be Sev1, and fire
@@ -121,9 +128,12 @@ Open **Monitor > Alerts**, filtered to your resource group. Find the fired
 `alert-orders-postgresql-connectivity` alert, then use **Open SRE Agent
 incidents** to follow its investigation.
 
-The HTTP 5xx alert may also fire because orders return 503. Match the alert
-and timestamps even if the agent uses an existing thread. Allow for monitoring
-and alert delays; do not toggle the fault to make a chart update.
+Confirm the PostgreSQL alert matched `orders-incident-workflow` and the
+investigation used `orders-alert-investigator`. The HTTP 5xx alert may also fire
+because orders return 503; it should remain on `workshop-sev1-sev2-review`.
+Match the alert and timestamps even if the agent uses an existing thread.
+Allow for monitoring and alert delays; do not toggle the fault to make a chart
+update.
 
 Record the first observed failure, alert time, and investigation link.
 
@@ -134,10 +144,10 @@ Record the first observed failure, alert time, and investigation link.
 Read the initial investigation. If needed, ask:
 
 ```text
-Explain the Orders PostgreSQL connectivity alert. Check whether the VM and
-database stayed running, which network rule changed, and how requests were
-affected. Cite the evidence for the cause and the smallest recovery step.
-Do not make changes.
+Use orders-azure-monitor-rca for this PostgreSQL connectivity alert. Confirm
+the response plan and handling agent, whether the VM and database stayed
+running, which network rule changed, and how requests were affected. Cite the
+evidence for the cause and the smallest recovery step. Do not make changes.
 ```
 
 Check its answer in the portal:
@@ -180,7 +190,9 @@ or ask your facilitator. Leave no database fault active.
 ## Check before moving on
 
 * [ ] Only the documented rule's access changed.
-* [ ] The database failure reached the alert and agent.
+* [ ] The PostgreSQL alert reached `orders-incident-workflow` and
+      `orders-alert-investigator`.
+* [ ] Any HTTP 5xx alert remained on the original response plan.
 * [ ] You checked the agent's explanation against the rule and app.
 * [ ] Access is `Allow`, the app is healthy, and your order is unchanged.
 
@@ -193,6 +205,10 @@ or ask your facilitator. Leave no database fault active.
 ??? question "Why not stop the database instead?"
     That would be a different incident. This exercise isolates one connection
     and leaves the database and its data intact.
+
+??? question "Why can both response plans stay enabled?"
+    Their scalar title filters are complementary. PostgreSQL titles match the
+    dedicated plan; CPU and HTTP 5xx titles match the original plan.
 
 ## Next
 

@@ -59,7 +59,8 @@ Detailed guide: [Infrastructure provisioning](infrastructure-provisioning.md).
 
 ## 4. Prepare every SRE Agent
 
-Run the health-check installer once for each ready azd environment:
+Run Igor's health-check and incident-workflow installers once for each ready
+azd environment:
 
 ```powershell
 $state = Get-Content .\.workshop\cohort\state.json -Raw | ConvertFrom-Json
@@ -75,6 +76,12 @@ try {
     if ($LASTEXITCODE -ne 0) {
       throw "Health-check installation failed for $($participant.participant)."
     }
+
+    Write-Host "[incident-workflow] $($participant.participant)"
+    python .\scripts\workshop.py incident-workflow install
+    if ($LASTEXITCODE -ne 0) {
+      throw "Incident-workflow installation failed for $($participant.participant)."
+    }
   }
 } finally {
   if ($null -eq $previousEnvironment) {
@@ -87,16 +94,21 @@ try {
 
 For each agent:
 
+* Verify `orders-incident-workflow` routes PostgreSQL alerts to
+  `orders-alert-investigator`
 * Turn off `orders-daily-health-report` until Module 04
 * Create and verify the **Orders Service Health** Live Report
 * Give its participant Standard User plus Author, or agent-scoped Administrator
 * Keep the agent's Azure runtime permissions read-only
 
-Detailed guide:
-[Health-check setup and report authoring](../docs/sre/30-appendix/08-proactive-extensions.md).
+Detailed guides:
+[Incident-workflow setup and routing](../docs/sre/30-appendix/09-incident-workflow.md)
+and
+[health-check setup and report authoring](../docs/sre/30-appendix/08-proactive-extensions.md).
 Use [Site Azure connection and participant RBAC](../docs/sre/30-appendix/05-site-azure-connection.md)
 for the shared browser app and participant agent roles.
-Do not install the optional incident workflow unless it is part of the class.
+The core class does not bind GitHub or Outlook destinations; those follow-ups
+remain draft-only unless the organizer explicitly approves test destinations.
 
 ## 5. Complete day-of preparation
 

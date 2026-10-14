@@ -72,6 +72,7 @@ Keep only useful evidence:
 * A healthy Orders screenshot and CPU/failure charts showing recovery
 * Fault, alert, investigation, reset, and recovery timestamps
 * Agent findings you checked, including claims you corrected
+* The PostgreSQL alert's matched plan and dedicated-investigator evidence
 * Your health-check thread and comparison notes
 
 Open **Orders Service Health**, select **Reload**, and use **Download HTML**
@@ -120,8 +121,9 @@ give them the outstanding error. Select **Disconnect** in the workshop header.
 
 ## Workshop complete
 
-You configured SRE response, watched two fault investigations, checked the
-agent's claims, and compared alerts with a scheduled check and a Live Report.
+You configured complementary SRE response plans, watched general and dedicated
+fault investigations, checked the agents' claims, and compared alerts with a
+scheduled check and a Live Report.
 
 [Return to workshop home :material-home:](../../index.md){ .md-button .md-button--primary }
 

@@ -48,9 +48,12 @@ Apply these settings and select **Save**:
 | Handling agent | Coordinating or main agent |
 | Autonomy level | Review |
 | Enabled | On |
+| Title contains | `alert-orders-h` |
 
 Open the plan again and check the saved values. Keep its existing
-merge/reinvestigation settings. Do not add another overlapping plan.
+merge/reinvestigation settings and title filter. The complementary
+`orders-incident-workflow` handles PostgreSQL titles; do not add another
+overlapping plan.
 
 If the plan is missing or you cannot save it, ask your facilitator. They must
 prepare configuration access on your agent; you do not need subscription

@@ -15,8 +15,9 @@ This is an optional reference. Start the hands-on configuration work in
 
 ## Response plan
 
-The existing `workshop-sev1-sev2-review` plan sends Azure Monitor alerts to the
-agent. Edit this plan rather than adding a second plan with the same filters.
+The existing `workshop-sev1-sev2-review` plan sends CPU and HTTP 5xx alerts to
+the coordinating agent. Edit this plan rather than adding another plan with
+the same filters.
 
 | Setting | Workshop value |
 | --- | --- |
@@ -27,6 +28,17 @@ agent. Edit this plan rather than adding a second plan with the same filters.
 | Status | On |
 | Merge/reinvestigation window | 3 hours |
 | Maximum investigation attempts | 3 |
+
+The facilitator also installs a complementary plan for the PostgreSQL
+exercise:
+
+| Plan | Title contains | Handling agent |
+| --- | --- | --- |
+| `workshop-sev1-sev2-review` | `alert-orders-h` | Coordinating or main agent |
+| `orders-incident-workflow` | `postgresql` | `orders-alert-investigator` |
+
+Both plans stay On for Sev1 and Sev2 in Review mode. Keep the two scalar title
+filters: they ensure one alert matches only one plan.
 
 An alert can update an existing investigation instead of starting a new
 thread. Match the alert, resource, and timestamps before deciding that an
@@ -69,6 +81,22 @@ these exercises. You reset incidents through the workshop controls.
 See the official [SRE Agent role reference](https://learn.microsoft.com/azure/sre-agent/user-roles)
 for the full permission table.
 
+## Incident workflow configuration
+
+[Module 03](../04-incident-postgresql/index.md) uses the configuration added in
+[#35](https://github.com/charliekw411/sre-agent-workshop/pull/35):
+
+| Component | Name | Purpose |
+| --- | --- | --- |
+| Response plan | `orders-incident-workflow` | Routes the PostgreSQL connectivity alert |
+| Custom agent | `orders-alert-investigator` | Runs the evidence-backed RCA in Review mode |
+| Skill | `orders-azure-monitor-rca` | Defines the investigation and validation procedure |
+| Skills | `orders-github-issue-followup`, `orders-email-incident-followup` | Produce optional, separately approved follow-up drafts |
+
+The classroom setup leaves GitHub and Outlook destinations unbound. The agent
+can investigate with read-only Azure and telemetry tools, while issue and email
+follow-ups remain draft-only.
+
 ## Proactive configuration
 
 [Module 04](../05-scheduled-health-check/index.md) uses the definitions added in
@@ -93,7 +121,8 @@ Analytics `App*` tables when the Application Insights query tool was unavailable
 
 * [Terminal setup and environment values](../30-appendix/01-variables.md)
 * [Troubleshooting](../30-appendix/02-troubleshooting.md)
-* [Optional health-check setup and Live Report authoring](../30-appendix/08-proactive-extensions.md)
+* [Incident workflow setup and routing](../30-appendix/09-incident-workflow.md)
+* [Health-check setup and Live Report authoring](../30-appendix/08-proactive-extensions.md)
 
 <div class="sre-nav" markdown>
 [Module 02 - Configure SRE and Respond to High CPU](../03-incident-high-cpu/index.md)

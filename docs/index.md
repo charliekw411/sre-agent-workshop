@@ -12,8 +12,8 @@ estimated_reading_time: 3
 ---
 
 Use your assigned Azure environment to configure SRE response, trigger two
-controlled faults, and watch the agent investigate. Then run a scheduled health
-check and review a Live Report.
+controlled faults, and watch the general and dedicated incident investigators.
+Then run a scheduled health check and review a Live Report.
 
 The infrastructure and your account are prepared before you arrive. The
 browser exercises do not require a local terminal or an Azure deployment.
@@ -35,7 +35,7 @@ Agent. You check the agent's findings and reset the faults yourself.
 | --- | --- | --- |
 | [01 - Access and Understand the Workshop](sre/01-deploy-and-validate/index.md) | Sign in, review the architecture, and check the healthy app | 20 min |
 | [02 - Configure SRE and Respond to High CPU](sre/03-incident-high-cpu/index.md) | Save response-plan settings, trigger CPU pressure, watch the agent, and recover | 30 min |
-| [03 - Respond to PostgreSQL Connectivity Loss](sre/04-incident-postgresql/index.md) | Block one database connection, check the investigation, and restore it | 30 min |
+| [03 - Respond to PostgreSQL Connectivity Loss](sre/04-incident-postgresql/index.md) | Block one database connection, evaluate the dedicated investigator, and restore it | 30 min |
 | [04 - Deploy and Evaluate Proactive SRE Checks](sre/05-scheduled-health-check/index.md) | Configure and run a scheduled task, check its findings, and refresh a report | 30 min |
 | [05 - Reset and Preserve Evidence](sre/06-cleanup/index.md) | Stop faults and the recurring task, save evidence, and hand back the environment | 10 min |
 
@@ -69,11 +69,12 @@ resources or add permissions yourself.
 
 [Start Module 01 :material-arrow-right:](sre/01-deploy-and-validate/index.md){ .md-button .md-button--primary }
 
-## Optional guides
+## Reference guides
 
 * [SRE configuration reference](sre/02-operate-response-plan/index.md)
 * [Terminal setup and environment values](sre/30-appendix/01-variables.md)
 * [Troubleshooting](sre/30-appendix/02-troubleshooting.md)
+* [Incident workflow setup and routing](sre/30-appendix/09-incident-workflow.md)
 * [Health-check setup and Live Report authoring](sre/30-appendix/08-proactive-extensions.md)
 * [Self-deployment](sre/30-appendix/06-self-deployment.md), if you are doing the
   workshop independently
