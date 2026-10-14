@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Cross-platform deployment, PostgreSQL smoke checks, bounded fault actions, and the opt-in scheduled health check."""
+"""Cross-platform deployment, bounded faults, and opt-in incident and health-check workflows."""
 
 import argparse
 import base64
 from contextlib import contextmanager
+import copy
 from datetime import datetime, timezone
+import fnmatch
 import gzip
 import hashlib
 import io
@@ -71,11 +73,38 @@ HEALTH_CONNECTOR_TOOLS = {
     "LogAnalytics": "QueryLogAnalyticsByWorkspaceId",
     "AppInsights": "QueryAppInsightsUsingAppId",
 }
+INCIDENT_WORKFLOW_NAME = "orders-incident-workflow"
+INCIDENT_WORKFLOW_AGENT = "orders-alert-investigator"
+INCIDENT_WORKFLOW_TEMPLATE = AGENT_DEFINITIONS / "workflows" / "orders-incident-workflow.yaml"
+INCIDENT_WORKFLOW_STATE = "incident-workflow-state.json"
+INCIDENT_WORKFLOW_EVIDENCE = "incident-workflow.json"
+INCIDENT_WORKFLOW_ACTIONS = ("install", "status", "remove")
+INCIDENT_SOURCE_TOOLS = {"ReadFile", "ListDir", "FileSearch", "GrepSearch"}
+INCIDENT_GITHUB_TOOLS = {"FetchGithubIssue", "FetchGithubIssues", "CreateGithubIssue"}
+INCIDENT_EMAIL_TOOLS = {"ListOutlookEmails", "SendOutlookEmail"}
+INCIDENT_APPROVAL_TOOLS = {"CreateGithubIssue", "SendOutlookEmail"}
+INCIDENT_READ_TOOLS = (
+    HEALTH_CHECK_TOOLS | INCIDENT_SOURCE_TOOLS
+    | (INCIDENT_GITHUB_TOOLS | INCIDENT_EMAIL_TOOLS) - INCIDENT_APPROVAL_TOOLS
+)
+INCIDENT_SKILLS = (
+    "orders-azure-monitor-rca", "orders-github-issue-followup",
+    "orders-email-incident-followup",
+)
+INCIDENT_ALERT_RULES = (
+    "alert-orders-postgresql-connectivity",
+)
+INCIDENT_DEFAULT_TITLE = "alert-orders-h"
+INCIDENT_WORKFLOW_TITLE = "postgresql"
+INCIDENT_BASE = "/api/v2/extendedAgent/"
+INCIDENT_PLAN_READ_ONLY_PROPERTIES = {"createdAt", "updatedAt", "configurationWarning"}
 FRESH_ENVIRONMENT_EVIDENCE = (
     "provision-start.json",
     "vm-deployment.json",
     "sre-agent-configuration.json",
     HEALTH_CHECK_EVIDENCE,
+    INCIDENT_WORKFLOW_STATE,
+    INCIDENT_WORKFLOW_EVIDENCE,
     "smoke.json",
     "vm-inspection.json",
     "persistence-witness.json",
@@ -128,6 +157,13 @@ def cli(tool, *args, timeout=180, sensitive=False):
     })
     command = [executable, *args]
     if tool == "az":
+        if sys.platform == "win32" and Path(executable).suffix.lower() in {".cmd", ".bat"}:
+            runtime = Path(executable).parent.parent / "python.exe"
+            if not runtime.is_file():
+                raise DeploymentError(
+                    "The Windows Azure CLI launcher has no bundled Python runtime; "
+                    "use the official Azure CLI installation to preserve literal arguments.")
+            command = [str(runtime), "-I", "-B", "-m", "azure.cli", *args]
         command += ["--only-show-errors", "--output", "json"]
     try:
         result = subprocess.run(
@@ -340,7 +376,19 @@ def check_resource_group(values, fresh=False):
             f"Benchmark requires a new empty environment; {group} already exists. "
             "Create and select a new azd environment. No resources were changed."
         )
-    tags = az("group", "show", "--name", group, "--subscription", subscription, "--query", "tags") or {}
+    tags = az("group", "show", "--name", group, "--subscription", subscription, "--query", "tags")
+    if tags is None:
+        tags = {}
+    if not isinstance(tags, dict):
+        raise DeploymentError("Unexpected resource group tags response.")
+    if values.get("WORKSHOP_RESOURCE_GROUP_NAME") and not tags:
+        resources = az("resource", "list", "--resource-group", group,
+                       "--subscription", subscription, "--query", "[].id")
+        if not isinstance(resources, list):
+            raise DeploymentError("Unexpected resource group inventory response.")
+        if not resources:
+            progress(f"[preflight] Using explicitly selected empty, untagged group {group}.")
+            return True
     if tags.get("workshop-architecture") != "single-vm-postgresql-v1":
         raise DeploymentError(
             f"{group} is not a compatible PostgreSQL workshop environment. "
@@ -789,7 +837,8 @@ def sre_agent_token(values):
     return token
 
 
-def sre_agent_request(endpoint, token, path, method="GET", body=None):
+def sre_agent_request(endpoint, token, path, method="GET", body=None, *,
+                      if_match=None, with_etag=False):
     data = json.dumps(body).encode("utf-8") if body is not None else None
     request = urllib.request.Request(
         endpoint + path,
@@ -801,12 +850,22 @@ def sre_agent_request(endpoint, token, path, method="GET", body=None):
             "Content-Type": "application/json",
         },
     )
+    if if_match is not None:
+        if not isinstance(if_match, str) or not re.fullmatch(r'"[\x21\x23-\x7e]+"', if_match):
+            raise DeploymentError("A conditional SRE Agent write requires a strong ETag.")
+        request.add_header("If-Match", if_match)
     try:
         with urllib.request.build_opener(SreNoRedirect).open(request, timeout=20) as response:
             payload = response.read(128 * 1024 + 1)
             if len(payload) > 128 * 1024:
                 raise DeploymentError("Azure SRE Agent response exceeded the expected size.")
-            return json.loads(payload) if payload else None
+            document = json.loads(payload) if payload else None
+            if not with_etag:
+                return document
+            etags = response.headers.get_all("ETag") or []
+            if (len(etags) > 1 or etags and not re.fullmatch(r'"[\x21\x23-\x7e]+"', etags[0])):
+                raise DeploymentError("Azure SRE Agent returned an unusable ETag.")
+            return document, etags[0] if etags else None
     except urllib.error.HTTPError as error:
         detail = error.read(4096).decode("utf-8", errors="replace").strip()
         if detail:
@@ -881,6 +940,26 @@ def ensure_sre_response_plan(values, attempts=8, retry_seconds=15):
     last_error = None
     for attempt in range(1, attempts + 1):
         try:
+            listing = sre_agent_request(endpoint, token, "/api/v2/extendedAgent/incidentFilters")
+            plans = sre_collection(listing, "response-plan")
+            if (incident_state_path(values).exists()
+                    or any(item.get("name") == INCIDENT_WORKFLOW_NAME for item in plans)):
+                report = incident_workflow_status(values)
+                if not report["matchesDefinition"]:
+                    raise DeploymentError(
+                        "The incident workflow needs attention; provisioning will not restore "
+                        "an overlapping catch-all. Run incident-workflow status, then remove "
+                        "or reconcile the module. " + " ".join(report["problems"]))
+                result = {
+                    "ok": True, "name": SRE_RESPONSE_PLAN_NAME,
+                    "incidentPlatform": "AzMonitor", "priorities": ["Sev1", "Sev2"],
+                    "mode": "Review", "handlingAgent": "meta_agent",
+                    "titleContains": report["routing"]["originalTitleContains"],
+                    "incidentWorkflow": INCIDENT_WORKFLOW_NAME,
+                }
+                write_json(state_directory(values) / "sre-agent-configuration.json", result)
+                progress("[sre-agent] Preserved both complementary incident response plans.")
+                return result
             sre_agent_request(endpoint, token, path, "PUT", document)
             response = sre_agent_request(
                 endpoint, token, "/api/v2/extendedAgent/incidentFilters",
@@ -960,7 +1039,10 @@ def read_health_check_skill(path, name):
         raise DeploymentError(f"Skill {name} must be a file under {definitions.name}/.")
     text = resolved.read_text(encoding="utf-8")
     match = re.match(r"\A---\s*\n(.*?)\n---\s*\n", text, re.DOTALL)
-    metadata = yaml.safe_load(match.group(1)) if match else None
+    try:
+        metadata = yaml.safe_load(match.group(1)) if match else None
+    except yaml.YAMLError as error:
+        raise DeploymentError(f"Skill {name} has invalid YAML frontmatter.") from error
     if not isinstance(metadata, dict) or metadata.get("name") != name:
         raise DeploymentError(f"Skill {name} needs YAML frontmatter with a matching name.")
     description = health_check_text(
@@ -1022,7 +1104,7 @@ def load_health_check_definition(template=None):
     }
 
 
-def health_check_documents(definition, telemetry_tools=()):
+def skill_agent_documents(definition, telemetry_tools=()):
     tools = list(dict.fromkeys([*definition["tools"], *telemetry_tools]))
     skills = [{
         "name": skill["name"], "type": "Skill", "tags": [],
@@ -1037,13 +1119,18 @@ def health_check_documents(definition, telemetry_tools=()):
             "instructions": definition["instructions"],
             "handoffDescription": definition["handoffDescription"],
             "handoffs": [], "tools": tools,
-            # The optional tool categories stay empty so only `tools` grants capability.
+            # Pin optional categories; verify actual runtime tools separately.
             "mcpTools": [], "connectors": [], "agentsAsTools": [], "commonTools": [],
-            "agentType": "Autonomous", "temperature": 0.2,
+            "enableVanillaMode": False, "temperature": 0.2,
             "enableSkills": True, "addSystemSkills": False,
             "allowedSkills": [skill["name"] for skill in definition["skills"]],
         },
     }
+    return skills, agent
+
+
+def health_check_documents(definition, telemetry_tools=()):
+    skills, agent = skill_agent_documents(definition, telemetry_tools)
     task = {
         "name": definition["name"], "type": "ScheduledTask", "tags": [],
         "properties": {
@@ -1209,7 +1296,7 @@ def health_check_report(state, definition, expected_tools):
     }
 
 
-def retry_sre_agent(label, action, attempts, retry_seconds):
+def retry_sre_agent(label, action, attempts, retry_seconds, prefix="health-check"):
     for attempt in range(1, attempts + 1):
         try:
             return action()
@@ -1219,7 +1306,7 @@ def retry_sre_agent(label, action, attempts, retry_seconds):
                     f"{label} failed: {error}", status=error.status, retryable=error.retryable,
                 ) from error
             progress(
-                f"[health-check] {label} is not ready; retrying in "
+                f"[{prefix}] {label} is not ready; retrying in "
                 f"{retry_seconds}s ({attempt}/{attempts}): {error}"
             )
             time.sleep(retry_seconds)
@@ -1231,7 +1318,7 @@ def ensure_health_check(values, attempts=8, retry_seconds=15):
     skills, agent, task = health_check_documents(
         definition, health_check_telemetry_tools(values))
     expected_tools = agent["properties"]["tools"]
-    token = sre_agent_token()
+    token = sre_agent_token(values)
     base = "/api/v2/extendedAgent/"
 
     def install():
@@ -1258,7 +1345,7 @@ def ensure_health_check(values, attempts=8, retry_seconds=15):
 
 def health_check_status(values):
     definition = load_health_check_definition()
-    state = health_check_state(sre_agent_url(values), sre_agent_token(), definition)
+    state = health_check_state(sre_agent_url(values), sre_agent_token(values), definition)
     # The skill queries the App*, Heartbeat, and Perf tables, so install always attaches this tool.
     expected_tools = [*definition["tools"], HEALTH_CONNECTOR_TOOLS["LogAnalytics"]]
     return health_check_report(state, definition, expected_tools)
@@ -1267,7 +1354,7 @@ def health_check_status(values):
 def remove_health_check(values, attempts=8, retry_seconds=15):
     definition = load_health_check_definition()
     endpoint = sre_agent_url(values)
-    token = sre_agent_token()
+    token = sre_agent_token(values)
     targets = [
         ("scheduledtasks", definition["name"]),
         ("agents", definition["agent"]),
@@ -1309,6 +1396,778 @@ def health_check(values, action):
         "status": health_check_status,
         "remove": remove_health_check,
     }[action](values)
+
+
+def sre_collection(document, label):
+    items = document.get("value") if isinstance(document, dict) else document
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        raise DeploymentError(f"Azure SRE Agent returned an invalid {label} collection.")
+    names = [item.get("name") for item in items]
+    if (not all(isinstance(name, str) and name.strip() for name in names)
+            or len(names) != len(set(names))):
+        raise DeploymentError(f"Azure SRE Agent returned unnamed or duplicate {label} entries.")
+    return items
+
+
+def incident_state_path(values):
+    name = required(values, "AZURE_ENV_NAME")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+        raise DeploymentError("Invalid incident-workflow environment name.")
+    return ROOT / ".workshop" / name / INCIDENT_WORKFLOW_STATE
+
+
+@contextmanager
+def incident_workflow_lock(values):
+    path = incident_state_path(values).with_suffix(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x", encoding="utf-8") as lock:
+            lock.write(f"{os.getpid()}\n")
+    except FileExistsError as error:
+        raise DeploymentError(
+            "An incident-workflow operation is locked. Check its status and the recorded "
+            "process before removing a stale incident-workflow-state.lock.") from error
+    try:
+        yield
+    finally:
+        path.unlink()
+
+
+def save_incident_state(values, state):
+    path = incident_state_path(values)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    write_json(temporary, state)
+    temporary.replace(path)
+
+
+def incident_agent_id(values):
+    agent_id = required(values, "SRE_AGENT_RESOURCE_ID")
+    match = re.fullmatch(
+        r"(/subscriptions/[0-9a-fA-F-]+/resourceGroups/[\w.()-]+)/"
+        r"providers/Microsoft\.App/agents/[\w-]+", agent_id)
+    if not match or match.group(1).split("/")[2].lower() != required(
+            values, "AZURE_SUBSCRIPTION_ID").lower():
+        raise DeploymentError("Unexpected incident-workflow agent resource identifier.")
+    try:
+        uuid.UUID(match.group(1).split("/")[2])
+    except ValueError as error:
+        raise DeploymentError("The incident subscription ID must be a GUID.") from error
+    if match.group(1).split("/")[4].lower() != required(values, "RESOURCE_GROUP").lower():
+        raise DeploymentError("The incident workflow must use the workshop resource group.")
+    return agent_id, match.group(1)
+
+
+def load_incident_definition(template=None):
+    template = Path(template or INCIDENT_WORKFLOW_TEMPLATE)
+    try:
+        parsed = yaml.safe_load(template.read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        raise DeploymentError("The incident-workflow template is not valid YAML.") from error
+    document = health_check_mapping(parsed, "The incident-workflow template")
+    trigger = health_check_mapping(document.get("trigger"), "trigger")
+    agent = health_check_mapping(document.get("custom_agent"), "custom_agent")
+    filters = health_check_mapping(trigger.get("filters"), "trigger.filters")
+    if (document.get("name") != INCIDENT_WORKFLOW_NAME
+            or agent.get("name") != INCIDENT_WORKFLOW_AGENT):
+        raise DeploymentError("Incident workflow and investigator names are fixed for safe ownership.")
+    if trigger.get("type") != "incident-platform" or trigger.get("platform") != "azure-monitor":
+        raise DeploymentError("The incident workflow requires the Azure Monitor incident platform.")
+    if trigger.get("action_mode") != "Review" or agent.get("action_mode") != "Review":
+        raise DeploymentError("The incident workflow must run in Review mode.")
+    if (filters.get("severities") != ["Sev1", "Sev2"]
+            or filters.get("alert_rules") != list(INCIDENT_ALERT_RULES)
+            or filters.get("merge_window_hours") != 3):
+        raise DeploymentError("Incident filters must retain Sev1/Sev2, the Orders rules, and a three-hour merge window.")
+    tools = health_check_mapping(agent.get("tools"), "custom_agent.tools")
+    if set(tools) != {"read_only", "ask_approval", "deny"}:
+        raise DeploymentError("Incident tools require read_only, ask_approval, and deny groups.")
+    read_only = health_check_tools(tools["read_only"], "Incident read-only tools")
+    ask = health_check_tools(tools["ask_approval"], "Incident approval tools")
+    denied = health_check_tools(tools["deny"], "Incident denied tools")
+    if (set(read_only) != INCIDENT_READ_TOOLS or set(ask) != INCIDENT_APPROVAL_TOOLS
+            or not {"RunAzCliWriteCommands", "RunInTerminal", "Terminal"} <= set(denied)
+            or (set(read_only) | set(ask)) & set(denied)):
+        raise DeploymentError("The incident workflow may attach only approved read or separately approved follow-up tools.")
+    entries = agent.get("skills")
+    if not isinstance(entries, list) or len(entries) != len(INCIDENT_SKILLS):
+        raise DeploymentError("The incident workflow requires exactly its three namespaced skills.")
+    skills = []
+    for entry, expected in zip(entries, INCIDENT_SKILLS):
+        entry = health_check_mapping(entry, "An incident skill")
+        if entry.get("name") != expected:
+            raise DeploymentError("The incident workflow skill names or order differ.")
+        source = health_check_text(entry.get("source"), "An incident skill source")
+        skills.append(read_health_check_skill(template.parent / source, expected))
+    sources = agent.get("context_sources")
+    expected_sources = (
+        AGENT_DEFINITIONS / "instructions" / "architecture.md",
+        AGENT_DEFINITIONS / "instructions" / "investigation-principles.md",
+        AGENT_DEFINITIONS / "runbooks" / "dependency-failure.md",
+    )
+    if not isinstance(sources, list) or len(sources) != len(expected_sources):
+        raise DeploymentError("The RCA requires the canonical workshop context.")
+    context = []
+    for source, expected in zip(sources, expected_sources):
+        if not isinstance(source, str) or (template.parent / source).resolve() != expected.resolve():
+            raise DeploymentError("Incident context must use the canonical architecture and runbook files.")
+        text = expected.read_text(encoding="utf-8")
+        text = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", text, count=1, flags=re.DOTALL)
+        context.append(text.strip())
+    skills[0]["content"] += "\n\n## Installed workshop reference context\n\n" + "\n\n".join(context) + "\n"
+    return {
+        "name": INCIDENT_WORKFLOW_NAME, "agent": INCIDENT_WORKFLOW_AGENT,
+        "handoffDescription": health_check_text(agent.get("handoff_description"), "Incident handoff description"),
+        "instructions": health_check_text(agent.get("instructions"), "Incident instructions"),
+        "tools": read_only, "approvalTools": ask, "skills": skills,
+    }
+
+
+def incident_settings(source_repository=None, github_repository=None,
+                      outlook_connector=None, email_to=()):
+    def repository(value):
+        if value is None:
+            return None
+        if not isinstance(value, str) or not re.fullmatch(
+                r"https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9_.-]+", value):
+            raise DeploymentError("An incident repository must be an exact https://github.com/owner/repo URL.")
+        if value.rsplit("/", 1)[1] in {".", ".."} or value.endswith(".git"):
+            raise DeploymentError("Use the repository page URL, without .git or a path suffix.")
+        return value
+
+    source = repository(source_repository)
+    github = repository(github_repository)
+    if not isinstance(email_to, (list, tuple)) or not all(
+            isinstance(item, str) for item in email_to):
+        raise DeploymentError("Email recipients must be a list of individual addresses.")
+    recipients = list(dict.fromkeys(email_to))
+    if bool(outlook_connector) != bool(recipients):
+        raise DeploymentError("Email follow-up needs both --outlook-connector and --email-to.")
+    if outlook_connector:
+        health_check_name(outlook_connector, "Outlook connector")
+    for recipient in recipients:
+        if not isinstance(recipient, str) or not re.fullmatch(
+                r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+",
+                recipient):
+            raise DeploymentError("Each --email-to must be a single email address, without display name, CC, or BCC.")
+    return {
+        "sourceRepository": source, "githubRepository": github,
+        "outlookConnector": outlook_connector, "emailRecipients": recipients,
+    }
+
+
+def incident_bindings(values, settings):
+    agent_id, group_id = incident_agent_id(values)
+    bindings = {
+        "agentResourceId": agent_id, "resourceGroupId": group_id,
+        "subscriptionId": required(values, "AZURE_SUBSCRIPTION_ID"),
+        "workspaceId": required(values, "LOG_ANALYTICS_CUSTOMER_ID"),
+        "allowedAlertRules": list(INCIDENT_ALERT_RULES),
+        **settings,
+    }
+    try:
+        uuid.UUID(bindings["workspaceId"])
+    except ValueError as error:
+        raise DeploymentError("The incident workspace ID must be a GUID.") from error
+    for key, provider in (
+        ("VM_RESOURCE_ID", "Microsoft.Compute/virtualMachines"),
+        ("LOG_ANALYTICS_ID", "Microsoft.OperationalInsights/workspaces"),
+        ("POSTGRESQL_SERVER_RESOURCE_ID", "Microsoft.DBforPostgreSQL/flexibleServers"),
+        ("POSTGRESQL_FAULT_RULE_RESOURCE_ID", "Microsoft.Network/networkSecurityGroups"),
+    ):
+        resource_id = required(values, key)
+        prefix = group_id + "/providers/" + provider + "/"
+        if not resource_id.lower().startswith(prefix.lower()) or any(
+                char.isspace() for char in resource_id):
+            raise DeploymentError(f"{key} must refer to a resource in the workshop group.")
+        bindings[key] = resource_id
+    if not bindings["POSTGRESQL_FAULT_RULE_RESOURCE_ID"].lower().endswith(
+            "/securityrules/postgresqlfaultinjection"):
+        raise DeploymentError("The incident workflow must use only PostgreSqlFaultInjection.")
+    return bindings
+
+
+def incident_prerequisites(values):
+    agent_id, group_id = incident_agent_id(values)
+    parent = az("rest", "--method", "get", "--url",
+                f"https://management.azure.com{agent_id}?api-version={SRE_ARM_API_VERSION}")
+    properties = parent.get("properties") if isinstance(parent, dict) else None
+    action = properties.get("actionConfiguration") if isinstance(properties, dict) else None
+    platform = properties.get("incidentManagementConfiguration") if isinstance(properties, dict) else None
+    knowledge = properties.get("knowledgeGraphConfiguration") if isinstance(properties, dict) else None
+    if (not isinstance(properties, dict) or str(parent.get("id", "")).lower() != agent_id.lower()
+            or not isinstance(action, dict) or action.get("accessLevel") != "Low"
+            or action.get("mode") != "Review"
+            or not isinstance(platform, dict) or platform.get("type") != "AzMonitor"):
+        raise DeploymentError("Incident workflow requires this exact Low-access, Review-mode Azure Monitor agent.")
+    managed = knowledge.get("managedResources") if isinstance(knowledge, dict) else None
+    if (not isinstance(managed, list) or not all(isinstance(item, str) for item in managed)
+            or {item.lower() for item in managed} != {group_id.lower()}):
+        raise DeploymentError(
+            "The title partition requires an agent managing only this workshop resource group.")
+    if str(properties.get("agentEndpoint", "")).rstrip("/") != sre_agent_url(values):
+        raise DeploymentError("The ARM agent endpoint differs from the selected workshop endpoint.")
+    return health_check_telemetry_tools(values)
+
+
+def incident_alert_titles(values):
+    _, group_id = incident_agent_id(values)
+    titles = []
+    for name in INCIDENT_ALERT_RULES:
+        alert_id = group_id + "/providers/Microsoft.Insights/scheduledQueryRules/" + name
+        alert = az("rest", "--method", "get", "--url",
+                   f"https://management.azure.com{alert_id}?api-version=2023-12-01")
+        properties = alert.get("properties") if isinstance(alert, dict) else None
+        scopes = properties.get("scopes") if isinstance(properties, dict) else None
+        if (not isinstance(properties, dict) or str(alert.get("id", "")).lower() != alert_id.lower()
+                or alert.get("name") != name or properties.get("enabled") is not True
+                or type(properties.get("severity")) is not int or properties.get("severity") != 1
+                or not isinstance(scopes, list) or len(scopes) != 1
+                or not isinstance(scopes[0], str)
+                or scopes[0].lower() != required(values, "LOG_ANALYTICS_ID").lower()):
+            raise DeploymentError(f"Workshop alert {name} is missing, disabled, or changed.")
+        display = health_check_text(properties.get("displayName"), f"The display name of {name}")
+        if len(display) > 200 or any(char in display for char in "\r\n"):
+            raise DeploymentError("An alert display name cannot be used safely as a title filter.")
+        titles.extend([name, display])
+    titles = list(dict.fromkeys(titles))
+    cpu_id = group_id + "/providers/Microsoft.Insights/metricAlerts/alert-orders-high-cpu"
+    cpu = az("rest", "--method", "get", "--url",
+             f"https://management.azure.com{cpu_id}?api-version=2018-03-01")
+    properties = cpu.get("properties") if isinstance(cpu, dict) else None
+    scopes = properties.get("scopes") if isinstance(properties, dict) else None
+    if (not isinstance(properties, dict) or str(cpu.get("id", "")).lower() != cpu_id.lower()
+            or cpu.get("name") != "alert-orders-high-cpu"
+            or properties.get("enabled") is not True
+            or type(properties.get("severity")) is not int or properties.get("severity") != 2
+            or not isinstance(scopes, list) or len(scopes) != 1
+            or not isinstance(scopes[0], str)
+            or scopes[0].lower() != required(values, "VM_RESOURCE_ID").lower()):
+        raise DeploymentError("The CPU alert is missing, disabled, or changed.")
+    cpu_titles = ["alert-orders-high-cpu", health_check_text(
+        properties.get("description"), "The CPU alert description")]
+    if any(title.casefold() in candidate.casefold() for title in titles for candidate in cpu_titles):
+        raise DeploymentError("An incident title filter would also include the CPU alert.")
+    return titles
+
+
+def incident_optional_get(endpoint, token, path, *, with_etag=False):
+    try:
+        return sre_agent_request(endpoint, token, path, with_etag=with_etag)
+    except SreAgentRequestError as error:
+        if error.status == 404:
+            return (None, None) if with_etag else None
+        raise
+
+
+def incident_capabilities(endpoint, token, settings):
+    capabilities = {
+        "source": {"enabled": False, "reason": "No source repository was requested."},
+        "github": {"enabled": False, "reason": "No incident repository was requested; draft only."},
+        "email": {"enabled": False, "reason": "No Outlook connection and recipients were requested; draft only."},
+    }
+    repositories = []
+    oauth = False
+    if settings["sourceRepository"] or settings["githubRepository"]:
+        document = incident_optional_get(endpoint, token, "/api/v2/repos")
+        if document is not None:
+            repositories = sre_collection(document, "repository")
+        domains = incident_optional_get(endpoint, token, "/api/v2/github/domains")
+        oauth = isinstance(domains, dict) and isinstance(domains.get("values"), list) and bool(domains["values"])
+
+    def connected(url):
+        return oauth and any(
+            isinstance(item.get("properties"), dict)
+            and str(item["properties"].get("url", "")).rstrip("/").lower() == url.lower()
+            for item in repositories)
+
+    source = settings["sourceRepository"]
+    if source:
+        capabilities["source"] = {
+            "enabled": connected(source),
+            "reason": "Bound Code Access repository and GitHub authentication found."
+            if connected(source) else "The exact source repository or GitHub authentication is unavailable.",
+        }
+    policy = None
+    if settings["githubRepository"] or settings["outlookConnector"]:
+        policy = incident_optional_get(endpoint, token, "/api/v2/agent/settings/global")
+    permissions = policy.get("permissions") if isinstance(policy, dict) else None
+
+    def approval(tool):
+        if not isinstance(permissions, dict):
+            return False
+        groups = [permissions.get(key) for key in ("allow", "ask", "deny")]
+        if not all(isinstance(group, list) and all(isinstance(item, str) for item in group)
+                   for group in groups):
+            return False
+        allow, ask, deny = groups
+        return (tool in ask
+                and not any(fnmatch.fnmatchcase(tool, item) for item in [*allow, *deny]))
+
+    github = settings["githubRepository"]
+    if github:
+        enabled = connected(github) and approval("CreateGithubIssue")
+        capabilities["github"] = {
+            "enabled": enabled,
+            "reason": "Bound repository, GitHub authentication, and explicit ask policy verified."
+            if enabled else "Connect the exact incident repository and require CreateGithubIssue approval "
+            "without a matching allow/deny override; draft only.",
+        }
+    connector = settings["outlookConnector"]
+    if connector:
+        server = incident_optional_get(endpoint, token, f"/api/v2/connectorV2/mcpservers/{connector}")
+        properties = server.get("properties") if isinstance(server, dict) else None
+        connectors = properties.get("connectors") if isinstance(properties, dict) else None
+        binding = connectors[0] if (
+            isinstance(connectors, list) and len(connectors) == 1
+            and isinstance(connectors[0], dict) and connectors[0].get("name") == "office365"
+            and isinstance(connectors[0].get("connectionName"), str)) else None
+        authenticated = False
+        if binding:
+            connection_name = health_check_name(binding["connectionName"], "Outlook connection name")
+            connection = incident_optional_get(
+                endpoint, token, f"/api/v2/connectorV2/connections/{connection_name}")
+            authenticated = (isinstance(connection, dict)
+                             and isinstance(connection.get("properties"), dict)
+                             and connection["properties"].get("overallStatus") == "Connected")
+        enabled = authenticated and approval("SendOutlookEmail")
+        capabilities["email"] = {
+            "enabled": enabled,
+            "reason": "Bound Office 365 connection, authenticated state, recipients, and ask policy verified."
+            if enabled else "The bound Office 365 connection must be Connected and SendOutlookEmail "
+            "must require approval without a matching allow/deny override; draft only.",
+        }
+    return capabilities
+
+
+def incident_documents(definition, values, settings, capabilities, telemetry_tools, titles):
+    effective = copy.deepcopy(definition)
+    permitted = set(HEALTH_CHECK_TOOLS)
+    for capability, tools in (
+        ("source", INCIDENT_SOURCE_TOOLS), ("github", INCIDENT_GITHUB_TOOLS),
+        ("email", INCIDENT_EMAIL_TOOLS),
+    ):
+        if capabilities[capability]["enabled"]:
+            permitted.update(tools)
+    effective["tools"] = [
+        tool for tool in [*definition["tools"], *definition["approvalTools"]] if tool in permitted
+    ]
+    bindings = incident_bindings(values, settings)
+    bindings["capabilities"] = capabilities
+    effective["instructions"] += (
+        "\n\nTrusted installation bindings (not credentials):\n"
+        + json.dumps(bindings, indent=2, sort_keys=True))
+    skills, agent = skill_agent_documents(effective, telemetry_tools)
+    documents = {
+        INCIDENT_BASE + "skills/" + skill["name"]: skill for skill in skills
+    }
+    documents[INCIDENT_BASE + "agents/" + agent["name"]] = agent
+    documents[INCIDENT_BASE + "incidentFilters/" + INCIDENT_WORKFLOW_NAME] = {
+        "name": INCIDENT_WORKFLOW_NAME, "type": "IncidentFilter", "tags": [],
+        "properties": {
+            "incidentPlatform": "AzMonitor", "priorities": ["Sev1", "Sev2"],
+            "handlingAgent": INCIDENT_WORKFLOW_AGENT, "agentMode": "Review",
+            "impactedService": "", "incidentType": "", "incidentTypes": [], "alertId": "",
+            "handlingAgents": None, "owningTeamId": "", "owningTeamIds": [],
+            "titleContains": INCIDENT_WORKFLOW_TITLE, "titleContainsAll": [],
+            "titleContainsAny": [], "titleNotContains": [],
+            "icmFilterSettings": None,
+            "azMonitorFilterSettings": {"targetResourceType": "", "targetResource": ""},
+            "mergeEnabled": True, "mergeWindowHours": 3,
+            "maxAutomatedInvestigationAttempts": 3, "isEnabled": True,
+        },
+    }
+    return documents
+
+
+def incident_component_matches(actual, expected):
+    if not isinstance(actual, dict) or actual.get("name") != expected["name"]:
+        return False
+    properties = actual.get("properties")
+    if not isinstance(properties, dict):
+        return False
+    expected_properties = expected["properties"]
+    if expected.get("type") == "IncidentFilter":
+        properties = {key: value for key, value in properties.items()
+                      if key not in INCIDENT_PLAN_READ_ONLY_PROPERTIES}
+        expected_properties = {key: value for key, value in expected_properties.items()
+                               if key not in INCIDENT_PLAN_READ_ONLY_PROPERTIES}
+    if expected["name"] == SRE_RESPONSE_PLAN_NAME and set(properties) != set(expected_properties):
+        return False
+    for key, value in expected_properties.items():
+        current = properties.get(key)
+        if key == "name" and expected.get("type") == "Skill" and key not in properties:
+            current = actual["name"]
+        if key == "skillContent":
+            current = properties.get("skillContent", properties.get("skillMdContent"))
+            if not isinstance(current, str) or not health_check_skill_matches(actual, {"content": value}):
+                return False
+        elif isinstance(value, str):
+            matches = health_check_text_matches(current, value) if key in {
+                "instructions", "handoffDescription", "description"} else current == value
+            if not isinstance(current, str) or not matches:
+                return False
+        elif isinstance(value, list):
+            if not isinstance(current, list):
+                return False
+            if all(isinstance(item, str) for item in value):
+                if not all(isinstance(item, str) for item in current) or sorted(current) != sorted(value):
+                    return False
+            elif current != value:
+                return False
+        elif isinstance(value, bool):
+            if current is not value:
+                return False
+        elif current != value or isinstance(current, bool):
+            return False
+    actual_tags = actual.get("tags")
+    expected_tags = expected.get("tags")
+    return ([] if actual_tags is None else actual_tags) == (
+        [] if expected_tags is None else expected_tags)
+
+
+def incident_plan_document(plan):
+    if (not isinstance(plan, dict) or plan.get("name") != SRE_RESPONSE_PLAN_NAME
+            or not isinstance(plan.get("properties"), dict)):
+        raise DeploymentError("The original workshop response plan is missing or malformed.")
+    properties = plan["properties"]
+    priorities = properties.get("priorities")
+    if (properties.get("incidentPlatform") != "AzMonitor"
+            or properties.get("agentMode") != "Review"
+            or properties.get("handlingAgent") != "meta_agent"
+            or properties.get("isEnabled") is not True
+            or not isinstance(priorities, list)
+            or not all(isinstance(item, str) for item in priorities)
+            or set(priorities) != {"Sev1", "Sev2"}):
+        raise DeploymentError("The original response plan must be enabled for Sev1/Sev2 in Review mode with meta_agent.")
+    for key in ("titleContainsAll", "titleContainsAny", "titleNotContains"):
+        value = properties.get(key, [])
+        if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
+            raise DeploymentError(f"The original response plan has an invalid {key} filter.")
+    if not isinstance(properties.get("titleContains", ""), str):
+        raise DeploymentError("The original response plan has an invalid titleContains filter.")
+    return {
+        "name": SRE_RESPONSE_PLAN_NAME, "type": "IncidentFilter",
+        "tags": copy.deepcopy([] if plan.get("tags") is None else plan["tags"]),
+        "properties": {key: copy.deepcopy(value) for key, value in properties.items()
+                       if key not in INCIDENT_PLAN_READ_ONLY_PROPERTIES},
+    }
+
+
+def incident_title_matches(properties, title):
+    title = title.casefold()
+    contains = properties.get("titleContains", "")
+    all_terms = properties.get("titleContainsAll", [])
+    any_terms = properties.get("titleContainsAny", [])
+    excluded = properties.get("titleNotContains", [])
+    if (not isinstance(contains, str)
+            or not all(isinstance(group, list) and all(isinstance(item, str) for item in group)
+                       for group in (all_terms, any_terms, excluded))):
+        raise DeploymentError("A response plan has unsupported title-filter values.")
+    return (contains.casefold() in title
+            and all(term.casefold() in title for term in all_terms)
+            and (not any_terms or any(term.casefold() in title for term in any_terms))
+            and not any(term.casefold() in title for term in excluded))
+
+
+def incident_read_state(values):
+    path = incident_state_path(values)
+    if not path.exists():
+        return None
+    state = json.loads(path.read_text(encoding="utf-8"))
+    agent_id, _ = incident_agent_id(values)
+    paths = {
+        *(INCIDENT_BASE + "skills/" + name for name in INCIDENT_SKILLS),
+        INCIDENT_BASE + "agents/" + INCIDENT_WORKFLOW_AGENT,
+        INCIDENT_BASE + "incidentFilters/" + INCIDENT_WORKFLOW_NAME,
+    }
+    if (not isinstance(state, dict) or state.get("version") != 1
+            or state.get("agentResourceId") != agent_id
+            or state.get("endpoint") != sre_agent_url(values)
+            or state.get("phase") not in {"prepared", "active", "partial", "removing"}
+            or not isinstance(state.get("documents"), dict)
+            or set(state["documents"]) != paths
+            or not isinstance(state.get("capabilities"), dict)
+            or set(state["capabilities"]) != {"source", "github", "email"}
+            or not all(isinstance(item, dict) and isinstance(item.get("enabled"), bool)
+                       and isinstance(item.get("reason"), str)
+                       for item in state["capabilities"].values())
+            or not isinstance(state.get("titles"), list)
+            or not state["titles"] or not all(isinstance(item, str) and item.strip() for item in state["titles"])):
+        raise DeploymentError("Incident rollback state is malformed or belongs to another agent; do not overwrite it.")
+    original = incident_plan_document(state.get("originalPlan"))
+    expected = copy.deepcopy(original)
+    expected["properties"]["titleContains"] = (
+        original["properties"].get("titleContains") or INCIDENT_DEFAULT_TITLE)
+    partitioned = incident_plan_document(state.get("partitionedPlan"))
+    if partitioned != expected:
+        raise DeploymentError("The saved incident filter partition differs from the original snapshot.")
+    state["originalPlan"] = original
+    state["partitionedPlan"] = partitioned
+    settings = state.get("settings")
+    if not isinstance(settings, dict) or settings != incident_settings(
+            settings.get("sourceRepository"), settings.get("githubRepository"),
+            settings.get("outlookConnector"), settings.get("emailRecipients", [])):
+        raise DeploymentError("Incident follow-up bindings in rollback state are invalid.")
+    for path, document in state["documents"].items():
+        if (not isinstance(document, dict) or document.get("name") != path.rsplit("/", 1)[1]
+                or not isinstance(document.get("properties"), dict)):
+            raise DeploymentError("A saved incident component is invalid.")
+    tools = state["documents"][INCIDENT_BASE + "agents/" + INCIDENT_WORKFLOW_AGENT]["properties"].get("tools")
+    if (not isinstance(tools, list) or not all(isinstance(tool, str) for tool in tools)
+            or set(tools) - (INCIDENT_READ_TOOLS | INCIDENT_APPROVAL_TOOLS | set(HEALTH_CONNECTOR_TOOLS.values()))):
+        raise DeploymentError("Rollback state contains an unapproved incident tool.")
+    return state
+
+
+def incident_routing_check(plans, partitioned, module):
+    documents = {item.get("name"): item for item in plans}
+    documents[SRE_RESPONSE_PLAN_NAME] = partitioned
+    documents[INCIDENT_WORKFLOW_NAME] = module
+    for title in INCIDENT_ALERT_RULES:
+        matches = []
+        for name, item in documents.items():
+            properties = item.get("properties")
+            if not isinstance(properties, dict):
+                raise DeploymentError("A response plan has invalid properties.")
+            priorities = properties.get("priorities", [])
+            if not isinstance(priorities, list) or not all(isinstance(item, str) for item in priorities):
+                raise DeploymentError("A response plan has invalid priorities.")
+            if (properties.get("isEnabled") is True
+                    and properties.get("incidentPlatform") == "AzMonitor"
+                    and set(priorities) & {"Sev1", "Sev2"}
+                    and incident_title_matches(properties, title)):
+                matches.append(name)
+        if matches != [INCIDENT_WORKFLOW_NAME]:
+            raise DeploymentError("The incident title matches another enabled response plan; resolve routing overlap first.")
+    if not incident_title_matches(partitioned["properties"], "alert-orders-high-cpu"):
+        raise DeploymentError("The existing response plan would no longer route the CPU alert.")
+    if not incident_title_matches(partitioned["properties"], "alert-orders-http-5xx"):
+        raise DeploymentError("The existing response plan would no longer route the HTTP 5xx alert.")
+
+
+def incident_guarded_put(endpoint, token, path, desired, allowed, attempts, retry_seconds):
+    current, etag = incident_optional_get(endpoint, token, path, with_etag=True)
+    if incident_component_matches(current, desired):
+        return
+    if not any(current is None if item is None else incident_component_matches(current, item)
+               for item in allowed):
+        raise DeploymentError(f"Concurrent or unowned configuration at {path}; refusing to overwrite it.")
+    sre_agent_request(endpoint, token, path, "PUT", desired, if_match=etag)
+
+    def verify():
+        actual = incident_optional_get(endpoint, token, path)
+        if not incident_component_matches(actual, desired):
+            raise SreAgentRequestError(
+                f"Incident component {desired['name']} did not match its read-back.", retryable=True)
+    retry_sre_agent("Incident read-back", verify, attempts, retry_seconds, prefix="incident-workflow")
+
+
+def incident_workflow_status(values):
+    endpoint, token = sre_agent_url(values), sre_agent_token(values)
+    state = incident_read_state(values)
+    plans = sre_collection(sre_agent_request(endpoint, token, INCIDENT_BASE + "incidentFilters"), "response-plan")
+    if state is None:
+        present = []
+        for path in [
+            *(INCIDENT_BASE + "skills/" + name for name in INCIDENT_SKILLS),
+            INCIDENT_BASE + "agents/" + INCIDENT_WORKFLOW_AGENT,
+            INCIDENT_BASE + "incidentFilters/" + INCIDENT_WORKFLOW_NAME,
+        ]:
+            if incident_optional_get(endpoint, token, path) is not None:
+                present.append(path.rsplit("/", 1)[1])
+        return {
+            "installed": False, "matchesDefinition": False, "phase": "absent",
+            "problems": ["Module components exist without local rollback state; do not overwrite them."]
+            if present else ["The optional incident workflow is not installed."],
+            "unownedComponents": present, "checkedUtc": datetime.now(timezone.utc).isoformat(),
+        }
+    problems = []
+    components = {}
+    for path, expected in state["documents"].items():
+        actual = incident_optional_get(endpoint, token, path)
+        components[expected["name"]] = actual is not None
+        if not incident_component_matches(actual, expected):
+            problems.append(f"Component {expected['name']} is missing or differs from the installed definition.")
+    baseline = next((item for item in plans if item.get("name") == SRE_RESPONSE_PLAN_NAME), None)
+    if not incident_component_matches(baseline, state["partitionedPlan"]):
+        problems.append("The original plan no longer has the saved complementary title filter.")
+    if state["phase"] != "active":
+        problems.append(f"An incident operation is incomplete (phase {state['phase']}); run remove to restore routing.")
+    try:
+        telemetry_tools = incident_prerequisites(values)
+        if incident_alert_titles(values) != state["titles"]:
+            problems.append("The deployed alert names or display names changed; remove and reinstall.")
+        capabilities = incident_capabilities(endpoint, token, state["settings"])
+        desired = incident_documents(
+            load_incident_definition(), values, state["settings"], capabilities, telemetry_tools, state["titles"])
+        if desired != state["documents"]:
+            problems.append("The repository definition or optional capabilities changed; remove and reinstall.")
+        incident_routing_check(
+            plans, state["partitionedPlan"],
+            state["documents"][INCIDENT_BASE + "incidentFilters/" + INCIDENT_WORKFLOW_NAME])
+    except DeploymentError as error:
+        problems.append(str(error))
+        capabilities = {
+            name: {"enabled": False, "reason": "Current capability verification failed; see problems."}
+            for name in ("source", "github", "email")
+        }
+    return {
+        "installed": all(components.values()) and baseline is not None,
+        "matchesDefinition": not problems, "phase": state["phase"],
+        "responsePlan": INCIDENT_WORKFLOW_NAME, "handlingAgent": INCIDENT_WORKFLOW_AGENT,
+        "routing": {"includedTitles": state["titles"],
+                    "workflowTitleContains": INCIDENT_WORKFLOW_TITLE,
+                    "originalTitleContains": state["partitionedPlan"]["properties"]["titleContains"],
+                    "priorities": ["Sev1", "Sev2"], "mode": "Review"},
+        "components": components, "followups": capabilities,
+        "problems": problems, "checkedUtc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def remove_incident_components(values, endpoint, token, state, attempts, retry_seconds):
+    module_path = INCIDENT_BASE + "incidentFilters/" + INCIDENT_WORKFLOW_NAME
+    active = state["documents"][module_path]
+    disabled = copy.deepcopy(active)
+    disabled["properties"]["isEnabled"] = False
+    current = incident_optional_get(endpoint, token, module_path)
+    if current is not None and not (
+            isinstance(current.get("properties"), dict)
+            and current["properties"].get("isEnabled") is False):
+        incident_guarded_put(endpoint, token, module_path, disabled, [active, disabled],
+                             attempts, retry_seconds)
+    baseline_path = INCIDENT_BASE + "incidentFilters/" + SRE_RESPONSE_PLAN_NAME
+    partial_anchor = copy.deepcopy(state["originalPlan"])
+    partial_anchor["properties"]["titleContains"] = state["partitionedPlan"]["properties"]["titleContains"]
+    partial_exclusion = copy.deepcopy(state["originalPlan"])
+    partial_exclusion["properties"]["titleNotContains"] = state["partitionedPlan"]["properties"]["titleNotContains"]
+    incident_guarded_put(endpoint, token, baseline_path, state["originalPlan"],
+                         [state["partitionedPlan"], state["originalPlan"],
+                          partial_anchor, partial_exclusion], attempts, retry_seconds)
+    targets = [module_path, INCIDENT_BASE + "agents/" + INCIDENT_WORKFLOW_AGENT,
+               *(INCIDENT_BASE + "skills/" + name for name in INCIDENT_SKILLS)]
+    for path in targets:
+        current, etag = incident_optional_get(endpoint, token, path, with_etag=True)
+        if current is None:
+            continue
+        expected = disabled if path == module_path else state["documents"][path]
+        if not incident_component_matches(current, expected):
+            raise DeploymentError(f"Component {expected['name']} changed; refusing to delete it.")
+        try:
+            sre_agent_request(endpoint, token, path, "DELETE", if_match=etag)
+        except SreAgentRequestError as error:
+            if error.status != 404:
+                raise
+
+        def verify_deleted():
+            if incident_optional_get(endpoint, token, path) is not None:
+                raise SreAgentRequestError(f"Component {expected['name']} is still present.", retryable=True)
+        retry_sre_agent("Incident removal", verify_deleted, attempts, retry_seconds, prefix="incident-workflow")
+    incident_state_path(values).unlink()
+    (incident_state_path(values).parent / INCIDENT_WORKFLOW_EVIDENCE).unlink(missing_ok=True)
+    return {"ok": True, "removed": [path.rsplit("/", 1)[1] for path in targets],
+            "restoredResponsePlan": SRE_RESPONSE_PLAN_NAME,
+            "checkedUtc": datetime.now(timezone.utc).isoformat()}
+
+
+def ensure_incident_workflow(values, settings=None, attempts=8, retry_seconds=15):
+    definition = load_incident_definition()
+    endpoint, token = sre_agent_url(values), sre_agent_token(values)
+    with incident_workflow_lock(values):
+        saved = incident_read_state(values)
+        if saved is not None:
+            if settings is not None and settings != saved["settings"]:
+                raise DeploymentError("Remove the incident workflow before changing its trusted destinations.")
+            report = incident_workflow_status(values)
+            if not report["matchesDefinition"]:
+                raise DeploymentError("The incident workflow changed or is partial; run remove first. "
+                                      + " ".join(report["problems"]))
+            return {"ok": True, **report}
+        settings = settings or incident_settings()
+        telemetry_tools = incident_prerequisites(values)
+        titles = incident_alert_titles(values)
+        capabilities = incident_capabilities(endpoint, token, settings)
+        documents = incident_documents(definition, values, settings, capabilities, telemetry_tools, titles)
+        plans = sre_collection(sre_agent_request(
+            endpoint, token, INCIDENT_BASE + "incidentFilters"), "response-plan")
+        original = incident_plan_document(
+            next((item for item in plans if item.get("name") == SRE_RESPONSE_PLAN_NAME), None))
+        partitioned = copy.deepcopy(original)
+        partitioned["properties"]["titleContains"] = (
+            original["properties"].get("titleContains") or INCIDENT_DEFAULT_TITLE)
+        module_path = INCIDENT_BASE + "incidentFilters/" + INCIDENT_WORKFLOW_NAME
+        incident_routing_check(plans, partitioned, documents[module_path])
+        for path in documents:
+            if incident_optional_get(endpoint, token, path) is not None:
+                raise DeploymentError("An incident component already exists without rollback state; refusing to replace it.")
+        state = {
+            "version": 1, "agentResourceId": required(values, "SRE_AGENT_RESOURCE_ID"),
+            "endpoint": endpoint, "phase": "prepared", "settings": settings,
+            "titles": titles, "capabilities": capabilities, "documents": documents,
+            "originalPlan": original, "partitionedPlan": partitioned,
+        }
+        save_incident_state(values, state)
+        try:
+            for path, desired in documents.items():
+                staged = copy.deepcopy(desired)
+                if path == module_path:
+                    staged["properties"]["isEnabled"] = False
+                incident_guarded_put(endpoint, token, path, staged, [None], attempts, retry_seconds)
+            incident_guarded_put(
+                endpoint, token, INCIDENT_BASE + "incidentFilters/" + SRE_RESPONSE_PLAN_NAME,
+                partitioned, [original], attempts, retry_seconds)
+            disabled = copy.deepcopy(documents[module_path])
+            disabled["properties"]["isEnabled"] = False
+            incident_guarded_put(endpoint, token, module_path, documents[module_path], [disabled],
+                                 attempts, retry_seconds)
+            state["phase"] = "active"
+            save_incident_state(values, state)
+            report = incident_workflow_status(values)
+            if not report["matchesDefinition"]:
+                raise DeploymentError("Incident workflow activation failed: " + " ".join(report["problems"]))
+            result = {"ok": True, **report}
+            write_json(incident_state_path(values).parent / INCIDENT_WORKFLOW_EVIDENCE, result)
+        except (DeploymentError, OSError) as error:
+            state["phase"] = "partial"
+            save_incident_state(values, state)
+            try:
+                remove_incident_components(values, endpoint, token, state, attempts, retry_seconds)
+            except (DeploymentError, OSError) as rollback_error:
+                raise DeploymentError(
+                    f"{error} Rollback is incomplete: {rollback_error}. Run incident-workflow "
+                    "status and reconcile before retrying; do not enable an overlapping plan.") from error
+            raise
+        progress("[incident-workflow] Installed both complementary Sev1/Sev2 Review plans.")
+        for name, capability in capabilities.items():
+            if not capability["enabled"]:
+                progress(f"[incident-workflow] {name}: {capability['reason']}")
+        return result
+
+
+def remove_incident_workflow(values, attempts=8, retry_seconds=15):
+    endpoint, token = sre_agent_url(values), sre_agent_token(values)
+    with incident_workflow_lock(values):
+        state = incident_read_state(values)
+        if state is None:
+            report = incident_workflow_status(values)
+            if report["unownedComponents"]:
+                raise DeploymentError("Rollback state is missing; do not guess the original plan or delete unowned components.")
+            return {"ok": True, "removed": [], "checkedUtc": datetime.now(timezone.utc).isoformat()}
+        state["phase"] = "removing"
+        save_incident_state(values, state)
+        return remove_incident_components(values, endpoint, token, state, attempts, retry_seconds)
+
+
+def incident_workflow(values, action, settings=None):
+    if action not in INCIDENT_WORKFLOW_ACTIONS:
+        raise DeploymentError("Incident-workflow action must be install, status, or remove.")
+    if settings is not None and action != "install":
+        raise DeploymentError("Incident destination options are valid only with install.")
+    if action == "install":
+        return ensure_incident_workflow(values, settings)
+    if action == "remove":
+        return remove_incident_workflow(values)
+    return incident_workflow_status(values)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -1807,11 +2666,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=(
         "validate", "prepare", "preprovision", "postprovision", "export",
-        "smoke", "inspect", "fault", "health-check", "telemetry", "verify-restart",
+        "smoke", "inspect", "fault", "health-check", "incident-workflow", "telemetry", "verify-restart",
         "benchmark",
     ))
     parser.add_argument("arguments", nargs="*")
+    parser.add_argument("--source-repository")
+    parser.add_argument("--github-repository")
+    parser.add_argument("--outlook-connector")
+    parser.add_argument("--email-to", action="append", default=[])
     args = parser.parse_args()
+    options = (
+        args.source_repository, args.github_repository, args.outlook_connector, args.email_to)
+    settings = incident_settings(*options) if any(options) else None
+    if settings is not None and args.command != "incident-workflow":
+        raise DeploymentError("Incident destination options are valid only for incident-workflow install.")
     direct = {"validate": validate, "prepare": prepare, "preprovision": preprovision,
               "postprovision": postprovision, "benchmark": benchmark}
     if args.command in direct:
@@ -1826,6 +2694,11 @@ def main():
         if len(args.arguments) > 1:
             raise DeploymentError("health-check accepts one action: install, status, or remove.")
         result = health_check(values, args.arguments[0] if args.arguments else "status")
+    elif args.command == "incident-workflow":
+        if len(args.arguments) > 1:
+            raise DeploymentError("incident-workflow accepts one action: install, status, or remove.")
+        result = incident_workflow(
+            values, args.arguments[0] if args.arguments else "status", settings)
     else:
         if args.arguments:
             raise DeploymentError(f"{args.command} does not accept positional arguments.")
