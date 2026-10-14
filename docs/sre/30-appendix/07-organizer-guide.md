@@ -1,7 +1,7 @@
 ---
 title: Organizer Preparation and Cleanup
 description: Prepare accounts, isolated environments, browser access, and SRE configuration before class, then delete the cohort after evidence is saved.
-ms.date: 2026-10-14
+ms.date: 2026-10-15
 ms.topic: how-to
 keywords:
   - workshop organizers
@@ -71,16 +71,10 @@ site build variables.
 
 ## Check before inviting participants
 
-!!! warning "Known readiness gaps"
-    The current browser accepts only resource-group names beginning
-    `rg-sre-agent-workshop-`. Cohort deployment creates names such as `rg-01`,
-    so those groups will not be discovered. Resolve this through a separate
-    runtime change before a browser-based class. Do not rename or retag an
-    existing group as a documentation workaround.
-
+!!! warning "Known access gap"
     The current cohort grants also do not include the Author access needed
     for the response-plan save. This documentation update does not change
-    discovery or RBAC automation.
+    RBAC automation.
 
 Use an actual participant account, not just your organizer account, to check:
 

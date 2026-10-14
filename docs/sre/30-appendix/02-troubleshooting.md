@@ -1,7 +1,7 @@
 ---
 title: Troubleshooting
 description: Resolve participant access and exercise problems, with separate technical checks for organizers and independent environment owners.
-ms.date: 2026-10-14
+ms.date: 2026-10-15
 ms.topic: troubleshooting
 keywords:
   - troubleshooting
@@ -944,11 +944,10 @@ Administrator. To change an existing report, open its authoring thread instead.
 
 ### Environment discovery returns no resource group
 
-The browser currently requires the `rg-sre-agent-workshop-` name prefix and the
-`single-vm-postgresql-v1` architecture tag. Cohort deployment creates groups
-such as `rg-01`, which do not match that prefix. This is an existing runtime
-readiness gap, not a participant setup step or something documentation fixes.
-See the [organizer readiness checks](07-organizer-guide.md#check-before-inviting-participants).
+The browser accepts tagged self-deployed groups named
+`rg-sre-agent-workshop-*` and cohort groups named `rg-01` through `rg-20`.
+Confirm the assigned group has the
+`workshop-architecture=single-vm-postgresql-v1` tag.
 
 Also confirm the participant can read their assigned group, VM, workspace,
 NSG, PostgreSQL server, and SRE Agent. Do not widen their access to the cohort.

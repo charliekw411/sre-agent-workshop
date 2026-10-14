@@ -7,6 +7,7 @@ const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const REQUEST_ID = /^[0-9a-f]{32}$/;
 const RESOURCE_ID =
   /^\/subscriptions\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/resourceGroups\/[a-z0-9._()-]+\/providers\/[a-z0-9.]+(?:\/[a-z0-9.]+\/[a-z0-9._()-]+)+$/i;
+const COHORT_RESOURCE_GROUP = /^rg-(?:0[1-9]|1\d|20)$/i;
 
 export const POSTGRESQL_FAULT_RULE_NAME = "PostgreSqlFaultInjection";
 export const POSTGRESQL_FAULT_RULE_PROPERTIES = Object.freeze({
@@ -112,9 +113,9 @@ function tagValue(tags, expectedName) {
 }
 
 export function isWorkshopResourceGroup(group, config) {
+  const name = String(group?.name || "");
   return (
-    typeof group?.name === "string" &&
-    group.name.startsWith(config.resourceGroupPrefix) &&
+    (name.startsWith(config.resourceGroupPrefix) || COHORT_RESOURCE_GROUP.test(name)) &&
     String(tagValue(group.tags, config.environmentTagName) || "").toLowerCase() ===
       config.environmentTagValue.toLowerCase()
   );

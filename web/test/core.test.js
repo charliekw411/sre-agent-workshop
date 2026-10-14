@@ -53,7 +53,7 @@ test("site configuration requires a tenant-bound SPA", () => {
   );
 });
 
-test("environment discovery accepts only tagged workshop resource groups", () => {
+test("environment discovery accepts tagged self-deployed and cohort resource groups", () => {
   const config = {
     resourceGroupPrefix: "rg-sre-agent-workshop-",
     environmentTagName: "workshop-architecture",
@@ -71,7 +71,27 @@ test("environment discovery accepts only tagged workshop resource groups", () =>
   );
   assert.equal(
     isWorkshopResourceGroup(
+      {
+        name: "rg-01",
+        tags: { "workshop-architecture": "single-vm-postgresql-v1" },
+      },
+      config,
+    ),
+    true,
+  );
+  assert.equal(
+    isWorkshopResourceGroup(
       { name: "rg-sre-agent-workshop-demo", tags: { purpose: "production" } },
+      config,
+    ),
+    false,
+  );
+  assert.equal(
+    isWorkshopResourceGroup(
+      {
+        name: "rg-21",
+        tags: { "workshop-architecture": "single-vm-postgresql-v1" },
+      },
       config,
     ),
     false,

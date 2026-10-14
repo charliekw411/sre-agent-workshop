@@ -1,7 +1,7 @@
 ---
 title: Site Azure Connection (Organizers)
 description: Organizer setup for the shared sign-in, participant permissions, and browser incident controls.
-ms.date: 2026-10-14
+ms.date: 2026-10-15
 ms.topic: how-to
 keywords:
   - msal
@@ -209,9 +209,6 @@ Use a resource group tagged
 1. Open the Pages site and confirm it is readable before sign-in.
 2. Sign in with a participant account and complete tenant MFA.
 3. Confirm the participant discovers only their assigned workshop environment.
-   The current browser prefix excludes cohort names such as `rg-01`; resolve
-   that readiness gap before class, as described in the
-   [organizer guide](07-organizer-guide.md#check-before-inviting-participants).
 4. Confirm environment discovery shows one Orders VM, workspace, NSG,
    PostgreSQL server, and optional SRE Agent.
 5. Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a separate tab. Confirm liveness,
