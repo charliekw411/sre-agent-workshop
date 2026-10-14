@@ -79,10 +79,18 @@ export class HeaderConnection {
       this.details.append(term, value);
     }
     this.actionsRoot = element("div", "sre-connection__actions");
+    this.ordersGui = element(
+      "a",
+      "md-button md-button--primary",
+      "Open Orders GUI",
+    );
+    this.ordersGui.target = "_blank";
+    this.ordersGui.rel = "noopener noreferrer";
+    setHidden(this.ordersGui, true);
     this.retry = actionButton("Retry connection", "md-button md-button--primary");
     this.change = actionButton("Change environment", "md-button");
     this.disconnect = actionButton("Disconnect", "md-button");
-    this.actionsRoot.append(this.retry, this.change, this.disconnect);
+    this.actionsRoot.append(this.ordersGui, this.retry, this.change, this.disconnect);
     this.panel.append(this.message, this.details, this.actionsRoot);
     this.root.append(this.button, this.panel);
 
@@ -168,6 +176,10 @@ export class HeaderConnection {
       (state.phase === "connected"
         ? "Azure controls and telemetry are enabled for the selected environment."
         : "Sign in with the provisioned workshop account to enable Azure controls.");
+    const ordersGuiUrl =
+      state.phase === "connected" ? environment?.ordersGuiUrl || "" : "";
+    this.ordersGui.href = ordersGuiUrl || "#";
+    setHidden(this.ordersGui, !ordersGuiUrl);
     setHidden(this.retry, state.phase !== "error" || !state.canRetry);
     setHidden(this.change, !state.account || !state.environment);
     setHidden(this.disconnect, !state.account);

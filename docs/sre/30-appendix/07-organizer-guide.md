@@ -103,8 +103,12 @@ Give each attendee the shared workshop URL plus their:
 * Account, private sign-in pass/expiration, and MFA instructions
 * Participant alias, environment name, resource group, and subscription
   display name
-* Orders GUI and assigned SRE Agent links
+* Assigned SRE Agent link
 * Prepared Live Report name or link
+
+The connected workshop site derives the Orders GUI link from the participant's
+selected environment, so it does not need to be printed on the credential
+handout.
 
 Keep credentials out of the public roster, repository, screenshots, and
 logs. Provide a way to request a replacement pass or report an access problem.

@@ -211,7 +211,7 @@ Use a resource group tagged
 3. Confirm the participant discovers only their assigned workshop environment.
 4. Confirm environment discovery shows one Orders VM, workspace, NSG,
    PostgreSQL server, and optional SRE Agent.
-5. Open `SERVICE_ORDERS_API_ENDPOINT_URL` in a separate tab. Confirm liveness,
+5. Open **Connected** and select **Open Orders GUI**. Confirm liveness,
    readiness, and PostgreSQL status are healthy.
 6. In Module 02, save the response-plan settings and start the CPU incident.
    Confirm the launcher uses the fixed

@@ -7,6 +7,7 @@ import {
   buildPostgresqlQuery,
   createFaultScript,
   isWorkshopResourceGroup,
+  ordersGuiUrl,
   parseMetricSeries,
   parsePostgresqlFaultRule,
   parsePostgresqlSeries,
@@ -30,6 +31,9 @@ const NSG_ID =
 const POSTGRESQL_ID =
   "/subscriptions/33333333-3333-4333-8333-333333333333/resourceGroups/" +
   "rg-sre-agent-workshop-demo/providers/Microsoft.DBforPostgreSQL/flexibleServers/psql-orders-demo";
+const PUBLIC_IP_ID =
+  "/subscriptions/33333333-3333-4333-8333-333333333333/resourceGroups/" +
+  "rg-sre-agent-workshop-demo/providers/Microsoft.Network/publicIPAddresses/pip-orders-demo";
 
 test("site configuration requires a tenant-bound SPA", () => {
   const unconfigured = validateConfig({ tenantId: "", clientId: "" });
@@ -125,6 +129,11 @@ test("environment inventory requires one bounded VM and workspace", () => {
       name: "psql-orders-demo",
       type: "Microsoft.DBforPostgreSQL/flexibleServers",
     },
+    {
+      id: PUBLIC_IP_ID,
+      name: "pip-orders-demo",
+      type: "Microsoft.Network/publicIPAddresses",
+    },
   ];
   const selected = selectEnvironmentResources(resources);
   assert.equal(selected.virtualMachine.name, "vm-orders-demo");
@@ -132,9 +141,27 @@ test("environment inventory requires one bounded VM and workspace", () => {
   assert.equal(selected.sreAgent.name, "sre-demo");
   assert.equal(selected.networkSecurityGroup.name, "nsg-orders-demo");
   assert.equal(selected.postgresqlServer.name, "psql-orders-demo");
+  assert.equal(selected.publicIpAddress.name, "pip-orders-demo");
   assert.equal(
     sreAgentIncidentsUrl(selected.sreAgent.id),
     `https://sre.azure.com/agents${selected.sreAgent.id}/views/incidents`,
+  );
+  assert.equal(
+    ordersGuiUrl({
+      properties: {
+        dnsSettings: {
+          fqdn: "orders-demo.australiaeast.cloudapp.azure.com",
+        },
+      },
+    }),
+    "http://orders-demo.australiaeast.cloudapp.azure.com:8080/",
+  );
+  assert.throws(
+    () =>
+      ordersGuiUrl({
+        properties: { dnsSettings: { fqdn: "orders-demo.example.com" } },
+      }),
+    /valid Orders GUI hostname/,
   );
   assert.throws(() => selectEnvironmentResources(resources.slice(1)), /workshop VM/);
 });

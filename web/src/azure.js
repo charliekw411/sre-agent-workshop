@@ -8,6 +8,7 @@ import {
   buildPostgresqlQuery,
   createFaultScript,
   isWorkshopResourceGroup,
+  ordersGuiUrl,
   parseMetricSeries,
   parsePostgresqlFaultRule,
   parsePostgresqlSeries,
@@ -255,6 +256,9 @@ export class AzureWorkshopClient {
     const workspaceResponse = await this.request(
       `${ARM_ENDPOINT}${selected.workspace.id}?api-version=2023-09-01`,
     );
+    const publicIpResponse = await this.request(
+      `${ARM_ENDPOINT}${selected.publicIpAddress.id}?api-version=2024-05-01`,
+    );
     const workspaceCustomerId = String(
       workspaceResponse.payload?.properties?.customerId || "",
     );
@@ -276,6 +280,7 @@ export class AzureWorkshopClient {
       sreAgent: selected.sreAgent,
       networkSecurityGroup: selected.networkSecurityGroup,
       postgresqlServer: selected.postgresqlServer,
+      ordersGuiUrl: ordersGuiUrl(publicIpResponse.payload),
       alerts: Object.freeze({
         cpu: `${alertRoot}/metricAlerts/alert-orders-high-cpu`,
         postgresql:

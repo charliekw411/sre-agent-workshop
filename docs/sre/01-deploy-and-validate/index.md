@@ -1,7 +1,7 @@
 ---
 title: Module 01 - Access and Understand the Workshop
 description: Sign in to your assigned environment, review the architecture, and check that the Orders app and monitoring are healthy.
-ms.date: 2026-10-14
+ms.date: 2026-10-15
 ms.topic: how-to
 keywords:
   - workshop access
@@ -66,7 +66,7 @@ Your facilitator supplies:
 * A Temporary Access Pass (TAP), if used, with its expiration
 * MFA registration instructions
 * Your subscription display name and assigned resource group
-* The workshop site, Orders GUI, and SRE Agent links
+* The workshop site and SRE Agent link
 
 Open the supplied workshop site and select **Not connected** in the header.
 Use the supplied account, not your personal Azure account. Follow the sign-in
@@ -84,6 +84,9 @@ The site selects the environment automatically when it finds only one. If a
 picker appears, select your assigned subscription and resource group, then
 **Use environment**.
 
+Open **Connected** in the site header and select **Open Orders GUI**. Keep the
+new tab open for the workshop.
+
 !!! warning "Use only your assigned environment"
     If no environment appears, or you can see another participant's environment,
     stop and tell your facilitator. Do not select a different group, change
@@ -96,8 +99,8 @@ names in that group; do not copy names from another attendee.
 
 ### Task 3: Check the app
 
-Open your supplied **Orders GUI** link in a separate tab. This tab shows
-customer impact; the workshop tab controls the incidents.
+In the **Orders GUI** tab, check customer impact while the workshop tab controls
+the incidents.
 
 Select **Refresh status** and check:
 

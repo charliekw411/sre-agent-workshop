@@ -1,7 +1,7 @@
 ---
 title: Azure SRE Agent Workshop
 description: Use your prepared environment to configure SRE response, investigate two faults, and run proactive health checks.
-ms.date: 2026-10-14
+ms.date: 2026-10-15
 ms.topic: overview
 keywords:
   - azure sre agent
@@ -20,9 +20,10 @@ browser exercises do not require a local terminal or an Azure deployment.
 
 ## Before you start
 
-Get your account, sign-in and MFA instructions, assigned resource group, and
-Orders GUI and SRE Agent links from your facilitator. Use that account and
-environment throughout the workshop.
+Get your account, sign-in and MFA instructions, assigned resource group,
+workshop site, and SRE Agent link from your facilitator. After you connect, the
+workshop site provides the Orders GUI link for your selected environment. Use
+that account and environment throughout the workshop.
 
 The Orders app runs on one VM and stores synthetic orders in private
 PostgreSQL. Azure Monitor records its activity and sends alerts to the SRE

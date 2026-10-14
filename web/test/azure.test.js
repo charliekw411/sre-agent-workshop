@@ -8,9 +8,11 @@ import {
 } from "../src/azure.js";
 import { postgresqlFaultRuleBody } from "../src/core.js";
 
+const SUBSCRIPTION_ID = "33333333-3333-4333-8333-333333333333";
+const RESOURCE_GROUP_ID =
+  `/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/rg-sre-agent-workshop-demo`;
 const NSG_ID =
-  "/subscriptions/33333333-3333-4333-8333-333333333333/resourceGroups/" +
-  "rg-sre-agent-workshop-demo/providers/Microsoft.Network/networkSecurityGroups/nsg-orders-demo";
+  `${RESOURCE_GROUP_ID}/providers/Microsoft.Network/networkSecurityGroups/nsg-orders-demo`;
 const ENVIRONMENT = {
   networkSecurityGroup: { id: NSG_ID },
   virtualMachine: { id: `${NSG_ID}/unused/vm` },
@@ -53,6 +55,74 @@ test("PostgreSQL injection reads, conditionally writes, and verifies the rule", 
   assert.equal(result.postgresqlAccess, "Deny");
   assert.equal(calls.length, 3);
   assert.ok(calls.every(({ url }) => url.includes("PostgreSqlFaultInjection")));
+});
+
+test("environment loading resolves the selected Orders GUI hostname", async () => {
+  const workshop = client();
+  workshop.listAll = async () => [
+    {
+      id: `${RESOURCE_GROUP_ID}/providers/Microsoft.Compute/virtualMachines/vm-orders-demo`,
+      name: "vm-orders-demo",
+      type: "Microsoft.Compute/virtualMachines",
+    },
+    {
+      id: `${RESOURCE_GROUP_ID}/providers/Microsoft.OperationalInsights/workspaces/law-demo`,
+      name: "law-demo",
+      type: "Microsoft.OperationalInsights/workspaces",
+    },
+    {
+      id: NSG_ID,
+      name: "nsg-orders-demo",
+      type: "Microsoft.Network/networkSecurityGroups",
+    },
+    {
+      id: `${RESOURCE_GROUP_ID}/providers/Microsoft.DBforPostgreSQL/flexibleServers/psql-orders-demo`,
+      name: "psql-orders-demo",
+      type: "Microsoft.DBforPostgreSQL/flexibleServers",
+    },
+    {
+      id: `${RESOURCE_GROUP_ID}/providers/Microsoft.Network/publicIPAddresses/pip-orders-demo`,
+      name: "pip-orders-demo",
+      type: "Microsoft.Network/publicIPAddresses",
+    },
+  ];
+  workshop.request = async (url) => {
+    if (url.includes("/workspaces/")) {
+      return {
+        payload: {
+          properties: { customerId: "44444444-4444-4444-8444-444444444444" },
+        },
+      };
+    }
+    if (url.includes("/publicIPAddresses/")) {
+      return {
+        payload: {
+          properties: {
+            dnsSettings: {
+              fqdn: "orders-demo.australiaeast.cloudapp.azure.com",
+            },
+          },
+        },
+      };
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  const environment = await workshop.loadEnvironment({
+    subscription: {
+      id: SUBSCRIPTION_ID,
+      name: "Workshop",
+    },
+    resourceGroup: {
+      id: RESOURCE_GROUP_ID,
+      name: "rg-sre-agent-workshop-demo",
+    },
+  });
+
+  assert.equal(
+    environment.ordersGuiUrl,
+    "http://orders-demo.australiaeast.cloudapp.azure.com:8080/",
+  );
 });
 
 test("PostgreSQL reset remains idempotent and still verifies current state", async () => {

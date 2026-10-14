@@ -8,6 +8,7 @@ const REQUEST_ID = /^[0-9a-f]{32}$/;
 const RESOURCE_ID =
   /^\/subscriptions\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/resourceGroups\/[a-z0-9._()-]+\/providers\/[a-z0-9.]+(?:\/[a-z0-9.]+\/[a-z0-9._()-]+)+$/i;
 const COHORT_RESOURCE_GROUP = /^rg-(?:0[1-9]|1\d|20)$/i;
+const ORDERS_GUI_FQDN = /^orders-[a-z0-9]+\.[a-z0-9-]+\.cloudapp\.azure\.com$/i;
 
 export const POSTGRESQL_FAULT_RULE_NAME = "PostgreSqlFaultInjection";
 export const POSTGRESQL_FAULT_RULE_PROPERTIES = Object.freeze({
@@ -147,6 +148,10 @@ export function selectEnvironmentResources(resources) {
     "microsoft.dbforpostgresql/flexibleservers",
     /^psql-orders-[a-z0-9]+$/i,
   );
+  const publicIpAddresses = matching(
+    "microsoft.network/publicipaddresses",
+    /^pip-orders-[a-z0-9]+$/i,
+  );
 
   if (virtualMachines.length !== 1) {
     throw new WorkshopError(
@@ -171,12 +176,18 @@ export function selectEnvironmentResources(resources) {
       `Expected exactly one workshop PostgreSQL server, but found ${postgresqlServers.length}.`,
     );
   }
+  if (publicIpAddresses.length !== 1) {
+    throw new WorkshopError(
+      `Expected exactly one workshop public IP, but found ${publicIpAddresses.length}.`,
+    );
+  }
   for (const resource of [
     ...virtualMachines,
     ...workspaces,
     ...agents,
     ...networkSecurityGroups,
     ...postgresqlServers,
+    ...publicIpAddresses,
   ]) {
     if (!RESOURCE_ID.test(String(resource.id || ""))) {
       throw new WorkshopError("Azure returned an unexpected workshop resource ID.");
@@ -188,7 +199,16 @@ export function selectEnvironmentResources(resources) {
     sreAgent: agents[0] || null,
     networkSecurityGroup: networkSecurityGroups[0],
     postgresqlServer: postgresqlServers[0],
+    publicIpAddress: publicIpAddresses[0],
   };
+}
+
+export function ordersGuiUrl(publicIpAddress) {
+  const fqdn = String(publicIpAddress?.properties?.dnsSettings?.fqdn || "");
+  if (!ORDERS_GUI_FQDN.test(fqdn)) {
+    throw new WorkshopError("The workshop public IP did not return a valid Orders GUI hostname.");
+  }
+  return `http://${fqdn.toLowerCase()}:8080/`;
 }
 
 export function createFaultScript(action, requestId) {
