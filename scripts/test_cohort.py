@@ -344,7 +344,7 @@ class SafetyTests(unittest.TestCase):
             ),
         )
 
-    def test_participant_gets_standard_user_only_on_matching_agent(self):
+    def test_participant_gets_sre_roles_only_on_matching_agent(self):
         item = self.item()
         agent_scope = (
             cohort.resource_group_scope(item)
@@ -376,6 +376,12 @@ class SafetyTests(unittest.TestCase):
                     agent_scope,
                     cohort.SRE_AGENT_STANDARD_USER_ROLE_ID,
                     "SRE Agent Standard User",
+                ),
+                call(
+                    item,
+                    agent_scope,
+                    cohort.SRE_AGENT_ADMINISTRATOR_ROLE_ID,
+                    "SRE Agent Administrator",
                 ),
             ],
         )

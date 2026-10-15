@@ -27,7 +27,8 @@ LOG_DIRECTORY = STATE_DIRECTORY / "logs"
 ARCHITECTURE = "single-vm-postgresql-v1"
 CONTRIBUTOR_ROLE_ID = "b24988ac-6180-42a0-ab88-20f7382dd24c"
 SRE_AGENT_STANDARD_USER_ROLE_ID = "2d84a65a-63b2-4343-bbb6-31105d857bc1"
-PARTICIPANT_ACCESS = "Contributor + SRE User"
+SRE_AGENT_ADMINISTRATOR_ROLE_ID = "e79298df-d852-4c6d-84f9-5d13249d1e55"
+PARTICIPANT_ACCESS = "Contributor + SRE Admin"
 STATE_LOCK = threading.Lock()
 
 
@@ -552,11 +553,18 @@ def ensure_participant_access(item):
         CONTRIBUTOR_ROLE_ID,
         "Contributor",
     )
+    agent_scope = sre_agent_scope(item)
     ensure_role_assignment(
         item,
-        sre_agent_scope(item),
+        agent_scope,
         SRE_AGENT_STANDARD_USER_ROLE_ID,
         "SRE Agent Standard User",
+    )
+    ensure_role_assignment(
+        item,
+        agent_scope,
+        SRE_AGENT_ADMINISTRATOR_ROLE_ID,
+        "SRE Agent Administrator",
     )
 
 
@@ -638,7 +646,7 @@ def deploy_participant(state, item):
         progress(
             f"[{item['participant']}] Ready: {item['userPrincipalName']} "
             f"has Contributor on {item['resourceGroup']} and "
-            "SRE Agent Standard User on its agent"
+            "SRE Agent Standard User and Administrator on its agent"
         )
     except (CohortError, workshop.DeploymentError, OSError, KeyError, TypeError, ValueError) as error:
         changes = {

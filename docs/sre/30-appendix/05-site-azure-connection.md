@@ -103,8 +103,9 @@ configured tenant and rejects a returned token whose `tid` does not match.
 Delegated API permissions allow the SPA to request tokens. They do not grant
 resource access. Single-environment infrastructure deployment does not assign
 participants. `cohort.py` currently grants Contributor on each assigned group
-and SRE Agent Standard User on its agent; the identity helper has a separate
-scoped-access path. Check what your chosen process actually grants.
+and SRE Agent Standard User plus Administrator on its agent; the identity
+helper has a separate scoped-access path. Check what your chosen process
+actually grants.
 
 A participant using all controls needs:
 
@@ -114,11 +115,13 @@ A participant using all controls needs:
 | Log Analytics workspace | Query permission, such as Log Analytics Reader | Read PostgreSQL dependency telemetry |
 | Workshop VM | VM read plus `Microsoft.Compute/virtualMachines/runCommand/action` | CPU actions plus PostgreSQL API-pool drain and data-plane verification |
 | `POSTGRESQL_FAULT_RULE_RESOURCE_ID` | `Microsoft.Network/networkSecurityGroups/securityRules/read` and `Microsoft.Network/networkSecurityGroups/securityRules/write` | PostgreSQL deny, status, and allow reset |
-| Participant's SRE Agent | Standard User plus Author, or agent-scoped Administrator | Chat, save the core response-plan settings, and manage the scheduled task |
+| Participant's SRE Agent | Administrator (Standard User plus Author cannot approve actions) | Chat, save the core response-plan settings, manage the scheduled task, and approve Review-mode actions |
 
 Standard User alone does not allow response-plan editing or custom-agent
-creation. The facilitator needs Administrator on the agent to approve the
-prepared Live Report's query tool. Do not give the agent workload-write access.
+creation, and only Administrator can approve Review-mode agent actions. The
+facilitator also needs Administrator to approve the prepared Live Report's
+query tool. Do not give the agent workload-write access outside its own
+resource group.
 
 For a small isolated class, **Reader** on the resource group and **Log Analytics
 Reader** on the workspace supply the read paths. Do not assume they supply either

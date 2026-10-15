@@ -68,19 +68,21 @@ and scoped roles for resources and monitoring data.
 | Edit response plans and create custom agents | Author |
 | Approve Live Report tools or delete a report | Administrator |
 
-For the core exercises, your facilitator must arrange Standard User and
-Author access on your own agent, or an equivalent agent-scoped Administrator
-assignment. Azure Contributor alone does not replace these SRE Agent roles.
-Ask your facilitator if an operation is denied; do not assign yourself roles.
+For the core exercises, the cohort gives you SRE Agent Administrator on your own
+agent only, which covers chat, response plans, scheduled tasks and approving
+Review-mode actions. Azure Contributor alone does not replace these SRE Agent
+roles. Ask your facilitator if an operation is denied; do not assign yourself
+roles.
 
 The workshop agent UAMI has Reader and Contributor on its own resource group,
 Log Analytics Reader on the workspace, and the product-required Monitoring
 Contributor role at subscription scope. The agent's managed-resource scope
 remains its workshop resource group.
 
-**Review** mode asks for approval of Azure changes, but it is not a substitute
-for permissions or a read-only procedure. Do not approve workload or monitoring
-changes in these exercises. You reset incidents through the workshop controls.
+**Review** mode asks for approval before Azure changes. Your Administrator role
+can approve them, and the agent then acts with its own Contributor access on
+your resource group, so approve nothing in these exercises unless your
+facilitator tells you to. You reset incidents through the workshop controls.
 
 See the official [SRE Agent role reference](https://learn.microsoft.com/azure/sre-agent/user-roles)
 for the full permission table.

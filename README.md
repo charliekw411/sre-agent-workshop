@@ -186,7 +186,7 @@ the [facilitator end-to-end runbook](facilitator-process/README.md).
 
 Use the cohort wrapper when the Entra users already exist and each participant
 needs Contributor access to one isolated resource group plus SRE Agent Standard
-User access to that group's agent:
+User and Administrator access to that group's agent:
 
 ```bash
 python scripts/cohort.py deploy \
@@ -208,7 +208,7 @@ aggregate VM quota, and existing resource-group tags. It then deploys
 with up to two environments per subscription in parallel, runs the public,
 private database, telemetry, and fault-status checks, and assigns the matching
 user the built-in Contributor role on only their resource group and SRE Agent
-Standard User on only that group's agent. With three subscriptions, at most six
+Standard User and Administrator on only that group's agent. With three subscriptions, at most six
 environments run at once. Use
 `--parallel-per-subscription 1` if a subscription needs more conservative
 throttling.

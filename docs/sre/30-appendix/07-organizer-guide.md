@@ -41,15 +41,15 @@ or the private state/log directory.
 The core modules require participants to save response-plan settings and
 scheduled-task configuration.
 
-`cohort.py` currently grants resource-group Contributor and agent-scoped
-SRE Agent Standard User. Standard User alone cannot edit response plans or
-create custom agents. The separate identity helper's `assign-access` process
-has a different, scoped role model. Do not assume either process has granted
-the permissions you intended; inspect and test the actual assignments.
+`cohort.py` grants resource-group Contributor plus agent-scoped SRE Agent
+Standard User and Administrator, so participants can save response plans and
+approve agent actions on their own agent only. The separate identity helper's
+`assign-access` process has a different, scoped role model. Inspect and test
+the actual assignments for whichever process you used.
 
-For the core flow, arrange Standard User plus Author on each participant's
-own agent, or agent-scoped Administrator if that is your approved access
-model. Never expand access to other participant environments. The facilitator
+Administrator lets a participant approve Review-mode actions, which the agent
+then runs with its UAMI's Contributor on that participant's resource group.
+Never expand access to other participant environments. The facilitator also
 needs Administrator to approve the prepared report's query tool.
 
 For every environment:
@@ -79,10 +79,10 @@ site build variables.
 
 ## Check before inviting participants
 
-!!! warning "Known access gap"
-    The current cohort grants also do not include the Author access needed
-    for the response-plan save. This documentation update does not change
-    RBAC automation.
+!!! note "Participant access"
+    The cohort grants each participant SRE Agent Administrator on only their own
+    agent, which covers response-plan saves and Review-mode approvals.
+    Still test with a real participant account.
 
 Use an actual participant account, not just your organizer account, to check:
 

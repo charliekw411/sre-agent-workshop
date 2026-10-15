@@ -36,9 +36,9 @@ Run these commands from the repository root in PowerShell 7.4+ on Windows, using
    resource group. Cohort cleanup removes the subscription assignment before
    deleting the group and its scoped assignments.
 
-   The command does not create users or TAPs. It grants each participant Contributor access only to their matching resource group and SRE Agent Standard User only on that group's agent resource.
+   The command does not create users or TAPs. It grants each participant Contributor access only to their matching resource group and SRE Agent Standard User plus Administrator only on that group's agent resource. Administrator lets participants approve Review-mode agent actions.
 
-3. **Wait for every row to report `Ready`.** A successful final table shows `Succeeded`, `Passed`, `Contributor + SRE User`, and `Ready` for every participant. Detailed output is written to one log per participant:
+3. **Wait for every row to report `Ready`.** A successful final table shows `Succeeded`, `Passed`, `Contributor + SRE Admin`, and `Ready` for every participant. Detailed output is written to one log per participant:
 
    ```powershell
    Get-Content .\.workshop\cohort\logs\participant-01.log -Tail 30 -Wait
@@ -63,7 +63,7 @@ Run these commands from the repository root in PowerShell 7.4+ on Windows, using
    | `Microsoft.Network/AllowBringYourOwnPublicIpAddress` is not registered | Let preflight register it and wait. If Azure exceeds the timeout, rerun after the feature reports `Registered`. |
    | The resource group contains resources but the participant is not `Ready` | Do not delete it. The command may still be running post-provision or telemetry checks; inspect the participant log. |
    | `[telemetry] Waiting for ingestion` repeats | Wait for Application Insights and Log Analytics ingestion. The check polls for up to ten minutes. |
-   | SRE Agent reports `Forbidden: Access denied by PDP` | Rerun the cohort command to verify the agent-scoped SRE Agent Standard User assignment, then sign out and back in after RBAC propagation. |
+   | SRE Agent reports `Forbidden: Access denied by PDP` | Rerun the cohort command to verify the agent-scoped SRE Agent Standard User and Administrator assignments, then sign out and back in after RBAC propagation. |
    | A participant finishes with `Failed` | Resolve any external Azure registration or permission error, then rerun the exact same cohort command. Successful stages are skipped. |
 
 5. **Start every participant VM and PostgreSQL server on workshop day.** Run this after signing in with the deployment identity and before participants begin. It discovers the one VM and PostgreSQL Flexible Server in each saved participant resource group, starts them, and confirms Azure reports `VM running` and `Ready`.

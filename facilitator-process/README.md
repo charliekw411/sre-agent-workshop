@@ -98,7 +98,8 @@ For each agent:
   `orders-alert-investigator`
 * Turn off `orders-daily-health-report` until Module 04
 * Create and verify the **Orders Service Health** Live Report
-* Give its participant Standard User plus Author, or agent-scoped Administrator
+* Participants receive SRE Agent Administrator on their own agent from the
+  cohort deployment; verify it, and check it is not granted elsewhere
 * Keep the UAMI's Contributor role limited to its participant resource group,
   retain subscription-level Monitoring Contributor, and keep Review mode
 
