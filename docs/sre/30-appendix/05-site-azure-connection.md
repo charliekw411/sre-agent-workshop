@@ -118,9 +118,9 @@ A participant using all controls needs:
 | Participant's SRE Agent | Administrator (Standard User plus Author cannot approve actions) | Chat, save the core response-plan settings, manage the scheduled task, and approve Review-mode actions |
 
 Standard User alone does not allow response-plan editing or custom-agent
-creation, and only Administrator can approve Review-mode agent actions. The
-facilitator also needs Administrator to approve the prepared Live Report's
-query tool. Do not give the agent workload-write access outside its own
+creation, and only Administrator can approve Review-mode agent actions.
+Participants need Administrator on their own agent to approve the Module 04
+Live Report's query tool. Do not give the agent workload-write access outside its own
 resource group.
 
 For a small isolated class, **Reader** on the resource group and **Log Analytics
@@ -240,8 +240,8 @@ Use a resource group tagged
 15. Attempt sign-in with an account outside the configured tenant and verify it
     is rejected.
 
-Also test the Module 04 configuration save, on-demand task run, and prepared
-Live Report reload using a participant account. A successful organizer run
+Also test the Module 04 configuration save, on-demand task run, and Live Report
+generation and reload using a participant account. A successful organizer run
 does not prove that participant permissions are ready.
 
 If a PostgreSQL PUT or subsequent API recycle/verification is interrupted,

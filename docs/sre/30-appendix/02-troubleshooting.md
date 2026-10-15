@@ -26,7 +26,7 @@ Start with the participant checks below. Use only your assigned environment.
 | No environment appears, or another participant's group is visible | Stop and report the account and visible group names privately. Do not choose a replacement environment. |
 | Response plan cannot be saved | Ask your facilitator to check your agent-scoped configuration access. Azure Contributor alone is not enough. |
 | Orders are unavailable before an exercise | Check fault status. Reset a leftover fault using its launcher; if the app stays unhealthy, ask your facilitator. |
-| Prepared skill, custom agent, or Live Report is missing | Ask your facilitator to finish preparation. Do not skip the check and call the exercise successful. |
+| Prepared skill or custom agent is missing | Ask your facilitator to finish preparation. Do not skip the check and call the exercise successful. |
 | Terminal helper cannot find azd state | Use the browser or obtain a prepared local environment. Sourcing exports alone does not fix it. |
 
 For an interrupted fault, select **Check fault status** before another action.
@@ -955,10 +955,8 @@ The agent generates the report's code, so a saved report can have defects. In
 testing, one version showed PostgreSQL as No data although its table listed more
 than 1,200 calls, and an earlier wording marked healthy areas Degraded because a
 recovered outage was inside the 24-hour window. Compare each status with its
-table and the Module 04 Task 4 queries. For a prepared report, give the defect
-to your facilitator. If you are authoring your own report, select
-**Open authoring thread** and describe
-the defect, for example: "The PostgreSQL status shows No data but the table shows
+table and the Module 04 Task 4 queries. Select **Open authoring thread** and
+describe the defect, for example: "The PostgreSQL status shows No data but the table shows
 calls. Fix the status code for every area, test it against fresh query results,
 and save a new version."
 

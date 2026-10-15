@@ -46,8 +46,8 @@ Reloading a report that only queries connector data does not consume
 active-flow units. Model-generated analysis on each refresh does, so the
 workshop report excludes it.
 
-Use the prepared report in the core module. If you author one in the optional
-exercise, update the existing report rather than creating copies.
+Generate the report once in Module 04. If you need to change it, update the
+existing report rather than creating copies.
 
 Check **Settings > Agent consumption** in the SRE Agent portal. Usage records
 can lag. The configured 500-unit monthly limit and Log Analytics 1 GB/day cap

@@ -1,9 +1,12 @@
 ---
 name: orders-email-incident-followup
-description: Draft an Orders incident summary and send only through the explicitly bound Outlook connection to approved recipients after a separate request and approval.
+description: Use only for `alert-orders-postgresql-connectivity`. Draft an Orders incident summary and send only through the explicitly bound Outlook connection to approved recipients after a separate request and approval.
 ---
 
 # Orders email incident follow-up
+
+Use only for `alert-orders-postgresql-connectivity`; for any other alert, do
+not draft or send.
 
 ## Required inputs
 

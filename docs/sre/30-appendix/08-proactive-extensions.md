@@ -1,19 +1,18 @@
 ---
-title: Health-check Setup and Report Authoring
-description: Install the supplied health-check components and author a Live Report when you have configuration and approval access.
-ms.date: 2026-10-14
+title: Health-check Setup
+description: Install the supplied health-check components and prepare participants to generate the Live Report in Module 04.
+ms.date: 2026-10-16
 ms.topic: how-to
 keywords:
   - scheduled tasks
   - live reports
   - azure sre agent
-estimated_reading_time: 8
+estimated_reading_time: 6
 ---
 
 The core [proactive exercise](../05-scheduled-health-check/index.md) uses
-prepared components and a report. Use this guide as an organizer or independent
-environment owner. Participants use the prepared configuration; authoring their
-own report remains an optional extension.
+prepared components. Use this guide as an organizer or independent environment
+owner. Participants generate the Live Report themselves in the module.
 
 ## Install the supplied components
 
@@ -82,72 +81,24 @@ The optional Application Insights query tool was unavailable in those runs.
 The skill uses the same data in the Log Analytics `App*` tables and reports
 that limitation. It must not invent a cross-check or a baseline.
 
-## Author a Live Report
+## Live Report
+
+Participants generate **Orders Service Health** themselves in
+[Module 04, Task 5](../05-scheduled-health-check/index.md#task-5-generate-and-check-the-live-report),
+which contains the authoring prompt. Do not pre-create the report for the class.
 
 Creating and reloading reports requires an appropriate SRE Agent user role.
-Approving tools and deleting reports require Administrator. For a participant
-extension, arrange facilitator approval in advance rather than self-elevating.
-Keep recent Orders traffic running.
+Approving the report's tools and deleting reports require Administrator. The
+cohort grants each participant Administrator on only their own agent, so they
+can approve the read-only query tool themselves. In testing, one approval was
+needed for the read-only `system-mcp-monitor` workspace query tool. Tell
+participants to decline writes, messages, or issue creation.
 
-In **Live Reports**, first check whether **Orders Service Health** already
-exists. To change it, use **Open authoring thread**. Use **+ New report** only
-when creating your own first report.
-
-Paste this request in the authoring thread:
-
-```text
-Build a Live Report called "Orders Service Health" from the agent's
-connected Log Analytics workspace and Application Insights data. Cover the
-last 24 hours with a time-range selector. Show New Zealand time
-(Pacific/Auckland) computed with datetime_utc_to_local as plain text such as
-2026-10-13 10:47, without a UTC offset suffix. Label the zone and keep UTC
-available in a tooltip or secondary column.
-
-Include:
-1. Orders API request volume, success rate, and P95 duration by operation
-   from AppRequests where AppRoleName is "orders-api". Show GET /health/live
-   separately from the database-backed operations.
-2. PostgreSQL dependency calls, failure percentage, and P95 duration from
-   AppDependencies where DependencyType is "PostgreSQL".
-3. Database availability results from AppAvailabilityResults where Name is
-   "orders-api-postgresql".
-4. VM heartbeat continuity from Heartbeat and guest CPU from Perf where
-   CounterName is "% Processor Time".
-5. A status indicator for each area, computed only from the last 15 minutes
-   and independent of the selected window:
-   - No data: no samples in the last 15 minutes. Never show Healthy
-     without samples.
-   - Unhealthy: any failed request, PostgreSQL dependency call, or
-     availability check; average guest CPU above 80 percent; or a
-     heartbeat gap longer than 5 minutes.
-   - Degraded: no failures, but P95 duration above 1,000 ms.
-   - Healthy: samples exist and none of the above applies.
-   Show the selected-window numbers beside each status. A failure earlier
-   in the window that has recovered is a window finding, not the current
-   status.
-6. A short list of missing data.
-
-Use read-only queries only. Do not add model-assisted analysis, buttons, or
-any tool that changes Azure resources, sends email, or creates issues.
-```
-
-An authorized Administrator reviews and approves the report's tools. In
-testing, one approval was needed for the read-only `system-mcp-monitor`
-workspace query tool. Decline writes, messages, or issue creation.
-
-Wait for the saved version, open the report, and select **Reload**.
-Check each status against its table and the
+To rehearse or test the report, use the Module 04 prompt in a test environment
+and check each status against the
 [Module 04 queries](../05-scheduled-health-check/index.md#task-4-check-the-findings-yourself).
-For VM and availability detail, use the skill's reference queries and the
-workspace's `AppAvailabilityResults` records.
-
-A generated report can show the wrong status even when its table has data.
-It can also mislabel local times. Report the specific defect in the authoring
-thread, ask the agent to test the change, and check the new version. Do not
-create another report to fix the existing one.
-
 Live Reports is a preview feature. If it is unavailable, record the limitation
-and keep the log queries as your view; do not report the exercise as completed.
+and keep the log queries as the view.
 
 ## Remove the optional components
 

@@ -33,13 +33,13 @@ Agent. You check the agent's findings and reset the faults yourself.
 
 | Module | What you do | Time |
 | --- | --- | --- |
-| [01 - Access and Understand the Workshop](sre/01-deploy-and-validate/index.md) | Sign in, review the architecture, and check the healthy app | 20 min |
-| [02 - Configure SRE and Respond to High CPU](sre/03-incident-high-cpu/index.md) | Save response-plan settings, trigger CPU pressure, watch the agent, and recover | 30 min |
-| [03 - Respond to PostgreSQL Connectivity Loss](sre/04-incident-postgresql/index.md) | Block one database connection, evaluate the dedicated investigator, and restore it | 30 min |
-| [04 - Deploy and Evaluate Proactive SRE Checks](sre/05-scheduled-health-check/index.md) | Configure and run a scheduled task, check its findings, and refresh a report | 30 min |
-| [05 - Reset and Preserve Evidence](sre/06-cleanup/index.md) | Stop faults and the recurring task, save evidence, and hand back the environment | 10 min |
+| [01 - Access and Understand the Workshop](sre/01-deploy-and-validate/index.md) | Sign in, review the architecture, check the healthy app, and meet the agent | 25 min |
+| [02 - Configure SRE and Respond to High CPU](sre/03-incident-high-cpu/index.md) | Save response-plan settings, trigger CPU pressure, race the agent, and recover | 40 min |
+| [03 - Respond to PostgreSQL Connectivity Loss](sre/04-incident-postgresql/index.md) | Block one database connection, evaluate the dedicated investigator, draft the follow-up, and restore it | 45 min |
+| [04 - Deploy and Evaluate Proactive SRE Checks](sre/05-scheduled-health-check/index.md) | Run a scheduled task, check its findings, generate a Live Report, and compare incidents | 45 min |
+| [05 - Reset and Preserve Evidence](sre/06-cleanup/index.md) | Reset faults, draft a postmortem, save evidence, and hand back the environment | 20 min |
 
-Allow about two hours. Monitoring and alert waits vary.
+Allow about three hours. Monitoring and alert waits vary.
 
 ```mermaid
 flowchart LR
@@ -75,7 +75,7 @@ resources or add permissions yourself.
 * [Terminal setup and environment values](sre/30-appendix/01-variables.md)
 * [Troubleshooting](sre/30-appendix/02-troubleshooting.md)
 * [Incident workflow setup and routing](sre/30-appendix/09-incident-workflow.md)
-* [Health-check setup and Live Report authoring](sre/30-appendix/08-proactive-extensions.md)
+* [Health-check setup](sre/30-appendix/08-proactive-extensions.md)
 * [Self-deployment](sre/30-appendix/06-self-deployment.md), if you are doing the
   workshop independently
 * [Organizer preparation and cleanup](sre/30-appendix/07-organizer-guide.md)

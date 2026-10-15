@@ -14,7 +14,7 @@ trigger:
 custom_agent:
   name: orders-alert-investigator
   action_mode: Review
-  handoff_description: Investigates Orders incidents with read-only evidence and separately approved follow-ups.
+  handoff_description: Use only for alert-orders-postgresql-connectivity. Investigates that PostgreSQL connectivity incident with read-only evidence and separately approved follow-ups. Do not hand off any other alert.
   tools:
     read_only:
       - GetAzCliHelp
@@ -47,6 +47,9 @@ custom_agent:
     - ../instructions/investigation-principles.md
     - ../runbooks/dependency-failure.md
   instructions: |
+    Use only for alert-orders-postgresql-connectivity. If the incident is any
+    other alert rule, state that it is out of scope and stop without
+    investigating or proposing follow-ups.
     Use orders-azure-monitor-rca for the Azure Monitor incident in this thread.
     Confirm the alert instance ID, rule, severity, affected resources, and UTC
     window against the trusted installation bindings before investigating.

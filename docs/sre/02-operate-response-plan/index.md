@@ -113,7 +113,7 @@ follow-ups remain draft-only.
 | Skill | `proactive-health-check` | The read-only measurement and reporting procedure |
 | Custom agent | `health-report-investigator` | Instructions and configured read-only tools |
 | Scheduled task | `orders-daily-health-report` | Schedule, prompt, and Review mode |
-| Live Report | `Orders Service Health` | A saved view you refresh and check against the logs |
+| Live Report | `Orders Service Health` | A saved view you generate from a prompt, then reload and check against the logs |
 
 The task uses `0 21 * * 0-4`, evaluated in UTC. This is weekdays at 09:00
 New Zealand Standard Time, or 10:00 during daylight time. UTC is the reference
@@ -128,7 +128,7 @@ Analytics `App*` tables when the Application Insights query tool was unavailable
 * [Terminal setup and environment values](../30-appendix/01-variables.md)
 * [Troubleshooting](../30-appendix/02-troubleshooting.md)
 * [Incident workflow setup and routing](../30-appendix/09-incident-workflow.md)
-* [Health-check setup and Live Report authoring](../30-appendix/08-proactive-extensions.md)
+* [Health-check setup](../30-appendix/08-proactive-extensions.md)
 
 <div class="sre-nav" markdown>
 [Module 02 - Configure SRE and Respond to High CPU](../03-incident-high-cpu/index.md)
