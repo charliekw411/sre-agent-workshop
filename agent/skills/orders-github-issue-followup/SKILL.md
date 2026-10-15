@@ -1,9 +1,12 @@
 ---
 name: orders-github-issue-followup
-description: Draft an Orders incident follow-up for the explicitly bound GitHub repository and publish only after a separate request, approval, and duplicate check.
+description: Use only for `alert-orders-postgresql-connectivity`. Draft an Orders incident follow-up for the explicitly bound GitHub repository and publish only after a separate request, approval, and duplicate check.
 ---
 
 # Orders GitHub incident follow-up
+
+Use only for `alert-orders-postgresql-connectivity`; for any other alert, do
+not draft or publish.
 
 ## Required inputs
 

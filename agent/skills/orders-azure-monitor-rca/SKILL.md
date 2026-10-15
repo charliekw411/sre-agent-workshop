@@ -1,11 +1,13 @@
 ---
 name: orders-azure-monitor-rca
-description: Investigate Orders Azure Monitor incidents with read-only telemetry, Azure configuration, optional source evidence, and operator-owned recovery.
+description: Use only for `alert-orders-postgresql-connectivity`. Investigate that Orders PostgreSQL connectivity incident with read-only telemetry, Azure configuration, optional source evidence, and operator-owned recovery.
 ---
 
 # Orders incident root cause analysis
 
-Use this procedure for an alert handled by `orders-incident-workflow`. The
+Use only for `alert-orders-postgresql-connectivity`; for any other alert, stop
+and report it as out of scope. Use this procedure for that alert when handled by
+`orders-incident-workflow`. The
 installer appends the canonical workshop architecture, investigation principles,
 and PostgreSQL runbook below. This skill does not grant permissions or configure
 connections.

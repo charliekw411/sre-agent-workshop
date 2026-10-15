@@ -50,7 +50,7 @@ the actual assignments for whichever process you used.
 Administrator lets a participant approve Review-mode actions, which the agent
 then runs with its UAMI's Contributor on that participant's resource group.
 Never expand access to other participant environments. The facilitator also
-needs Administrator to approve the prepared report's query tool.
+needs Administrator on their own agent to approve the report's query tool.
 
 For every environment:
 
@@ -66,9 +66,10 @@ For every environment:
    custom agent from Igor's [#33](https://github.com/charliekw411/sre-agent-workshop/pull/33).
    The existing installer also creates the scheduled task; participants can
    edit that task in Module 04. Turn it off until the exercise.
-5. Create **Orders Service Health**, approve only its read-only query tool,
-   and check the report against the logs. Participants reload this report;
-   they do not need to author or approve it.
+5. Do not pre-create **Orders Service Health**. Participants generate it in
+   Module 04 and approve its read-only query tool with their own
+   Administrator role. Rehearse the Module 04 prompt in a test environment so
+   you know what to expect.
 6. Keep Contributor limited to the matching participant resource group and
    keep Review mode enabled. Never grant the UAMI subscription Contributor or
    Owner.
@@ -96,7 +97,8 @@ Use an actual participant account, not just your organizer account, to check:
 * CPU alerts use the original response plan, while PostgreSQL alerts use
   `orders-incident-workflow` and `orders-alert-investigator`.
 * CPU and PostgreSQL controls, recovery, and investigation links work.
-* The prepared Live Report reloads without an attendee approval step.
+* A participant account can create **Orders Service Health** from the Module 04
+  prompt and approve its read-only query tool.
 
 The cohort's `Ready` result verifies infrastructure stages, not all of these
 browser or configuration permissions. PR #33 did not validate a Standard User

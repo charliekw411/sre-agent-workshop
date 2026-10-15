@@ -97,7 +97,8 @@ For each agent:
 * Verify `orders-incident-workflow` routes PostgreSQL alerts to
   `orders-alert-investigator`
 * Turn off `orders-daily-health-report` until Module 04
-* Create and verify the **Orders Service Health** Live Report
+* Do not pre-create the **Orders Service Health** Live Report; participants
+  generate it in Module 04
 * Participants receive SRE Agent Administrator on their own agent from the
   cohort deployment; verify it, and check it is not granted elsewhere
 * Keep the UAMI's Contributor role limited to its participant resource group,
@@ -106,7 +107,7 @@ For each agent:
 Detailed guides:
 [Incident-workflow setup and routing](../docs/sre/30-appendix/09-incident-workflow.md)
 and
-[health-check setup and report authoring](../docs/sre/30-appendix/08-proactive-extensions.md).
+[health-check setup](../docs/sre/30-appendix/08-proactive-extensions.md).
 Use [Site Azure connection and participant RBAC](../docs/sre/30-appendix/05-site-azure-connection.md)
 for the shared browser app and participant agent roles.
 The core class does not bind GitHub or Outlook destinations; those follow-ups
@@ -139,8 +140,8 @@ Before distributing handouts, sign in as `participant-01` and confirm:
 * MFA registration and TAP sign-in work
 * The workshop site selects only `rg-01`
 * **Connected > Open Orders GUI** loads a healthy application
-* The assigned SRE Agent, response plan, health-check components, and prepared
-  Live Report are available
+* The assigned SRE Agent, response plan, and health-check components are
+  available
 
 ## 7. Clean up
 
