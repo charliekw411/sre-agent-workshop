@@ -380,6 +380,55 @@ class SafetyTests(unittest.TestCase):
             ],
         )
 
+    def test_runtime_principal_comes_from_the_agents_only_uami(self):
+        item = self.item()
+        identity_id = (
+            cohort.resource_group_scope(item)
+            + "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-sre-test"
+        )
+        principal = "30000000-0000-0000-0000-000000000001"
+        with patch.object(cohort.workshop, "az", side_effect=[
+            [{"identity": {"userAssignedIdentities": {identity_id: {}}}}],
+            {"principalId": principal},
+        ]) as az:
+            self.assertEqual(cohort.sre_agent_runtime_principal(item), principal)
+
+        self.assertEqual(
+            az.call_args_list[1],
+            call(
+                "identity", "show",
+                "--ids", identity_id,
+                "--subscription", item["subscriptionId"],
+            ),
+        )
+
+    def test_cleanup_removes_monitoring_assignment_before_resource_group(self):
+        item = self.item()
+        state = {"participants": [item]}
+        principal = "30000000-0000-0000-0000-000000000001"
+        with patch.object(cohort.workshop, "az", side_effect=[
+            True,
+            {
+                "tags": {
+                    "workshop-architecture": cohort.ARCHITECTURE,
+                    "azd-env-name": item["environment"],
+                },
+            },
+            None,
+            False,
+        ]), patch.object(
+                cohort, "sre_agent_runtime_principal", return_value=principal
+        ), patch.object(
+                cohort.workshop, "remove_monitoring_contributor"
+        ) as remove:
+            cohort.cleanup_target(state, item)
+
+        remove.assert_called_once_with({
+            "AZURE_SUBSCRIPTION_ID": item["subscriptionId"],
+            "SRE_AGENT_IDENTITY_PRINCIPAL_ID": principal,
+        })
+        self.assertEqual(item["status"], "Cleaned")
+
     def test_cleanup_refuses_wrong_tags_without_deleting(self):
         item = self.item()
         state = {"participants": [item]}

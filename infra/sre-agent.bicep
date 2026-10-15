@@ -1,4 +1,4 @@
-metadata description = 'Read-only Azure SRE Agent scoped to the workshop resource group.'
+metadata description = 'Low-access Review-mode Azure SRE Agent scoped to the workshop resource group.'
 
 targetScope = 'resourceGroup'
 
@@ -37,6 +37,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
 }
 
 var readerRoleId = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
+var contributorRoleId = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 var logAnalyticsReaderRoleId = '73c42c96-874c-492b-b04d-ab87d138a893'
 var administratorRoleId = 'e79298df-d852-4c6d-84f9-5d13249d1e55'
 
@@ -46,6 +47,15 @@ resource operationalReader 'Microsoft.Authorization/roleAssignments@2022-04-01' 
     principalId: sreAgentIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', readerRoleId)
+  }
+}
+
+resource operationalContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(resourceGroup().id, sreAgentIdentity.id, contributorRoleId)
+  properties: {
+    principalId: sreAgentIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', contributorRoleId)
   }
 }
 
@@ -102,6 +112,7 @@ resource agent 'Microsoft.App/agents@2025-05-01-preview' = {
   }
   dependsOn: [
     operationalReader
+    operationalContributor
     operationalLogReader
   ]
 }

@@ -74,7 +74,9 @@ reinstall. The agent evaluates cron in UTC.
 
 In testing, scheduled runs did not use the custom agent's instructions or tool
 list. Read-only rules also live in the skill and task prompt. Check the actual
-run's tool calls and keep Review mode and read-only Azure permissions.
+run's tool calls, keep Review mode, and retain the read-only custom-agent tool
+list. The UAMI's Contributor role is limited to the participant resource group;
+Monitoring Contributor exists for the Azure Monitor alert lifecycle.
 
 The optional Application Insights query tool was unavailable in those runs.
 The skill uses the same data in the Log Analytics `App*` tables and reports

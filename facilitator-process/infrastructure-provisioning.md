@@ -28,6 +28,14 @@ Run these commands from the repository root in PowerShell 7.4+ on Windows, using
 
    `--participants 5` maps the existing users to `participant-01` through `participant-05` and deploys `rg-01` through `rg-05`. Subscriptions are assigned round-robin in the order supplied. The command validates participant accounts, provider and feature registration, regional service availability, PostgreSQL availability, and VM quota before deploying.
 
+   Each participant's `azd up` assigns the matching SRE Agent UAMI
+   **Contributor** on its participant resource group and **Monitoring
+   Contributor** at subscription scope. The first permits approved resource
+   actions in Review mode; the second supports the Azure Monitor alert
+   lifecycle. The managed-resource scope remains the matching participant
+   resource group. Cohort cleanup removes the subscription assignment before
+   deleting the group and its scoped assignments.
+
    The command does not create users or TAPs. It grants each participant Contributor access only to their matching resource group and SRE Agent Standard User only on that group's agent resource.
 
 3. **Wait for every row to report `Ready`.** A successful final table shows `Succeeded`, `Passed`, `Contributor + SRE User`, and `Ready` for every participant. Detailed output is written to one log per participant:
@@ -58,7 +66,7 @@ Run these commands from the repository root in PowerShell 7.4+ on Windows, using
    | SRE Agent reports `Forbidden: Access denied by PDP` | Rerun the cohort command to verify the agent-scoped SRE Agent Standard User assignment, then sign out and back in after RBAC propagation. |
    | A participant finishes with `Failed` | Resolve any external Azure registration or permission error, then rerun the exact same cohort command. Successful stages are skipped. |
 
-5. **Start every participant VM on workshop day.** Run this after signing in with the deployment identity and before participants begin. It discovers the one VM in each saved participant resource group, starts it, and confirms Azure reports `VM running`.
+5. **Start every participant VM and PostgreSQL server on workshop day.** Run this after signing in with the deployment identity and before participants begin. It discovers the one VM and PostgreSQL Flexible Server in each saved participant resource group, starts them, and confirms Azure reports `VM running` and `Ready`.
 
    ```powershell
    $cohort = Get-Content .\.workshop\cohort\state.json -Raw | ConvertFrom-Json
@@ -92,11 +100,44 @@ Run these commands from the repository root in PowerShell 7.4+ on Windows, using
      if ($powerState -ne 'VM running') {
        throw "$($participant.participant) reported '$powerState' instead of 'VM running'."
      }
-     Write-Host "[start] $($participant.participant): VM running"
+
+     $servers = @(az postgres flexible-server list `
+       --subscription $participant.subscriptionId `
+       --resource-group $participant.resourceGroup `
+       --output json | ConvertFrom-Json)
+
+     if ($LASTEXITCODE -ne 0 -or $servers.Count -ne 1) {
+       throw "Expected one PostgreSQL server for $($participant.participant) in $($participant.resourceGroup)."
+     }
+
+     $server = $servers[0]
+     if ($server.state -eq 'Stopped') {
+       az postgres flexible-server start --ids $server.id --only-show-errors
+       if ($LASTEXITCODE -ne 0) {
+         throw "Failed to start PostgreSQL for $($participant.participant)."
+       }
+     } elseif ($server.state -notin @('Ready', 'Starting')) {
+       throw "$($participant.participant) PostgreSQL cannot be started from state '$($server.state)'."
+     }
+
+     $serverState = $null
+     for ($attempt = 0; $attempt -lt 30; $attempt++) {
+       $serverState = az postgres flexible-server show `
+         --ids $server.id `
+         --query state `
+         --output tsv
+       if ($serverState -eq 'Ready') { break }
+       Start-Sleep -Seconds 10
+     }
+
+     if ($serverState -ne 'Ready') {
+       throw "$($participant.participant) PostgreSQL reported '$serverState' instead of 'Ready'."
+     }
+     Write-Host "[start] $($participant.participant): VM running; PostgreSQL Ready"
    }
    ```
 
-   Do not issue participant handouts until every row reports `VM running`. Starting the VMs does not change TAP validity.
+   Do not issue participant handouts until every row reports `VM running; PostgreSQL Ready`. Starting the resources does not change TAP validity.
 
 6. **Clean up after the workshop.** Delete the entire cohort the same day to stop Azure charges:
 

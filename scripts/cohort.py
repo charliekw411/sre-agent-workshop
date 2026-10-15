@@ -495,6 +495,56 @@ def sre_agent_scope(item):
     return scope
 
 
+def sre_agent_runtime_principal(item):
+    agents = workshop.az(
+        "resource", "list",
+        "--resource-group", item["resourceGroup"],
+        "--resource-type", "Microsoft.App/agents",
+        "--subscription", item["subscriptionId"],
+    )
+    if not isinstance(agents, list):
+        raise CohortError(
+            f"Azure returned an invalid SRE Agent inventory for {item['participant']}."
+        )
+    if not agents:
+        return None
+    if len(agents) != 1:
+        raise CohortError(
+            f"Expected at most one SRE Agent in {item['resourceGroup']}."
+        )
+    identity = agents[0].get("identity")
+    assigned = identity.get("userAssignedIdentities") if isinstance(identity, dict) else None
+    if not isinstance(assigned, dict) or len(assigned) != 1:
+        raise CohortError(
+            f"Expected one SRE Agent UAMI for {item['participant']}."
+        )
+    identity_id = next(iter(assigned))
+    expected = (
+        resource_group_scope(item)
+        + "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/"
+    )
+    if (not isinstance(identity_id, str)
+            or not identity_id.casefold().startswith(expected.casefold())
+            or "/" in identity_id[len(expected):]):
+        raise CohortError(
+            f"Azure returned an invalid SRE Agent UAMI for {item['participant']}."
+        )
+    document = workshop.az(
+        "identity", "show",
+        "--ids", identity_id,
+        "--subscription", item["subscriptionId"],
+    )
+    principal = document.get("principalId") if isinstance(document, dict) else None
+    try:
+        uuid.UUID(principal)
+    except (ValueError, TypeError) as error:
+        raise CohortError(
+            f"Azure returned an invalid SRE Agent UAMI principal for "
+            f"{item['participant']}."
+        ) from error
+    return principal
+
+
 def ensure_participant_access(item):
     ensure_role_assignment(
         item,
@@ -756,6 +806,12 @@ def cleanup_target(state, item):
         raise CohortError(
             f"Refusing to delete {item['resourceGroup']}: workshop tags do not match."
         )
+    principal = sre_agent_runtime_principal(item)
+    if principal:
+        workshop.remove_monitoring_contributor({
+            "AZURE_SUBSCRIPTION_ID": item["subscriptionId"],
+            "SRE_AGENT_IDENTITY_PRINCIPAL_ID": principal,
+        })
     progress(f"[{item['participant']}] Deleting {item['resourceGroup']}")
     workshop.az(
         "group", "delete",

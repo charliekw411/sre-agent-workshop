@@ -111,11 +111,13 @@ normal VM CPU does not prove PostgreSQL is healthy.
 
 ## SRE Agent authority
 
-The SRE Agent runtime has read-only Azure resource, monitoring, and Log Analytics
-access. It can investigate but cannot run VM commands, edit the NSG, restart
-resources, change PostgreSQL configuration, or close alerts. Recommendations
-must identify the authorized operator action and must not claim remediation was
-performed.
+The SRE Agent UAMI has Reader and Contributor on this workshop resource group,
+Log Analytics Reader on the workspace, and Monitoring Contributor on the
+subscription. The agent remains in Low-access Review mode, and the prepared
+custom agents use read-only tool lists. Do not run VM commands, edit the NSG,
+restart resources, change PostgreSQL configuration, or close alerts without an
+explicit reviewed action. Never claim remediation was performed unless the
+approved tool call succeeded.
 
 The attendee has agent-scoped administration to operate the response plan. That
 role does not increase the runtime's infrastructure privileges.

@@ -60,7 +60,7 @@ They show the failed connection and the customer impact, respectively.
 ## Your access and the agent's access
 
 Your account runs the fault controls. The agent has separate Azure identities
-for reading resources and monitoring data.
+and scoped roles for resources and monitoring data.
 
 | Operation | SRE Agent role needed |
 | --- | --- |
@@ -73,10 +73,14 @@ Author access on your own agent, or an equivalent agent-scoped Administrator
 assignment. Azure Contributor alone does not replace these SRE Agent roles.
 Ask your facilitator if an operation is denied; do not assign yourself roles.
 
-The workshop agent is configured with resource and Log Analytics read access.
+The workshop agent UAMI has Reader and Contributor on its own resource group,
+Log Analytics Reader on the workspace, and the product-required Monitoring
+Contributor role at subscription scope. The agent's managed-resource scope
+remains its workshop resource group.
+
 **Review** mode asks for approval of Azure changes, but it is not a substitute
-for permissions or a read-only procedure. Do not approve resource changes in
-these exercises. You reset incidents through the workshop controls.
+for permissions or a read-only procedure. Do not approve workload or monitoring
+changes in these exercises. You reset incidents through the workshop controls.
 
 See the official [SRE Agent role reference](https://learn.microsoft.com/azure/sre-agent/user-roles)
 for the full permission table.

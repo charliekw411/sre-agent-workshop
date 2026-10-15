@@ -99,7 +99,8 @@ For each agent:
 * Turn off `orders-daily-health-report` until Module 04
 * Create and verify the **Orders Service Health** Live Report
 * Give its participant Standard User plus Author, or agent-scoped Administrator
-* Keep the agent's Azure runtime permissions read-only
+* Keep the UAMI's Contributor role limited to its participant resource group,
+  retain subscription-level Monitoring Contributor, and keep Review mode
 
 Detailed guides:
 [Incident-workflow setup and routing](../docs/sre/30-appendix/09-incident-workflow.md)
@@ -112,9 +113,10 @@ remain draft-only unless the organizer explicitly approves test destinations.
 
 ## 5. Complete day-of preparation
 
-1. Start every participant VM using
-   [Infrastructure provisioning step 5](infrastructure-provisioning.md#5-start-every-participant-vm-on-workshop-day).
-2. Confirm every VM reports `VM running`.
+1. Start every participant VM and PostgreSQL Flexible Server using
+   [Infrastructure provisioning step 5](infrastructure-provisioning.md#5-start-every-participant-vm-and-postgresql-server-on-workshop-day).
+2. Confirm every VM reports `VM running` and every PostgreSQL server reports
+   `Ready`.
 3. Issue fresh six-hour TAPs and display the handouts:
 
    ```powershell

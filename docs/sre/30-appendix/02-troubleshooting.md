@@ -60,7 +60,7 @@ Load the prepared environment:
 
 Do not work around a failure by opening SSH, enabling PostgreSQL public access,
 adding a database password, creating a public fault endpoint, broadening the NSG
-deny, or granting the SRE Agent write access.
+deny, or granting the SRE Agent access outside its participant resource group.
 
 Before diagnosing normal connectivity, check the controlled fault state:
 
@@ -826,27 +826,55 @@ Confirm:
 * The response plan is enabled for Azure Monitor.
 * The alert belongs to this workshop resource group.
 * The response-plan filter does not target another resource.
+* The agent UAMI has Monitoring Contributor at subscription scope.
+
+`azd up` creates the required role assignment. If the portal reports that it is
+missing, select the intended environment and rerun `azd up`, or inspect the
+exact assignment:
+
+=== "Bash"
+
+    ```bash
+    az role assignment list \
+      --assignee-object-id "${SRE_AGENT_IDENTITY_PRINCIPAL_ID}" \
+      --scope "/subscriptions/${AZURE_SUBSCRIPTION_ID}" \
+      --query "[?roleDefinitionName=='Monitoring Contributor'].{Role:roleDefinitionName,Scope:scope}" \
+      --output table
+    ```
+
+=== "PowerShell"
+
+    ```powershell
+    az role assignment list `
+      --assignee-object-id $env:SRE_AGENT_IDENTITY_PRINCIPAL_ID `
+      --scope "/subscriptions/$env:AZURE_SUBSCRIPTION_ID" `
+      --query "[?roleDefinitionName=='Monitoring Contributor'].{Role:roleDefinitionName,Scope:scope}" `
+      --output table
+    ```
 
 Allow for service propagation. Continue investigating with raw telemetry and
 Activity Log while routing catches up.
 
 ### The agent can read resources but not telemetry
 
-Review both SRE Agent identities. They need resource read and Log Analytics read
-access. Role propagation can take several minutes. They do not need VM Run
-Command or NSG write access.
+Review both SRE Agent identities. The UAMI needs Reader and Contributor on the
+participant resource group plus Log Analytics Reader on the workspace. Role
+propagation can take several minutes.
 
 ### The agent proposes but does not execute reset
 
-That is expected. The workshop uses Review mode and read-only runtime roles. A
-human uses a separate authenticated identity:
+That is expected for the prepared custom agents. The UAMI has Contributor on
+the participant resource group, but Review mode requires approval and the
+custom agents use read-only tool lists. Monitoring Contributor supports the
+alert lifecycle. A human uses a separate authenticated identity:
 
 ```bash
 python scripts/workshop.py fault reset-cpu        # CPU incident
 python scripts/workshop.py fault reset-postgresql # PostgreSQL incident
 ```
 
-Do not grant workload write access to make the demonstration automatic.
+Do not switch the agent to Automatic mode or broaden Contributor beyond its
+participant resource group.
 
 ### `health-check install` returns 403 or 404
 

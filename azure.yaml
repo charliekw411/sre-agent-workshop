@@ -46,3 +46,14 @@ hooks:
       run: bash ./scripts/postprovision.sh
       interactive: true
       dir: .
+  predown:
+    windows:
+      shell: pwsh
+      run: ./scripts/invoke-workshop.ps1 predown
+      interactive: true
+      dir: .
+    posix:
+      shell: sh
+      run: python3 ./scripts/workshop.py predown
+      interactive: true
+      dir: .

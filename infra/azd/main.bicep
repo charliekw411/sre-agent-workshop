@@ -39,6 +39,7 @@ var suffix = take(uniqueString(subscription().id, envName), 12)
 var resourceGroupName = empty(workshopResourceGroupName)
   ? 'rg-sre-agent-workshop-${envName}'
   : workshopResourceGroupName
+var monitoringContributorRoleId = '749f88d5-cbae-40b8-bcfc-e573ddc772fa'
 var tags = {
   workload: 'sre-agent-workshop'
   environment: envName
@@ -64,6 +65,15 @@ module workshop '../main.bicep' = {
     vmSize: vmSize
     alertEmail: alertEmail
     tags: tags
+  }
+}
+
+resource sreAgentMonitoringContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(subscription().id, resourceGroupName, 'id-sre-agent-runtime-${suffix}', monitoringContributorRoleId)
+  properties: {
+    principalId: workshop.outputs.sreAgentIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', monitoringContributorRoleId)
   }
 }
 

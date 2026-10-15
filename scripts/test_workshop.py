@@ -55,6 +55,7 @@ VALUES = {
     "LOG_ANALYTICS_ID": "/workspace",
     "SRE_AGENT_RESOURCE_ID": "/agent",
     "SRE_AGENT_ENDPOINT": "https://sre-test.australiaeast.azuresre.ai",
+    "SRE_AGENT_IDENTITY_PRINCIPAL_ID": "30000000-0000-0000-0000-000000000001",
 }
 ORDER = {
     "orderId": -1, "customerId": "workshop-seed", "productId": "SKU-1001",
@@ -75,6 +76,8 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(document["workflows"]["up"]["steps"], [{"azd": "provision"}])
         self.assertIn("prepare-azd-env", document["hooks"]["preup"]["windows"]["run"])
         self.assertIn("postprovision", document["hooks"]["postprovision"]["posix"]["run"])
+        self.assertIn("predown", document["hooks"]["predown"]["windows"]["run"])
+        self.assertIn(workshop.MONITORING_CONTRIBUTOR_ROLE_ID, entrypoint)
         self.assertEqual(
             parameters["parameters"]["workshopResourceGroupName"]["value"],
             "${WORKSHOP_RESOURCE_GROUP_NAME=}",
@@ -658,6 +661,42 @@ class RunCommandTests(unittest.TestCase):
 
 
 class DeploymentSequenceTests(unittest.TestCase):
+    def test_remove_subscription_monitoring_assignment(self):
+        subscription = VALUES["AZURE_SUBSCRIPTION_ID"]
+        scope = f"/subscriptions/{subscription}"
+        assignment_id = (
+            f"{scope}/providers/Microsoft.Authorization/roleAssignments/"
+            "40000000-0000-0000-0000-000000000001"
+        )
+        assignment = {
+            "id": assignment_id,
+            "scope": scope,
+            "roleDefinitionId": (
+                f"{scope}/providers/Microsoft.Authorization/roleDefinitions/"
+                f"{workshop.MONITORING_CONTRIBUTOR_ROLE_ID}"
+            ),
+        }
+        with patch.object(
+                workshop, "az", side_effect=[[assignment], None, []]) as az:
+            workshop.remove_monitoring_contributor(VALUES)
+
+        self.assertEqual(
+            az.call_args_list[1],
+            call(
+                "role", "assignment", "delete",
+                "--ids", assignment_id,
+                "--subscription", subscription,
+            ),
+        )
+
+    def test_predown_removes_assignment_for_selected_environment(self):
+        with patch.object(
+                workshop, "environment", return_value=VALUES
+        ), patch.object(workshop, "remove_monitoring_contributor") as remove:
+            workshop.predown()
+
+        remove.assert_called_once_with(VALUES)
+
     def test_postprovision_deploys_then_smokes_before_exporting_success(self):
         events = []
         values = {**VALUES, "VM_RESOURCE_ID": "/vm"}

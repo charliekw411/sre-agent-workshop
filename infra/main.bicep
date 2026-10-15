@@ -1,4 +1,4 @@
-metadata description = 'Public Orders API VM with private PostgreSQL Flexible Server, Azure Monitor, and a read-only Azure SRE Agent.'
+metadata description = 'Public Orders API VM with private PostgreSQL Flexible Server, Azure Monitor, and a Low-access Review-mode Azure SRE Agent.'
 
 targetScope = 'resourceGroup'
 

@@ -17,7 +17,53 @@ def resources(template):
 
 
 def check(template):
+    monitoring_contributor_role_id = "749f88d5-cbae-40b8-bcfc-e573ddc772fa"
+    contributor_role_id = "b24988ac-6180-42a0-ab88-20f7382dd24c"
+    configured_role_id = (
+        template.get("variables", {}).get("monitoringContributorRoleId", "").lower()
+    )
+    if configured_role_id != monitoring_contributor_role_id:
+        raise ValueError("Monitoring Contributor must use the expected Azure role definition.")
+    monitoring_assignments = [
+        resource for resource in template.get("resources", [])
+        if resource.get("type", "").lower() == "microsoft.authorization/roleassignments"
+        and "monitoringcontributorroleid" in json.dumps(resource.get("properties", {})).lower()
+    ]
+    if len(monitoring_assignments) != 1:
+        raise ValueError(
+            "The agent UAMI requires exactly one subscription-level Monitoring "
+            "Contributor assignment.")
+    monitoring_assignment = monitoring_assignments[0]
+    if monitoring_assignment.get("properties", {}).get("principalType") != "ServicePrincipal":
+        raise ValueError("Monitoring Contributor must target the agent service principal.")
+    if "scope" in monitoring_assignment:
+        raise ValueError(
+            "Monitoring Contributor must use the subscription-scope entrypoint, "
+            "not a narrower explicit scope.")
+
     deployed = resources(template)
+    serialized_template = json.dumps(template).lower()
+    if contributor_role_id not in serialized_template:
+        raise ValueError("The agent UAMI requires the Azure Contributor role definition.")
+    contributor_assignments = [
+        resource for resource in deployed
+        if resource.get("type", "").lower() == "microsoft.authorization/roleassignments"
+        and "variables('contributorroleid')" in
+        json.dumps(resource.get("properties", {})).lower()
+    ]
+    if len(contributor_assignments) != 1:
+        raise ValueError(
+            "The agent UAMI requires exactly one resource-group Contributor assignment.")
+    contributor_assignment = contributor_assignments[0]
+    contributor_properties = contributor_assignment.get("properties", {})
+    if contributor_properties.get("principalType") != "ServicePrincipal":
+        raise ValueError("Contributor must target the agent UAMI service principal.")
+    if "scope" in contributor_assignment:
+        raise ValueError("Contributor must be scoped to the workshop resource group.")
+    principal_expression = str(contributor_properties.get("principalId", "")).lower()
+    if "userassignedidentities" not in principal_expression:
+        raise ValueError("Contributor must target the SRE Agent user-assigned identity.")
+
     by_type = {}
     for resource in deployed:
         by_type.setdefault(resource["type"].lower(), []).append(resource)

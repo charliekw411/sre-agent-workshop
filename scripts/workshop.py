@@ -57,6 +57,7 @@ SOURCE_FILES = ("*.cs", "*.csproj", "appsettings.json", "wwwroot/**/*")
 VM_FILES = ("install.sh", "orders-api.service", "faults.py", "inspect.py")
 TRANSIENT_HTTP = {408, 429, 502, 503, 504}
 SRE_RESPONSE_PLAN_NAME = "workshop-sev1-sev2-review"
+MONITORING_CONTRIBUTOR_ROLE_ID = "749f88d5-cbae-40b8-bcfc-e573ddc772fa"
 PUBLIC_IP_FEATURE = "AllowBringYourOwnPublicIpAddress"
 SRE_ARM_API_VERSION = "2025-05-01-preview"
 AGENT_DEFINITIONS = ROOT / "agent"
@@ -196,6 +197,75 @@ def required(values, key):
     if not isinstance(value, str) or not value.strip():
         raise DeploymentError(f"Missing {key}; select the intended azd environment and run azd up.")
     return value
+
+
+def monitoring_contributor_assignments(values):
+    subscription = required(values, "AZURE_SUBSCRIPTION_ID")
+    principal = required(values, "SRE_AGENT_IDENTITY_PRINCIPAL_ID")
+    try:
+        uuid.UUID(subscription)
+        uuid.UUID(principal)
+    except ValueError as error:
+        raise DeploymentError(
+            "The SRE Agent subscription and UAMI principal IDs must be GUIDs."
+        ) from error
+    scope = f"/subscriptions/{subscription}"
+    role_definition = (
+        f"{scope}/providers/Microsoft.Authorization/roleDefinitions/"
+        f"{MONITORING_CONTRIBUTOR_ROLE_ID}"
+    )
+    assignments = az(
+        "role", "assignment", "list",
+        "--assignee-object-id", principal,
+        "--scope", scope,
+        "--fill-principal-name", "false",
+        "--subscription", subscription,
+    )
+    if not isinstance(assignments, list):
+        raise DeploymentError(
+            "Azure returned an invalid Monitoring Contributor assignment list.")
+    matches = [
+        assignment for assignment in assignments
+        if isinstance(assignment, dict)
+        and str(assignment.get("scope", "")).casefold() == scope.casefold()
+        and str(assignment.get("roleDefinitionId", "")).casefold()
+        == role_definition.casefold()
+    ]
+    if len(matches) > 1:
+        raise DeploymentError(
+            "The SRE Agent UAMI has duplicate Monitoring Contributor assignments.")
+    return matches
+
+
+def remove_monitoring_contributor(values):
+    assignments = monitoring_contributor_assignments(values)
+    if not assignments:
+        progress("[cleanup] SRE Agent Monitoring Contributor assignment is already absent.")
+        return
+    subscription = required(values, "AZURE_SUBSCRIPTION_ID")
+    scope = f"/subscriptions/{subscription}"
+    assignment_id = assignments[0].get("id")
+    if (not isinstance(assignment_id, str)
+            or not re.fullmatch(
+                re.escape(scope)
+                + r"/providers/Microsoft\.Authorization/roleAssignments/"
+                + r"[0-9a-fA-F-]{36}",
+                assignment_id,
+            )):
+        raise DeploymentError(
+            "Azure returned an invalid Monitoring Contributor assignment ID.")
+    az(
+        "role", "assignment", "delete",
+        "--ids", assignment_id,
+        "--subscription", subscription,
+    )
+    for _ in range(6):
+        if not monitoring_contributor_assignments(values):
+            progress("[cleanup] Removed the SRE Agent Monitoring Contributor assignment.")
+            return
+        time.sleep(5)
+    raise DeploymentError(
+        "The SRE Agent Monitoring Contributor assignment is still visible after deletion.")
 
 
 def environment():
@@ -627,7 +697,7 @@ def validate():
     steps = config.get("workflows", {}).get("up", {}).get("steps")
     if steps != [{"azd": "provision"}]:
         raise DeploymentError("azd up must provision and run the postprovision VM deployment hook.")
-    for hook in ("preup", "preprovision", "postprovision"):
+    for hook in ("preup", "preprovision", "postprovision", "predown"):
         if set(config.get("hooks", {}).get(hook, {})) != {"windows", "posix"}:
             raise DeploymentError(f"{hook} requires both Windows and POSIX entrypoints.")
     source = list((ROOT / "src" / "OrdersApi").glob("*.cs"))
@@ -2296,6 +2366,10 @@ def postprovision():
         progress(f"{key}: {required(values, key)}")
 
 
+def predown():
+    remove_monitoring_contributor(environment())
+
+
 def inspect_vm(values):
     result = run_vm(values, "/usr/bin/python3 /opt/orders-api/inspect.py '__WORKSHOP_REQUEST_ID__'")
     write_json(state_directory(values) / "vm-inspection.json", result)
@@ -2665,7 +2739,7 @@ def benchmark():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=(
-        "validate", "prepare", "preprovision", "postprovision", "export",
+        "validate", "prepare", "preprovision", "postprovision", "predown", "export",
         "smoke", "inspect", "fault", "health-check", "incident-workflow", "telemetry", "verify-restart",
         "benchmark",
     ))
@@ -2681,7 +2755,7 @@ def main():
     if settings is not None and args.command != "incident-workflow":
         raise DeploymentError("Incident destination options are valid only for incident-workflow install.")
     direct = {"validate": validate, "prepare": prepare, "preprovision": preprovision,
-              "postprovision": postprovision, "benchmark": benchmark}
+              "postprovision": postprovision, "predown": predown, "benchmark": benchmark}
     if args.command in direct:
         if args.arguments:
             raise DeploymentError(f"{args.command} does not accept positional arguments.")

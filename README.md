@@ -64,8 +64,11 @@ The workshop uses one Azure region and one disposable resource group:
   fault-injection endpoints are not exposed.
 * Log Analytics, workspace-based Application Insights, Azure Monitor Agent, a
   Data Collection Rule, and CPU, PostgreSQL dependency, and HTTP 5xx alerts.
-* A read-only Azure SRE Agent with an enabled Sev1/Sev2 response plan in Review
-  mode.
+* A Low-access Azure SRE Agent with an enabled Sev1/Sev2 response plan in
+  Review mode. Its UAMI has Reader and Contributor on the workshop resource
+  group, Log Analytics Reader on the workspace, and the required
+  subscription-level Monitoring Contributor role for the Azure Monitor alert
+  lifecycle.
 
 The VM's system-assigned managed identity obtains Microsoft Entra tokens for
 PostgreSQL and connects with TLS `VerifyFull`. The same identity is also the
@@ -151,14 +154,16 @@ deleted.
 
 1. Provisions the VM, two subnets, private DNS, PostgreSQL, monitoring, alerts,
    and SRE Agent.
-2. Makes the VM identity the PostgreSQL Entra administrator.
-3. Installs the .NET 8 SDK and PostgreSQL client on the VM.
-4. Validates private DNS, TCP 5432, managed-identity token acquisition, and TLS
+2. Assigns the SRE Agent UAMI Contributor on the workshop resource group and
+   Monitoring Contributor on the subscription.
+3. Makes the VM identity the PostgreSQL Entra administrator.
+4. Installs the .NET 8 SDK and PostgreSQL client on the VM.
+5. Validates private DNS, TCP 5432, managed-identity token acquisition, and TLS
    configuration.
-5. Applies the PostgreSQL schema and deterministic seed data.
-6. Enables `orders-api.service` and verifies local and public health.
-7. Configures and reads back the SRE Agent response plan.
-8. Verifies `/orders`, `/database`, and the absence of public `/fault/*` routes.
+6. Applies the PostgreSQL schema and deterministic seed data.
+7. Enables `orders-api.service` and verifies local and public health.
+8. Configures and reads back the SRE Agent response plan.
+9. Verifies `/orders`, `/database`, and the absence of public `/fault/*` routes.
 
 Repeated `azd up` reconciles the normal
 `PostgreSqlFaultInjection` rule to `Allow`, reapplies the idempotent schema
@@ -166,6 +171,13 @@ bootstrap, and keeps existing orders. The final output includes resource names,
 IDs, and the public API URL. The generated `.workshop/workshop.env` and
 `.workshop/workshop.ps1` files use an explicit non-secret allowlist. They do not
 contain a PostgreSQL password or access token.
+
+Monitoring Contributor is intentionally subscription-scoped because the SRE
+Agent alert scanner requires it. The agent's managed-resource configuration and
+Contributor access remain limited to its workshop resource group. Review mode
+still requires approval before Azure changes. `azd down` and the cohort cleanup
+remove the subscription role assignment before deleting the resource group and
+its scoped assignments.
 
 ### Deploy a participant cohort
 
