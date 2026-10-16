@@ -82,6 +82,12 @@ try {
     if ($LASTEXITCODE -ne 0) {
       throw "Incident-workflow installation failed for $($participant.participant)."
     }
+
+    Write-Host "[knowledge] $($participant.participant)"
+    python .\scripts\workshop.py knowledge install
+    if ($LASTEXITCODE -ne 0) {
+      throw "Knowledge installation failed for $($participant.participant)."
+    }
   }
 } finally {
   if ($null -eq $previousEnvironment) {
@@ -99,15 +105,18 @@ For each agent:
 * Turn off `orders-daily-health-report` until Module 04
 * Do not pre-create the **Orders Service Health** Live Report; participants
   generate it in Module 04
+* Verify **Builder > Knowledge settings** lists `workshop-slo-and-baselines.md`
+  and `workshop-escalation-and-comms.md` (fictitious Contoso demo data)
 * Participants receive SRE Agent Administrator on their own agent from the
   cohort deployment; verify it, and check it is not granted elsewhere
 * Keep the UAMI's Contributor role limited to its participant resource group,
   retain subscription-level Monitoring Contributor, and keep Review mode
 
 Detailed guides:
-[Incident-workflow setup and routing](../docs/sre/30-appendix/09-incident-workflow.md)
+[Incident-workflow setup and routing](../docs/sre/30-appendix/09-incident-workflow.md),
+[health-check setup](../docs/sre/30-appendix/08-proactive-extensions.md)
 and
-[health-check setup](../docs/sre/30-appendix/08-proactive-extensions.md).
+[knowledge base setup](../docs/sre/30-appendix/10-knowledge-base.md).
 Use [Site Azure connection and participant RBAC](../docs/sre/30-appendix/05-site-azure-connection.md)
 for the shared browser app and participant agent roles.
 The core class does not bind GitHub or Outlook destinations; those follow-ups

@@ -233,11 +233,14 @@ create from a prompt and then reload.
     ```
 
 2. Check its times against your evidence log. Note any mismatch.
-3. Use your notes to answer:
+3. If your facilitator uploaded the knowledge files, ask which status the SLO
+   document would give each area right now and how the results compare with the
+   documented baselines. Treat the baselines as fictitious demo values.
+4. Use your notes to answer:
     1. Which found each fault sooner: the alert or the next scheduled run?
     2. What could the health check report that a single alert misses?
     3. Which agent or report claim needed your correction?
-4. Keep the thread and report available for the final evidence capture. You will
+5. Keep the thread and report available for the final evidence capture. You will
    turn off the recurring task in Module 05.
 
 ## Check before moving on

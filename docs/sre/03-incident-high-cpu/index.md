@@ -43,9 +43,9 @@ priority. It does not change PostgreSQL.
 A response plan tells the agent which alerts to investigate and how much it may
 do on its own.
 
-1. Open your SRE Agent. Go to **Response plans** or
-   **Builder > Incident response plans** and open `workshop-sev1-sev2-review`.
-   The deployment already created it.
+1. Open your SRE Agent. Navigate to **Agent Canvas > table view > Incident
+   response plans** and open `workshop-sev1-sev2-review`. The deployment
+   already created it.
 2. Apply these settings and select **Save**:
 
     | Setting | Value |
@@ -60,8 +60,7 @@ do on its own.
 3. Open the plan again and check the saved values. Leave the merge and
    reinvestigation settings and the title filter as they are. Do not add another
    plan: `orders-incident-workflow` already handles PostgreSQL alerts.
-4. If the plan is missing or you cannot save it, ask your facilitator.
-5. In **Azure Monitor > Alerts > Alert rules**, filter to your resource group.
+4. In **Azure Monitor > Alerts > Alert rules**, filter to your resource group.
    Check that `alert-orders-high-cpu` is enabled, is Sev2, and fires when average
    CPU is above 80 percent for five minutes.
 
@@ -155,6 +154,17 @@ wait to investigate on your own.
 
     The agent has the workshop runbooks as reference. Its answer shows whether it
     followed a known procedure or improvised.
+
+    ??? info "Optional: compare with the documented baseline"
+        If your facilitator uploaded the knowledge files, ask:
+
+        ```text
+        How does the CPU you observed compare with the documented baseline and
+        alert threshold? Name the document you used.
+        ```
+
+        The baselines are fictitious Contoso Retail demo values. Check which
+        numbers come from the document and which come from your telemetry.
 4. Check three things yourself:
     * The CPU chart agrees with the agent's values and time range.
     * The Orders GUI or Application Insights **Performance** supports its claim

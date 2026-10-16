@@ -22,6 +22,7 @@ nav:
       - Running Locally or in Codespaces: sre/30-appendix/04-local-and-codespaces.md
       - Incident Workflow Setup and Routing (Organizers): sre/30-appendix/09-incident-workflow.md
       - Health-check Setup (Organizers): sre/30-appendix/08-proactive-extensions.md
+      - Knowledge Base Setup (Organizers): sre/30-appendix/10-knowledge-base.md
       - Self-deployment (Optional): sre/30-appendix/06-self-deployment.md
       - Organizer Preparation and Cleanup: sre/30-appendix/07-organizer-guide.md
       - Site Azure Connection (Organizers): sre/30-appendix/05-site-azure-connection.md
