@@ -154,9 +154,22 @@ the incidents.
 
     ![Application Insights Performance page listing Orders API operations with request counts](../../assets/images/01-deploy-and-validate/appinsights-performance.png)
 
-5. In the left menu, under **Monitoring**, select **Logs**, close the query
-   picker if it appears, and run this query. It counts recent Orders API requests
-   by name:
+5. In the left menu, under **Monitoring**, select **Logs**. You can run the query
+   in either of two ways:
+
+    * **New agent (preview):** ask the Observability agent to run the query below,
+      or paste it into the chat.
+    * **Classic KQL:** close the **Queries hub** pop-up, turn **Agent** off, and
+      set the mode dropdown to **KQL mode**. Then paste the query and select
+      **Run**.
+
+    ![Queries hub pop-up with the close button highlighted](../../assets/images/01-deploy-and-validate/appinsights-logs-queries-hub-close.png)
+
+    ![Logs page with the Agent toggle highlighted](../../assets/images/01-deploy-and-validate/appinsights-logs-agent-toggle.png)
+
+    ![Logs query editor in KQL mode with the mode dropdown highlighted](../../assets/images/01-deploy-and-validate/appinsights-logs-kql-mode.png)
+
+    The query counts recent Orders API requests by name:
 
     ```kusto
     requests
@@ -169,11 +182,30 @@ the incidents.
 
 ### Task 5: Meet the agent
 
-1. Open your supplied **SRE Agent** link. On its **Connectors** page, confirm
-   the monitoring connectors refer to your environment. If the workspace query
-   or agent access fails, ask your facilitator rather than adding roles
-   yourself.
-2. Start a new chat and ask:
+1. Open a new browser tab and go to [sre.azure.com](https://sre.azure.com). You
+   are signed in automatically; if prompted, use your workshop account. Select
+   your SRE Agent.
+2. You will see a screen like this. These are the sources of information the
+   agent uses to do its work:
+
+    * **Logs:** Application Insights and Log Analytics, for requests, dependencies,
+      and VM data.
+    * **Azure resources:** your resource group, which limits what the agent can
+      see and act on.
+    * **Incidents:** Azure Monitor, where alerts arrive as incidents.
+
+    Confirm each source shows **Connected** and the resource group is your own.
+    If the workspace query or agent access fails, ask your facilitator rather
+    than adding roles yourself.
+
+    ![SRE Agent setup page showing Logs, Azure resources, and Incidents connected, with the Done and go to agent button at the bottom right](../../assets/images/01-deploy-and-validate/sre-agent-data-sources.png)
+
+3. Select **Done and go to agent** at the bottom right. You land on the agent's
+   home page.
+
+    ![Azure SRE Agent home page with the New chat button highlighted](../../assets/images/01-deploy-and-validate/sre-agent-home-new-chat.png)
+
+4. Select **New chat** and ask:
 
     ```text
     In plain language, what does the Orders app consist of, and how does an
@@ -181,18 +213,14 @@ the incidents.
     make changes.
     ```
 
-3. Compare the answer with the architecture diagram above. It should name the
-   VM, PostgreSQL, Application Insights, and Log Analytics. Note anything that
-   does not match.
-4. Ask a second question:
+5. Ask a second question:
 
     ```text
     Is the Orders app healthy right now? Show the evidence and the time window.
     ```
 
-5. Check that its answer agrees with the status cards from Task 3. Note how long
-   the agent took to gather and chart the evidence, compared with the portal
-   steps you did by hand.
+6. Compare the answers from the SRE Agent with your own understanding of the
+   workshop and the Orders GUI health checks.
 
 ## Check before moving on
 
