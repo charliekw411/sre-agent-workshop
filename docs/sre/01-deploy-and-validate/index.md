@@ -137,6 +137,21 @@ the incidents.
    **Operations** table, look for recent `GET /orders`, `GET /health/ready`, and
    `GET /database` requests with counts above zero.
 
+    The Orders GUI sends different requests for different actions:
+
+    * Creating an order sends a `POST /orders` request.
+    * Selecting **View details** on an order in the table sends a
+      `GET /orders/{orderId}` request.
+    * Selecting **Update quantity** on an existing order sends a
+      `PUT /orders/{orderId}/quantity` request.
+
+    Create and update an order in the Orders GUI, then look for the matching
+    `POST` and `PUT` rows.
+
+    ![Recent orders table with the View details button highlighted](../../assets/images/01-deploy-and-validate/orders-gui-view-details.png)
+
+    ![Order details panel with the Update quantity button highlighted](../../assets/images/01-deploy-and-validate/orders-gui-update-quantity.png)
+
     ![Application Insights Performance page listing Orders API operations with request counts](../../assets/images/01-deploy-and-validate/appinsights-performance.png)
 
 5. In the left menu, under **Monitoring**, select **Logs**, close the query
