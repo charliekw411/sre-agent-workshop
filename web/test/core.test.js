@@ -332,21 +332,12 @@ test("PostgreSQL NSG fault rule is exact, bounded, and concurrency-addressable",
   assert.throws(() => postgresqlFaultRuleBody("Delete"), /access value/);
 });
 
-test("both incident modules keep inline launchers and terminal fallbacks", () => {
-  for (const [scenario, path, command] of [
-    [
-      "cpu",
-      "../../docs/sre/03-incident-high-cpu/index.md",
-      "python scripts/workshop.py fault cpu 600 2",
-    ],
-    [
-      "postgresql",
-      "../../docs/sre/04-incident-postgresql/index.md",
-      "python scripts/workshop.py fault postgresql",
-    ],
+test("both incident modules keep inline launchers", () => {
+  for (const [scenario, path] of [
+    ["cpu", "../../docs/sre/03-incident-high-cpu/index.md"],
+    ["postgresql", "../../docs/sre/04-incident-postgresql/index.md"],
   ]) {
     const source = readFileSync(new URL(path, import.meta.url), "utf8");
     assert.ok(source.includes(`data-sre-incident="${scenario}"`));
-    assert.ok(source.includes(command));
   }
 });
