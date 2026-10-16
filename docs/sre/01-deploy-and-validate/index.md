@@ -58,23 +58,6 @@ no public SSH or fault endpoint. The database is not publicly accessible.
 This is a disposable lab, not a production design: one VM, a database without
 high availability, and a VM identity that also administers the database.
 
-### Your evidence log
-
-Keep one table in your notes for the whole workshop. Later modules ask you to
-fill it in, so you do not need to note things down anywhere else. Times are UTC.
-
-| Item | CPU incident | PostgreSQL incident |
-| --- | --- | --- |
-| Fault started | | |
-| Alert fired | | |
-| Agent's first finding | | |
-| One agent claim you checked, and the result | | |
-| Reset | | |
-| Recovered | | |
-
-Two numbers come from it. **Detection delay** is the alert time minus the fault
-start. **Agent time** is the agent's first finding minus the alert time.
-
 ## Tasks
 
 ### Task 1: Sign in
@@ -128,7 +111,7 @@ the incidents.
 2. Select **Refresh orders**.
 3. Create an order with a made-up customer ID, open its details, and update its
    quantity.
-4. Save the order ID and quantity in your notes next to your evidence log.
+4. Save the order ID and quantity in your notes.
 
     <!-- SCREENSHOT: Assigned Orders GUI with healthy status cards and a synthetic order; redact account and resource identifiers -->
 
@@ -140,45 +123,34 @@ the incidents.
 
 1. Keep the Orders tab visible so its status checks continue. Refresh orders a
    few times.
-2. In your resource group, open **Application Insights > Performance**. Look for
-   recent `GET /orders`, `GET /health/ready`, and `GET /database` requests.
-3. Open your **Log Analytics workspace > Logs** and run this query. It counts
-   recent Orders API requests by name:
+2. In the [Azure portal](https://portal.azure.com/), type `application insight`
+   in the top search bar and select **Application Insights** under **Services**.
+
+    ![Azure portal top search bar with application insight typed and Application Insights listed under Services](../../assets/images/01-deploy-and-validate/appinsights-portal-search.png)
+
+3. Open the Application Insights resource in your resource group. Use the actual
+   name in your list; do not open another attendee's.
+
+    ![Application Insights list with one resource in the assigned resource group](../../assets/images/01-deploy-and-validate/appinsights-resource-list.png)
+
+4. In the left menu, under **Investigate**, select **Performance**. In the
+   **Operations** table, look for recent `GET /orders`, `GET /health/ready`, and
+   `GET /database` requests with counts above zero.
+
+    ![Application Insights Performance page listing Orders API operations with request counts](../../assets/images/01-deploy-and-validate/appinsights-performance.png)
+
+5. In the left menu, under **Monitoring**, select **Logs**, close the query
+   picker if it appears, and run this query. It counts recent Orders API requests
+   by name:
 
     ```kusto
-    AppRequests
-    | where TimeGenerated > ago(30m) and AppRoleName == "orders-api"
-    | summarize Requests = count() by Name
+    requests
+    | where timestamp > ago(30m) and cloud_RoleName == "orders-api"
+    | summarize Requests = count() by name
     ```
 
-4. Check that you see rows with counts. Monitoring can take several minutes to
+6. Check that you see rows with counts. Monitoring can take several minutes to
    catch up. Zero rows mean missing evidence, not a healthy service.
-
-    ??? info "Optional: check all five signals at once"
-        This query counts samples for VM heartbeat, VM CPU, API requests,
-        PostgreSQL calls, and database availability. Each row should have samples.
-
-        ```kusto
-        union
-          (Heartbeat
-           | where TimeGenerated > ago(30m)
-           | summarize Samples = count() | extend Signal = "VM heartbeat"),
-          (Perf
-           | where TimeGenerated > ago(30m) and CounterName == "% Processor Time"
-           | summarize Samples = count() | extend Signal = "VM CPU"),
-          (AppRequests
-           | where TimeGenerated > ago(30m) and AppRoleName == "orders-api"
-           | summarize Samples = count() | extend Signal = "API requests"),
-          (AppDependencies
-           | where TimeGenerated > ago(30m) and AppRoleName == "orders-api"
-           | where DependencyType == "PostgreSQL"
-           | summarize Samples = count() | extend Signal = "PostgreSQL calls"),
-          (AppAvailabilityResults
-           | where TimeGenerated > ago(30m) and AppRoleName == "orders-api"
-           | where Name == "orders-api-postgresql"
-           | summarize Samples = count() | extend Signal = "Database availability")
-        | project Signal, Samples
-        ```
 
 ### Task 5: Meet the agent
 
@@ -214,7 +186,6 @@ the incidents.
 * [ ] Recent request records are available.
 * [ ] The agent described the Orders app correctly and its health answer
       matched yours.
-* [ ] You have an evidence log ready in your notes.
 
 ## Quick check
 

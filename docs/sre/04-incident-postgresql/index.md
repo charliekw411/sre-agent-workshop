@@ -65,27 +65,38 @@ investigator; everything else stays with the main agent.
 
 2. Check that both plans are On, handle Sev1 and Sev2, and use **Review** mode.
    Do not remove either title filter.
-3. In **Monitor > Alerts > Alert rules**, filter to your resource group. Check
-   that `alert-orders-postgresql-connectivity` is enabled, is Sev1, and fires
-   when a PostgreSQL dependency fails within five minutes.
-4. Open your NSG's **Outbound security rules**. Find `PostgreSqlFaultInjection`
-   and check it against the table above. Do not change it.
+3. Open your resource group, search for `alert-orders-postgresql-connectivity`,
+   and open it. Alternatively, search for **Monitor** in the top bar and open
+   **Alerts > Alert rules**, filtered to your resource group. Check that the rule
+   is enabled, is Sev1, and fires when a PostgreSQL dependency fails within five
+   minutes.
+4. Check the network rule the fault will change. Do not edit it.
+    1. In the Azure portal, open your resource group and select the network
+       security group whose name starts with `nsg-orders-`.
+    2. In the left menu, under **Settings**, select **Outbound security rules**.
+    3. Select the rule named `PostgreSqlFaultInjection`.
+    4. Check that **Priority** is `100`, **Protocol** is `TCP`, **Source** is
+       the Orders subnet `10.240.0.0/27`, **Destination** is the PostgreSQL
+       subnet `10.240.0.32/27`, **Destination port ranges** is `5432`, and
+       **Action** is `Allow`.
+    5. Close the rule pane without saving. After you block access in Task 3, you
+       will return here and see **Action** change to `Deny`.
+
+    <!-- SCREENSHOT: Assigned NSG Outbound security rules list with PostgreSqlFaultInjection selected and Action Allow -->
 
 ### Task 2: Save a healthy order
 
-1. In the launcher below, select **Check fault status**. CPU and PostgreSQL
-   should be inactive, access should be `Allow`, and application connectivity
-   should be `ready`.
-2. In your Orders GUI, create a synthetic order with customer ID
-   `postgresql-incident`. Save its order ID, product, and quantity. You will
-   read the same order after recovery.
-3. Select **Refresh status** and **Refresh orders**. All three status cards and
-   the order list should work before injection.
+1. In your Orders GUI, select **Refresh status** and **Refresh orders**. All
+   three status cards should show healthy results: Liveness HTTP 200, Readiness
+   HTTP 200, and PostgreSQL Ready.
+2. Create a synthetic order with customer ID `postgresql-incident`. Save its
+   order ID, product, and quantity. You will read the same order after recovery.
+3. Select **Refresh orders** again. The order list should include your order
+   before injection.
 
 ### Task 3: Block the database connection
 
-1. Write the current time (UTC) in your evidence log as **Fault started**, then
-   select **Block PostgreSQL access**.
+1. Select **Block PostgreSQL access**.
 
     <div data-sre-incident="postgresql">
     <p><strong>JavaScript is required for the launcher.</strong> If it is unavailable, use the terminal alternative below after your facilitator has prepared it.</p>
@@ -103,7 +114,8 @@ investigator; everything else stays with the main agent.
     | Orders, `/orders` | Unavailable, HTTP 503 |
 
     !!! warning "Check before retrying"
-        If injection is interrupted, select **Check fault status** before retrying.
+        If injection is interrupted, check the Orders GUI status cards and the
+        launcher graph before retrying.
         Do not broaden the rule, stop PostgreSQL, or enable database public access.
         This fault stays in place until you reset it.
 
@@ -139,8 +151,7 @@ investigator; everything else stays with the main agent.
 4. Match the alert and timestamps even if the agent uses an existing thread.
    Allow for monitoring and alert delays; do not toggle the fault to make a
    chart update.
-5. Write the alert time as **Alert fired** and the time of the agent's first
-   finding as **Agent's first finding** in your evidence log.
+5. Note the time the alert fired and the time of the agent's first finding.
 
     <!-- SCREENSHOT: Failed PostgreSQL calls, fired alert, and agent investigation for the same assigned environment -->
 
@@ -156,15 +167,6 @@ investigator; everything else stays with the main agent.
     evidence for the cause and the smallest recovery step. Do not make changes.
     ```
 
-3. Ask how it worked:
-
-    ```text
-    Which workshop runbook or procedure did you follow for this alert, and which
-    steps did you complete? Say if you did not use one.
-    ```
-
-    The investigator has the workshop dependency-failure runbook as reference.
-
     ??? info "Optional: use the escalation and communications document"
         If your facilitator uploaded the knowledge files, ask:
 
@@ -177,15 +179,15 @@ investigator; everything else stays with the main agent.
         The company, contacts and templates are fictitious demo data. Check that
         the facts in the draft come from this incident's evidence, not from the
         document's worked example.
-4. Check its answer in the portal:
+3. Check its answer in the portal:
     * PostgreSQL still shows **Ready**, with public access disabled.
     * `PostgreSqlFaultInjection` shows `Deny`; its other settings are unchanged.
     * **Activity log** shows the rule write near the fault start.
     * The Orders GUI shows a running process but failed database-backed requests.
-5. Compare the explanation with the evidence. The deliberate API restart closes
-   old connections; the denied network rule causes the continuing outage. Write
-   one agent claim you checked, and the result, in your evidence log. Mark any
-   claim the evidence does not support.
+4. Compare the explanation with the evidence. The deliberate API restart closes
+   old connections; the denied network rule causes the continuing outage. Note
+   one agent claim you checked, and the result. Mark any claim the evidence does
+   not support.
 
 ??? info "Optional stretch: see the approval gate"
     The plans run in **Review** mode, so the agent must ask you before it changes
@@ -202,17 +204,15 @@ investigator; everything else stays with the main agent.
 
 ### Task 6: Restore the connection
 
-1. Write the current time as **Reset** in your evidence log. Then select
-   **Reset incident** and **Check fault status**. Expect PostgreSQL inactive,
-   access `Allow`, and application connectivity `ready`. CPU should remain
-   inactive.
-2. In the Orders GUI, refresh orders and status. Open the order you saved in
-   Task 2 and check its product and quantity. All status cards should recover.
+1. Select **Reset incident**. In the Orders GUI, select **Refresh status** and
+   **Refresh orders**. All three status cards should recover.
+2. Open the order you saved in Task 2 and check its product and quantity.
 3. Check that the latest database calls succeed and wait for the alert to
    resolve. Old failures remain visible in the chart; they are incident
    history.
-4. Write the time the app looked healthy again as **Recovered**.
-5. If reset fails, check status and use
+4. Open the network security group's **Outbound security rules** again and check
+   that `PostgreSqlFaultInjection` is back to `Allow`.
+5. If reset fails, check the Orders GUI and use
    [fault troubleshooting](../30-appendix/02-troubleshooting.md#fault-controls)
    or ask your facilitator. Leave no database fault active.
 
@@ -241,15 +241,16 @@ investigator has skills for both. In this workshop they only produce drafts.
     cause, the evidence, and the recovery step.
     ```
 
-2. Check each draft against your evidence log:
-    * The fault, alert, reset, and recovery times match yours.
+2. Check each draft against what you observed:
+    * The fault, alert, reset, and recovery times match the alert history and
+      your notes.
     * The cause and impact match what you verified in Task 5.
     * It contains no credentials, tokens, or real customer data.
 3. Confirm nothing was sent or created. The classroom setup binds no GitHub
    repository or Outlook recipient, so the agent should say what is missing.
    Publishing would need a separate request and your approval.
 4. Edit one sentence you would change before sharing the draft. Keep the drafts
-   with your evidence.
+   with your notes.
 
 ## Check before moving on
 
@@ -260,9 +261,6 @@ investigator has skills for both. In this workshop they only produce drafts.
 * [ ] You checked the agent's explanation against the rule and app.
 * [ ] Access is `Allow`, the app is healthy, and your order is unchanged.
 * [ ] You reviewed the follow-up drafts, and nothing was sent.
-* [ ] Your PostgreSQL column in the
-      [evidence log](../01-deploy-and-validate/index.md#your-evidence-log) is
-      filled in.
 
 ## Quick check
 

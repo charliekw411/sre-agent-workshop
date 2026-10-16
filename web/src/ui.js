@@ -565,20 +565,10 @@ export class IncidentLauncher {
 
     this.links = element("nav", "sre-launcher__links");
     this.links.setAttribute("aria-label", "Incident investigation links");
-    this.chartLink = element(
-      "a",
-      "",
-      this.scenario.id === "cpu"
-        ? "Open Azure Monitor chart"
-        : "Open Log Analytics workspace",
-    );
-    this.alertLink = element("a", "", "Open Azure Monitor alert");
     this.agentLink = element("a", "", "Open SRE Agent incidents");
-    for (const link of [this.chartLink, this.alertLink, this.agentLink]) {
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-    }
-    this.links.append(this.chartLink, this.alertLink, this.agentLink);
+    this.agentLink.target = "_blank";
+    this.agentLink.rel = "noopener noreferrer";
+    this.links.append(this.agentLink);
     setHidden(this.links, true);
 
     const safety = element(
@@ -677,8 +667,6 @@ export class IncidentLauncher {
         `${state.environment.virtualMachine.name} / ` +
         `${state.environment.postgresqlServer.name}.`;
       const links = this.app.incidentLinks(this.scenario.id);
-      this.chartLink.href = links.chart;
-      this.alertLink.href = links.alert;
       this.agentLink.href = links.investigation || "#";
       setHidden(this.agentLink, !links.investigation);
       setHidden(this.links, false);
