@@ -32,7 +32,10 @@ start_stage() {
 [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || { echo "Invalid source checksum."; exit 1; }
 
 start_stage cloud-init
-timeout 180 cloud-init status --wait
+# Exit 2 means cloud-init finished with recoverable warnings ("degraded done").
+cloud_init_code=0
+timeout 180 cloud-init status --wait || cloud_init_code=$?
+[[ "${cloud_init_code}" -eq 0 || "${cloud_init_code}" -eq 2 ]] || exit "${cloud_init_code}"
 
 start_stage packages
 if ! command -v dotnet >/dev/null || ! dotnet --list-sdks | grep --quiet '^8\.' \

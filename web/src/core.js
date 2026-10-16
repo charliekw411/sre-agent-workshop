@@ -7,7 +7,7 @@ const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const REQUEST_ID = /^[0-9a-f]{32}$/;
 const RESOURCE_ID =
   /^\/subscriptions\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/resourceGroups\/[a-z0-9._()-]+\/providers\/[a-z0-9.]+(?:\/[a-z0-9.]+\/[a-z0-9._()-]+)+$/i;
-const COHORT_RESOURCE_GROUP = /^rg-(?:0[1-9]|1\d|20)$/i;
+const COHORT_RESOURCE_GROUP = /^rg-(?:0[1-9]|[1-9]\d)$/i;
 const ORDERS_GUI_FQDN = /^orders-[a-z0-9]+\.[a-z0-9-]+\.cloudapp\.azure\.com$/i;
 
 export const POSTGRESQL_FAULT_RULE_NAME = "PostgreSqlFaultInjection";

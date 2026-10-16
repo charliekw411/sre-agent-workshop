@@ -37,6 +37,7 @@ SUBSCRIPTIONS = [
 def arguments(participants):
     return argparse.Namespace(
         participants=participants,
+        first_participant=1,
         user_prefix="sre-test-workshop-participant",
         user_domain="mngenvmcap115085.onmicrosoft.com",
         location="australiaeast",

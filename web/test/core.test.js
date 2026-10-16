@@ -93,13 +93,22 @@ test("environment discovery accepts tagged self-deployed and cohort resource gro
   assert.equal(
     isWorkshopResourceGroup(
       {
-        name: "rg-21",
+        name: "rg-25",
         tags: { "workshop-architecture": "single-vm-postgresql-v1" },
       },
       config,
     ),
-    false,
+    true,
   );
+  for (const name of ["rg-00", "rg-100"]) {
+    assert.equal(
+      isWorkshopResourceGroup(
+        { name, tags: { "workshop-architecture": "single-vm-postgresql-v1" } },
+        config,
+      ),
+      false,
+    );
+  }
 });
 
 test("environment inventory requires one bounded VM and workspace", () => {

@@ -20,7 +20,7 @@ import workshop
 
 
 ROOT = Path(__file__).resolve().parents[1]
-STATE_DIRECTORY = ROOT / ".workshop" / "cohort"
+STATE_DIRECTORY = Path(os.environ.get("COHORT_STATE_DIR") or ROOT / ".workshop" / "cohort")
 STATE_PATH = STATE_DIRECTORY / "state.json"
 ROSTER_PATH = STATE_DIRECTORY / "roster.json"
 LOG_DIRECTORY = STATE_DIRECTORY / "logs"
@@ -101,21 +101,23 @@ def resolve_subscriptions(requested):
     return subscriptions
 
 
-def participant_records(count, subscriptions, user_prefix, user_domain):
+def participant_records(count, subscriptions, user_prefix, user_domain, first=1):
     if not 1 <= count <= 20:
         raise CohortError("--participants must be between 1 and 20.")
+    if not 1 <= first <= 99:
+        raise CohortError("--first-participant must be between 1 and 99.")
     if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", user_prefix):
         raise CohortError("--user-prefix must contain only letters, digits, and internal hyphens.")
     if not re.fullmatch(
             r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", user_domain):
         raise CohortError("--user-domain is not a valid DNS domain.")
     result = []
-    for number in range(1, count + 1):
+    for number in range(first, first + count):
         participant = f"participant-{number:02d}"
         local_part = f"{user_prefix}-{number:02d}"
         if len(local_part) > 64:
             raise CohortError("Generated participant UPN local part exceeds 64 characters.")
-        subscription = subscriptions[(number - 1) % len(subscriptions)]
+        subscription = subscriptions[(number - first) % len(subscriptions)]
         result.append({
             "number": number,
             "participant": participant,
@@ -139,6 +141,7 @@ def participant_records(count, subscriptions, user_prefix, user_domain):
 def load_or_create_state(args, subscriptions):
     requested = participant_records(
         args.participants, subscriptions, args.user_prefix, args.user_domain,
+        args.first_participant,
     )
     if not STATE_PATH.exists():
         state = {
@@ -147,6 +150,7 @@ def load_or_create_state(args, subscriptions):
             "vmSize": args.vm_size,
             "userPrefix": args.user_prefix,
             "userDomain": args.user_domain,
+            "firstParticipant": args.first_participant,
             "subscriptions": subscriptions,
             "participants": requested,
             "createdUtc": datetime.now(timezone.utc).isoformat(),
@@ -160,9 +164,10 @@ def load_or_create_state(args, subscriptions):
         "vmSize": args.vm_size,
         "userPrefix": args.user_prefix,
         "userDomain": args.user_domain,
+        "firstParticipant": args.first_participant,
     }
     for key, value in expected.items():
-        if state.get(key) != value:
+        if state.get(key, 1 if key == "firstParticipant" else None) != value:
             raise CohortError(
                 f"The saved cohort uses {key}={state.get(key)!r}, not {value!r}."
             )
@@ -885,6 +890,7 @@ def parser():
     commands = root.add_subparsers(dest="command", required=True)
     deploy_parser = commands.add_parser("deploy")
     deploy_parser.add_argument("--participants", type=int, required=True)
+    deploy_parser.add_argument("--first-participant", type=int, default=1)
     deploy_parser.add_argument("--subscriptions", nargs="+", required=True)
     deploy_parser.add_argument("--user-prefix", required=True)
     deploy_parser.add_argument("--user-domain", required=True)
