@@ -89,6 +89,10 @@ INCIDENT_SOURCE_TOOLS = {"ReadFile", "ListDir", "FileSearch", "GrepSearch"}
 INCIDENT_GITHUB_TOOLS = {"FetchGithubIssue", "FetchGithubIssues", "CreateGithubIssue"}
 INCIDENT_EMAIL_TOOLS = {"ListOutlookEmails", "SendOutlookEmail"}
 INCIDENT_APPROVAL_TOOLS = {"CreateGithubIssue", "SendOutlookEmail"}
+# The autonomous investigator's only Azure write is the bounded NSG rule restore;
+# its instructions confine this tool to that one change.
+INCIDENT_WRITE_TOOLS = {"RunAzCliWriteCommands"}
+INCIDENT_MODE = "Autonomous"
 INCIDENT_READ_TOOLS = (
     HEALTH_CHECK_TOOLS | INCIDENT_SOURCE_TOOLS
     | (INCIDENT_GITHUB_TOOLS | INCIDENT_EMAIL_TOOLS) - INCIDENT_APPROVAL_TOOLS
@@ -1704,22 +1708,27 @@ def load_incident_definition(template=None):
         raise DeploymentError("Incident workflow and investigator names are fixed for safe ownership.")
     if trigger.get("type") != "incident-platform" or trigger.get("platform") != "azure-monitor":
         raise DeploymentError("The incident workflow requires the Azure Monitor incident platform.")
-    if trigger.get("action_mode") != "Review" or agent.get("action_mode") != "Review":
-        raise DeploymentError("The incident workflow must run in Review mode.")
+    if trigger.get("action_mode") != INCIDENT_MODE or agent.get("action_mode") != INCIDENT_MODE:
+        raise DeploymentError("The incident workflow must run in Autonomous mode.")
     if (filters.get("severities") != ["Sev1", "Sev2"]
             or filters.get("alert_rules") != list(INCIDENT_ALERT_RULES)
             or filters.get("merge_window_hours") != 3):
         raise DeploymentError("Incident filters must retain Sev1/Sev2, the Orders rules, and a three-hour merge window.")
     tools = health_check_mapping(agent.get("tools"), "custom_agent.tools")
-    if set(tools) != {"read_only", "ask_approval", "deny"}:
-        raise DeploymentError("Incident tools require read_only, ask_approval, and deny groups.")
+    if set(tools) != {"read_only", "autonomous_write", "ask_approval", "deny"}:
+        raise DeploymentError(
+            "Incident tools require read_only, autonomous_write, ask_approval, and deny groups.")
     read_only = health_check_tools(tools["read_only"], "Incident read-only tools")
+    write = health_check_tools(tools["autonomous_write"], "Incident autonomous write tools")
     ask = health_check_tools(tools["ask_approval"], "Incident approval tools")
     denied = health_check_tools(tools["deny"], "Incident denied tools")
-    if (set(read_only) != INCIDENT_READ_TOOLS or set(ask) != INCIDENT_APPROVAL_TOOLS
-            or not {"RunAzCliWriteCommands", "RunInTerminal", "Terminal"} <= set(denied)
-            or (set(read_only) | set(ask)) & set(denied)):
-        raise DeploymentError("The incident workflow may attach only approved read or separately approved follow-up tools.")
+    if (set(read_only) != INCIDENT_READ_TOOLS or set(write) != INCIDENT_WRITE_TOOLS
+            or set(ask) != INCIDENT_APPROVAL_TOOLS
+            or not {"RunInTerminal", "Terminal"} <= set(denied)
+            or (set(read_only) | set(write) | set(ask)) & set(denied)):
+        raise DeploymentError(
+            "The incident workflow may attach only approved read tools, the bounded Azure write tool, "
+            "or separately approved follow-up tools.")
     entries = agent.get("skills")
     if not isinstance(entries, list) or len(entries) != len(INCIDENT_SKILLS):
         raise DeploymentError("The incident workflow requires exactly its three namespaced skills.")
@@ -1750,7 +1759,7 @@ def load_incident_definition(template=None):
         "name": INCIDENT_WORKFLOW_NAME, "agent": INCIDENT_WORKFLOW_AGENT,
         "handoffDescription": health_check_text(agent.get("handoff_description"), "Incident handoff description"),
         "instructions": health_check_text(agent.get("instructions"), "Incident instructions"),
-        "tools": read_only, "approvalTools": ask, "skills": skills,
+        "tools": read_only, "writeTools": write, "approvalTools": ask, "skills": skills,
     }
 
 
@@ -1973,7 +1982,7 @@ def incident_capabilities(endpoint, token, settings):
 
 def incident_documents(definition, values, settings, capabilities, telemetry_tools, titles):
     effective = copy.deepcopy(definition)
-    permitted = set(HEALTH_CHECK_TOOLS)
+    permitted = set(HEALTH_CHECK_TOOLS) | INCIDENT_WRITE_TOOLS
     for capability, tools in (
         ("source", INCIDENT_SOURCE_TOOLS), ("github", INCIDENT_GITHUB_TOOLS),
         ("email", INCIDENT_EMAIL_TOOLS),
@@ -1981,7 +1990,8 @@ def incident_documents(definition, values, settings, capabilities, telemetry_too
         if capabilities[capability]["enabled"]:
             permitted.update(tools)
     effective["tools"] = [
-        tool for tool in [*definition["tools"], *definition["approvalTools"]] if tool in permitted
+        tool for tool in [*definition["tools"], *definition["writeTools"], *definition["approvalTools"]]
+        if tool in permitted
     ]
     bindings = incident_bindings(values, settings)
     bindings["capabilities"] = capabilities
@@ -1997,7 +2007,7 @@ def incident_documents(definition, values, settings, capabilities, telemetry_too
         "name": INCIDENT_WORKFLOW_NAME, "type": "IncidentFilter", "tags": [],
         "properties": {
             "incidentPlatform": "AzMonitor", "priorities": ["Sev1", "Sev2"],
-            "handlingAgent": INCIDENT_WORKFLOW_AGENT, "agentMode": "Review",
+            "handlingAgent": INCIDENT_WORKFLOW_AGENT, "agentMode": INCIDENT_MODE,
             "impactedService": "", "incidentType": "", "incidentTypes": [], "alertId": "",
             "handlingAgents": None, "owningTeamId": "", "owningTeamIds": [],
             "titleContains": INCIDENT_WORKFLOW_TITLE, "titleContainsAll": [],
@@ -2034,8 +2044,12 @@ def incident_component_matches(actual, expected):
             if not isinstance(current, str) or not health_check_skill_matches(actual, {"content": value}):
                 return False
         elif isinstance(value, str):
-            matches = health_check_text_matches(current, value) if key in {
-                "instructions", "handoffDescription", "description"} else current == value
+            if key in {"instructions", "handoffDescription", "description"}:
+                matches = health_check_text_matches(current, value)
+            elif key == "agentMode" and isinstance(current, str):
+                matches = current.casefold() == value.casefold()
+            else:
+                matches = current == value
             if not isinstance(current, str) or not matches:
                 return False
         elif isinstance(value, list):
@@ -2146,7 +2160,8 @@ def incident_read_state(values):
             raise DeploymentError("A saved incident component is invalid.")
     tools = state["documents"][INCIDENT_BASE + "agents/" + INCIDENT_WORKFLOW_AGENT]["properties"].get("tools")
     if (not isinstance(tools, list) or not all(isinstance(tool, str) for tool in tools)
-            or set(tools) - (INCIDENT_READ_TOOLS | INCIDENT_APPROVAL_TOOLS | set(HEALTH_CONNECTOR_TOOLS.values()))):
+            or set(tools) - (INCIDENT_READ_TOOLS | INCIDENT_WRITE_TOOLS | INCIDENT_APPROVAL_TOOLS
+                             | set(HEALTH_CONNECTOR_TOOLS.values()))):
         raise DeploymentError("Rollback state contains an unapproved incident tool.")
     return state
 
@@ -2250,7 +2265,7 @@ def incident_workflow_status(values):
         "routing": {"includedTitles": state["titles"],
                     "workflowTitleContains": INCIDENT_WORKFLOW_TITLE,
                     "originalTitleContains": state["partitionedPlan"]["properties"]["titleContains"],
-                    "priorities": ["Sev1", "Sev2"], "mode": "Review"},
+                    "priorities": ["Sev1", "Sev2"], "mode": INCIDENT_MODE},
         "components": components, "followups": capabilities,
         "problems": problems, "checkedUtc": datetime.now(timezone.utc).isoformat(),
     }
@@ -2368,7 +2383,8 @@ def ensure_incident_workflow(values, settings=None, attempts=8, retry_seconds=15
                     f"{error} Rollback is incomplete: {rollback_error}. Run incident-workflow "
                     "status and reconcile before retrying; do not enable an overlapping plan.") from error
             raise
-        progress("[incident-workflow] Installed both complementary Sev1/Sev2 Review plans.")
+        progress("[incident-workflow] Installed the autonomous PostgreSQL plan and the "
+                 "complementary Sev1/Sev2 Review plan.")
         for name, capability in capabilities.items():
             if not capability["enabled"]:
                 progress(f"[incident-workflow] {name}: {capability['reason']}")

@@ -52,8 +52,10 @@ Apply these rules to every incident in this resource group.
 
 ## Safety and authority
 
-1. The SRE Agent is read-only. Phrase remediation as a recommendation to an
-   authorized operator, never as an action already taken.
+1. The dedicated PostgreSQL investigator runs autonomously but is limited to one
+   Azure write: restoring `PostgreSqlFaultInjection` to its declared `Allow`
+   state. Every other agent stays read-only, and every other remediation is a
+   recommendation to an authorized operator, never an action already taken.
 2. Prefer restoring `PostgreSqlFaultInjection` to its declared `Allow` state.
    Do not recommend broad NSG removal, public PostgreSQL access, firewall
    exceptions, password credentials, disabled TLS verification, or excessive

@@ -65,7 +65,8 @@ The workshop uses one Azure region and one disposable resource group:
 * Log Analytics, workspace-based Application Insights, Azure Monitor Agent, a
   Data Collection Rule, and CPU, PostgreSQL dependency, and HTTP 5xx alerts.
 * A Low-access Azure SRE Agent with an enabled Sev1/Sev2 response plan in
-  Review mode. Its UAMI has Reader and Contributor on the workshop resource
+  Review mode (the optional PostgreSQL plan runs Autonomous; see below). Its
+  UAMI has Reader and Contributor on the workshop resource
   group, Log Analytics Reader on the workspace, and the required
   subscription-level Monitoring Contributor role for the Azure Monitor alert
   lifecycle.
@@ -175,7 +176,8 @@ contain a PostgreSQL password or access token.
 Monitoring Contributor is intentionally subscription-scoped because the SRE
 Agent alert scanner requires it. The agent's managed-resource configuration and
 Contributor access remain limited to its workshop resource group. Review mode
-still requires approval before Azure changes. `azd down` and the cohort cleanup
+still requires approval before Azure changes, except for the dedicated
+PostgreSQL plan, which runs Autonomous and may only restore the NSG rule. `azd down` and the cohort cleanup
 remove the subscription role assignment before deleting the resource group and
 its scoped assignments.
 
@@ -333,8 +335,10 @@ python scripts/workshop.py incident-workflow status
 It adds `orders-incident-workflow`, `orders-alert-investigator`, and three
 incident skills. The installer gives the original plan the scalar filter
 `alert-orders-h` for CPU and HTTP 5xx alerts, while the dedicated plan uses
-`postgresql`. Both remain enabled for Sev1/Sev2 in Review mode without
-overlapping.
+`postgresql`. Both remain enabled for Sev1/Sev2 without overlapping. The
+dedicated plan runs in **Autonomous** mode, and its investigator may make one
+Azure write: restoring `PostgreSqlFaultInjection` to `Allow`. The original plan
+stays in Review mode.
 
 The classroom installation leaves GitHub and Outlook destinations unbound, so
 issue and email follow-ups remain draft-only. See
