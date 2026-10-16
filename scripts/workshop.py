@@ -64,6 +64,11 @@ AGENT_DEFINITIONS = ROOT / "agent"
 HEALTH_CHECK_TEMPLATE = AGENT_DEFINITIONS / "scheduled-tasks" / "orders-daily-health-report.yaml"
 HEALTH_CHECK_EVIDENCE = "scheduled-health-check.json"
 HEALTH_CHECK_ACTIONS = ("install", "status", "remove")
+KNOWLEDGE_EVIDENCE = "knowledge-base.json"
+KNOWLEDGE_ACTIONS = ("install", "status", "remove")
+KNOWLEDGE_BASE = "/api/v1/AgentMemory/"
+KNOWLEDGE_NAME = re.compile(r"workshop-[a-z0-9]+(?:-[a-z0-9]+)*\.md")
+KNOWLEDGE_MAX_BYTES = 16 * 1024 * 1024
 # Only these tools can ever be attached to the health-check custom agent.
 HEALTH_CHECK_TOOLS = frozenset({
     "GetAzCliHelp", "RunAzCliReadCommands",
@@ -104,6 +109,7 @@ FRESH_ENVIRONMENT_EVIDENCE = (
     "vm-deployment.json",
     "sre-agent-configuration.json",
     HEALTH_CHECK_EVIDENCE,
+    KNOWLEDGE_EVIDENCE,
     INCIDENT_WORKFLOW_STATE,
     INCIDENT_WORKFLOW_EVIDENCE,
     "smoke.json",
@@ -907,9 +913,28 @@ def sre_agent_token(values):
     return token
 
 
+def sre_agent_multipart(fields, file_field, filename, content_type, content):
+    boundary = "workshop" + uuid.uuid4().hex
+    parts = []
+    for name, value in fields.items():
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'
+            .encode("utf-8"))
+    parts.append(
+        (f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; '
+         f'filename="{filename}"\r\nContent-Type: {content_type}\r\n\r\n').encode("utf-8"))
+    parts.append(content)
+    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
 def sre_agent_request(endpoint, token, path, method="GET", body=None, *,
-                      if_match=None, with_etag=False):
-    data = json.dumps(body).encode("utf-8") if body is not None else None
+                      if_match=None, with_etag=False, multipart=None, lenient=False):
+    content_type = "application/json"
+    if multipart is not None:
+        data, content_type = sre_agent_multipart(*multipart)
+    else:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
     request = urllib.request.Request(
         endpoint + path,
         data=data,
@@ -917,7 +942,7 @@ def sre_agent_request(endpoint, token, path, method="GET", body=None, *,
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
-            "Content-Type": "application/json",
+            "Content-Type": content_type,
         },
     )
     if if_match is not None:
@@ -929,7 +954,12 @@ def sre_agent_request(endpoint, token, path, method="GET", body=None, *,
             payload = response.read(128 * 1024 + 1)
             if len(payload) > 128 * 1024:
                 raise DeploymentError("Azure SRE Agent response exceeded the expected size.")
-            document = json.loads(payload) if payload else None
+            try:
+                document = json.loads(payload) if payload else None
+            except ValueError:
+                if not lenient:
+                    raise
+                document = None
             if not with_etag:
                 return document
             etags = response.headers.get_all("ETag") or []
@@ -1465,6 +1495,137 @@ def health_check(values, action):
         "install": ensure_health_check,
         "status": health_check_status,
         "remove": remove_health_check,
+    }[action](values)
+
+
+def load_knowledge_documents():
+    directory = AGENT_DEFINITIONS / "knowledge"
+    documents = {}
+    for path in sorted(directory.glob("*.md")):
+        if not KNOWLEDGE_NAME.fullmatch(path.name):
+            raise DeploymentError(
+                f"Knowledge file {path.name} must be named workshop-<words>.md in lower case.")
+        content = path.read_bytes()
+        if not content.strip() or len(content) > KNOWLEDGE_MAX_BYTES:
+            raise DeploymentError(f"Knowledge file {path.name} must be 1 byte to 16 MB.")
+        try:
+            content.decode("utf-8")
+        except UnicodeDecodeError:
+            raise DeploymentError(f"Knowledge file {path.name} must be UTF-8 text.") from None
+        documents[path.name] = content
+    if not documents:
+        raise DeploymentError(f"No workshop-*.md knowledge files found in {directory}.")
+    return documents
+
+
+def knowledge_listing(endpoint, token):
+    document = sre_agent_request(endpoint, token, KNOWLEDGE_BASE + "files")
+    entries = document.get("files", document.get("value")) if isinstance(document, dict) else document
+    if entries is None:
+        entries = []
+    if not isinstance(entries, list):
+        raise DeploymentError("Azure SRE Agent returned an unexpected knowledge listing.")
+    listing = {}
+    for entry in entries:
+        name = (entry.get("filename") or entry.get("name")) if isinstance(entry, dict) else None
+        if isinstance(name, str):
+            indexed = entry.get("isIndexed")
+            listing[name] = {
+                "indexed": indexed if isinstance(indexed, bool)
+                else entry.get("indexStatus") == "indexed",
+                "size": entry.get("fileSize", entry.get("size")),
+            }
+    return listing
+
+
+def knowledge_report(listing, documents, installed=True):
+    present = {name: listing[name] for name in documents if name in listing}
+    problems = []
+    if installed:
+        problems = [f"{name} is not in the knowledge base." for name in documents if name not in present]
+    return {
+        "documents": {name: present.get(name) for name in documents},
+        "installed": len(present) == len(documents),
+        "indexed": bool(present) and all(item["indexed"] for item in present.values()),
+        "problems": problems,
+        "checkedUtc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def ensure_knowledge(values, attempts=8, retry_seconds=15):
+    documents = load_knowledge_documents()
+    endpoint = sre_agent_url(values)
+    token = sre_agent_token(values)
+
+    def install():
+        for name, content in documents.items():
+            sre_agent_request(
+                endpoint, token, KNOWLEDGE_BASE + "upload", "POST", lenient=True,
+                multipart=({"triggerIndexing": "true"}, "files", name, "text/plain", content))
+        report = knowledge_report(knowledge_listing(endpoint, token), documents)
+        if report["problems"]:
+            raise SreAgentRequestError(
+                "The knowledge files are not visible yet: " + " ".join(report["problems"]),
+                retryable=True,
+            )
+        return report
+
+    result = {"ok": True, **retry_sre_agent("Knowledge install", install, attempts, retry_seconds,
+                                            prefix="knowledge")}
+    write_json(state_directory(values) / KNOWLEDGE_EVIDENCE, result)
+    progress(f"[knowledge] Uploaded {len(documents)} files: {', '.join(documents)}.")
+    if not result["indexed"]:
+        progress("[knowledge] Indexing continues in the background; run status to check.")
+    return result
+
+
+def knowledge_status(values):
+    documents = load_knowledge_documents()
+    listing = knowledge_listing(sre_agent_url(values), sre_agent_token(values))
+    return knowledge_report(listing, documents, installed=False)
+
+
+def remove_knowledge(values, attempts=8, retry_seconds=15):
+    documents = load_knowledge_documents()
+    endpoint = sre_agent_url(values)
+    token = sre_agent_token(values)
+
+    def remove():
+        for name in documents:
+            try:
+                sre_agent_request(
+                    endpoint, token,
+                    KNOWLEDGE_BASE + "document/" + urllib.parse.quote(name, safe=""),
+                    "DELETE", lenient=True)
+            except SreAgentRequestError as error:
+                if error.status != 404:
+                    raise
+        report = knowledge_report(knowledge_listing(endpoint, token), documents, installed=False)
+        if any(report["documents"].values()):
+            raise SreAgentRequestError(
+                "The knowledge files are still listed after deletion. If this persists, delete "
+                "them from the agent's Knowledge settings page.",
+                retryable=True,
+            )
+        return report
+
+    retry_sre_agent("Knowledge removal", remove, attempts, retry_seconds, prefix="knowledge")
+    (state_directory(values) / KNOWLEDGE_EVIDENCE).unlink(missing_ok=True)
+    progress(f"[knowledge] Removed {len(documents)} files.")
+    return {
+        "ok": True,
+        "removed": list(documents),
+        "checkedUtc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def knowledge(values, action):
+    if action not in KNOWLEDGE_ACTIONS:
+        raise DeploymentError("Knowledge action must be install, status, or remove.")
+    return {
+        "install": ensure_knowledge,
+        "status": knowledge_status,
+        "remove": remove_knowledge,
     }[action](values)
 
 
@@ -2740,7 +2901,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=(
         "validate", "prepare", "preprovision", "postprovision", "predown", "export",
-        "smoke", "inspect", "fault", "health-check", "incident-workflow", "telemetry", "verify-restart",
+        "smoke", "inspect", "fault", "health-check", "knowledge", "incident-workflow", "telemetry",
+        "verify-restart",
         "benchmark",
     ))
     parser.add_argument("arguments", nargs="*")
@@ -2768,6 +2930,10 @@ def main():
         if len(args.arguments) > 1:
             raise DeploymentError("health-check accepts one action: install, status, or remove.")
         result = health_check(values, args.arguments[0] if args.arguments else "status")
+    elif args.command == "knowledge":
+        if len(args.arguments) > 1:
+            raise DeploymentError("knowledge accepts one action: install, status, or remove.")
+        result = knowledge(values, args.arguments[0] if args.arguments else "status")
     elif args.command == "incident-workflow":
         if len(args.arguments) > 1:
             raise DeploymentError("incident-workflow accepts one action: install, status, or remove.")

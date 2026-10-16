@@ -148,6 +148,11 @@ them:
   safety boundary of a run.
 * `health-check remove` deletes only the health-check task, custom agent, and
   skill. It never changes the response plan or the connectors.
+* The knowledge base is opt-in through `knowledge install`; `azd up` never
+  installs it. Files in `agent/knowledge/` must be named `workshop-<words>.md`,
+  UTF-8 and LF, and `knowledge remove` deletes only those names. Knowledge is
+  retrieved by search, so keep mandatory safety rules in skills and task
+  prompts, and keep the documents labelled as fictitious demo data.
 * The health-check schedule is a UTC cron expression. `0 21 * * 0-4` is Monday
   to Friday at 09:00 New Zealand Standard Time (UTC+12).
 * The Module 05 Live Report prompt was validated against a live agent on the

@@ -185,6 +185,9 @@ site and its authenticated Azure controls.
 | `python scripts/workshop.py health-check install` | Optional setup: write and read back the Module 04 skill, custom agent, and task; needs configuration access |
 | `python scripts/workshop.py health-check status` | Read the same items without writing; report `installed`, `matchesDefinition`, and any `problems` |
 | `python scripts/workshop.py health-check remove` | Optional owner cleanup: delete only the health-check task, custom agent, and skill |
+| `python scripts/workshop.py knowledge install` | Optional setup: upload the `agent/knowledge/workshop-*.md` files to the agent's Knowledge settings and read the list back |
+| `python scripts/workshop.py knowledge status` | Read the file list without writing; report `installed`, `indexed`, and any `problems` |
+| `python scripts/workshop.py knowledge remove` | Optional owner cleanup: delete only the uploaded workshop knowledge files |
 | `python scripts/workshop.py export` | Rebuild generated shell exports |
 
 The wrapper scripts call the same implementation:

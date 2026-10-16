@@ -340,6 +340,21 @@ The classroom installation leaves GitHub and Outlook destinations unbound, so
 issue and email follow-ups remain draft-only. See
 [Incident Workflow Setup and Routing](docs/sre/30-appendix/09-incident-workflow.md).
 
+## Knowledge base documents
+
+Two static Markdown files under `agent/knowledge/` hold fictitious Contoso
+Retail demo data: SLIs, SLOs and baselines, and escalation and communications
+templates. A facilitator uploads them to the agent's Knowledge settings:
+
+```bash
+python scripts/workshop.py knowledge install
+python scripts/workshop.py knowledge status
+python scripts/workshop.py knowledge remove
+```
+
+`remove` deletes only the files in `agent/knowledge/`. See
+[Knowledge Base Setup](docs/sre/30-appendix/10-knowledge-base.md).
+
 ## Scheduled health check and Live Report
 
 The participant class also uses the proactive scenario. A facilitator installs

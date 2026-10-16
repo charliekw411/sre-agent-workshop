@@ -1782,6 +1782,208 @@ class HealthCheckTests(unittest.TestCase):
         self.assertIn("scheduled-health-check.json", workshop.FRESH_ENVIRONMENT_EVIDENCE)
 
 
+class FakeKnowledgeBase:
+    """In-memory stand-in for the SRE Agent AgentMemory data plane."""
+
+    def __init__(self, hidden_reads=0, others=()):
+        self.files = {name: {"filename": name, "fileSize": 10, "isIndexed": True} for name in others}
+        self.hidden_reads = hidden_reads
+        self.uploads = []
+        self.deletes = []
+
+    def request(self, endpoint, token, path, method="GET", body=None, **options):
+        base = workshop.KNOWLEDGE_BASE
+        if method == "POST" and path == base + "upload":
+            fields, field, name, content_type, content = options["multipart"]
+            self.uploads.append((fields, field, name, content_type, content))
+            self.files[name] = {"filename": name, "fileSize": len(content), "isIndexed": False}
+            return None
+        if method == "GET" and path == base + "files":
+            if self.hidden_reads:
+                self.hidden_reads -= 1
+                return {"files": [item for item in self.files.values()
+                                  if not item["filename"].startswith("workshop-")]}
+            return {"files": list(self.files.values())}
+        if method == "DELETE" and path.startswith(base + "document/"):
+            name = path.rsplit("/", 1)[1]
+            self.deletes.append(name)
+            if self.files.pop(name, None) is None:
+                raise workshop.SreAgentRequestError("missing", status=404, retryable=True)
+            return None
+        raise AssertionError(f"Unexpected request {method} {path}")
+
+
+class KnowledgeTests(unittest.TestCase):
+    DOCUMENTS = ("workshop-escalation-and-comms.md", "workshop-slo-and-baselines.md")
+
+    @contextmanager
+    def patched(self, fake):
+        with tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
+            stack.enter_context(patch.object(workshop, "ROOT", Path(temporary)))
+            stack.enter_context(patch.object(
+                workshop, "sre_agent_token", return_value="secret-token", autospec=True))
+            stack.enter_context(patch.object(
+                workshop, "sre_agent_request", side_effect=fake.request))
+            self.sleep = stack.enter_context(patch.object(workshop.time, "sleep"))
+            yield Path(temporary)
+
+    def test_repository_files_are_fictitious_lf_text_the_upload_accepts(self):
+        documents = workshop.load_knowledge_documents()
+        self.assertEqual(tuple(documents), self.DOCUMENTS)
+        for name, content in documents.items():
+            with self.subTest(name):
+                self.assertNotIn(b"\r", content)
+                self.assertIn(b"Fictitious demo data", content)
+                self.assertNotRegex(content.decode("utf-8"), r"@(?!example\.com)[\w.-]+\.\w+")
+
+    def test_rejects_bad_names_empty_and_oversized_files(self):
+        for name, content, message in (
+            ("notes.md", b"text", "must be named"),
+            ("workshop-Upper.md", b"text", "must be named"),
+            ("workshop-empty.md", b"  \n", "1 byte to 16 MB"),
+            ("workshop-binary.md", b"\xff\xfe", "UTF-8"),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary) / "knowledge"
+                directory.mkdir()
+                (directory / name).write_bytes(content)
+                with patch.object(workshop, "AGENT_DEFINITIONS", Path(temporary)):
+                    with self.assertRaisesRegex(workshop.DeploymentError, message):
+                        workshop.load_knowledge_documents()
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(workshop, "AGENT_DEFINITIONS", Path(temporary)):
+            (Path(temporary) / "knowledge").mkdir()
+            with self.assertRaisesRegex(workshop.DeploymentError, "No workshop"):
+                workshop.load_knowledge_documents()
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(workshop, "AGENT_DEFINITIONS", Path(temporary)), \
+                patch.object(workshop, "KNOWLEDGE_MAX_BYTES", 3):
+            (Path(temporary) / "knowledge").mkdir()
+            (Path(temporary) / "knowledge" / "workshop-big.md").write_bytes(b"abcd")
+            with self.assertRaisesRegex(workshop.DeploymentError, "1 byte to 16 MB"):
+                workshop.load_knowledge_documents()
+
+    def test_multipart_body_carries_the_files_part_and_indexing_flag(self):
+        body, content_type = workshop.sre_agent_multipart(
+            {"triggerIndexing": "true"}, "files", "workshop-a.md", "text/plain", b"# A\n")
+        boundary = content_type.split("boundary=")[1]
+        self.assertTrue(content_type.startswith("multipart/form-data; "))
+        text = body.decode("utf-8")
+        self.assertIn('name="triggerIndexing"\r\n\r\ntrue\r\n', text)
+        self.assertIn(
+            'name="files"; filename="workshop-a.md"\r\nContent-Type: text/plain\r\n\r\n# A\n\r\n',
+            text)
+        self.assertTrue(text.endswith(f"--{boundary}--\r\n"))
+
+    def test_install_uploads_every_file_and_records_evidence(self):
+        fake = FakeKnowledgeBase(others=("customer-notes.md",))
+        with self.patched(fake) as root:
+            result = workshop.ensure_knowledge(HEALTH_VALUES, attempts=1)
+            evidence = json.loads(
+                (root / ".workshop" / HEALTH_VALUES["AZURE_ENV_NAME"] / "knowledge-base.json")
+                .read_text(encoding="utf-8"))
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["installed"])
+        self.assertFalse(result["indexed"])
+        self.assertEqual(tuple(result["documents"]), self.DOCUMENTS)
+        self.assertEqual(evidence["documents"].keys(), result["documents"].keys())
+        self.assertEqual([upload[2] for upload in fake.uploads], list(self.DOCUMENTS))
+        for fields, field, _, content_type, _ in fake.uploads:
+            self.assertEqual((fields, field, content_type),
+                             ({"triggerIndexing": "true"}, "files", "text/plain"))
+        self.assertIn("customer-notes.md", fake.files)
+
+    def test_install_is_idempotent_and_waits_for_the_listing(self):
+        fake = FakeKnowledgeBase(hidden_reads=1)
+        with self.patched(fake):
+            result = workshop.ensure_knowledge(HEALTH_VALUES, attempts=2, retry_seconds=1)
+            again = workshop.ensure_knowledge(HEALTH_VALUES, attempts=1)
+        self.assertTrue(result["installed"] and again["installed"])
+        self.assertEqual(len(fake.files), 2)
+        self.assertEqual(len(fake.uploads), 6)
+        self.sleep.assert_called_once_with(1)
+
+    def test_install_fails_when_files_never_appear(self):
+        fake = FakeKnowledgeBase(hidden_reads=5)
+        with self.patched(fake):
+            with self.assertRaisesRegex(workshop.SreAgentRequestError, "not visible yet"):
+                workshop.ensure_knowledge(HEALTH_VALUES, attempts=1)
+
+    def test_status_is_read_only(self):
+        fake = FakeKnowledgeBase()
+        with self.patched(fake):
+            absent = workshop.knowledge_status(HEALTH_VALUES)
+            workshop.ensure_knowledge(HEALTH_VALUES, attempts=1)
+            fake.uploads.clear()
+            present = workshop.knowledge_status(HEALTH_VALUES)
+        self.assertFalse(absent["installed"])
+        self.assertTrue(present["installed"])
+        self.assertEqual(fake.uploads, [])
+        self.assertEqual(fake.deletes, [])
+
+    def test_remove_deletes_only_the_repository_files(self):
+        fake = FakeKnowledgeBase(others=("customer-notes.md", "workshop-someone-elses.md"))
+        with self.patched(fake) as root:
+            workshop.ensure_knowledge(HEALTH_VALUES, attempts=1)
+            result = workshop.remove_knowledge(HEALTH_VALUES, attempts=1)
+            evidence = root / ".workshop" / HEALTH_VALUES["AZURE_ENV_NAME"] / "knowledge-base.json"
+            self.assertFalse(evidence.exists())
+        self.assertEqual(result["removed"], list(self.DOCUMENTS))
+        self.assertEqual(sorted(fake.deletes), list(self.DOCUMENTS))
+        self.assertEqual(sorted(fake.files), ["customer-notes.md", "workshop-someone-elses.md"])
+
+    def test_remove_tolerates_files_that_are_already_gone(self):
+        fake = FakeKnowledgeBase()
+        with self.patched(fake):
+            result = workshop.remove_knowledge(HEALTH_VALUES, attempts=1)
+        self.assertTrue(result["ok"])
+
+    def test_remove_reports_files_that_stay_listed(self):
+        fake = FakeKnowledgeBase()
+        stuck = {name: {"indexed": True, "size": 1} for name in self.DOCUMENTS}
+        with self.patched(fake), patch.object(workshop, "knowledge_listing", return_value=stuck):
+            with self.assertRaisesRegex(workshop.SreAgentRequestError, "still listed"):
+                workshop.remove_knowledge(HEALTH_VALUES, attempts=1)
+
+    def test_each_action_runs_exactly_one_handler(self):
+        names = ("ensure_knowledge", "knowledge_status", "remove_knowledge")
+        for action, expected in zip(workshop.KNOWLEDGE_ACTIONS, names):
+            with self.subTest(action), ExitStack() as stack:
+                handlers = {
+                    name: stack.enter_context(
+                        patch.object(workshop, name, return_value={"handler": name}))
+                    for name in names
+                }
+                self.assertEqual(workshop.knowledge(HEALTH_VALUES, action), {"handler": expected})
+                for name, handler in handlers.items():
+                    if name == expected:
+                        handler.assert_called_once_with(HEALTH_VALUES)
+                    else:
+                        handler.assert_not_called()
+
+    def test_command_accepts_exactly_one_known_action(self):
+        with self.assertRaisesRegex(workshop.DeploymentError, "install, status, or remove"):
+            workshop.knowledge(HEALTH_VALUES, "bogus")
+
+        def run(*arguments):
+            with patch.object(sys, "argv", ["workshop.py", "knowledge", *arguments]), \
+                    patch.object(workshop, "environment", return_value=HEALTH_VALUES), \
+                    patch.object(workshop, "knowledge", return_value={"ok": True}) as handler, \
+                    redirect_stdout(io.StringIO()):
+                workshop.main()
+            return handler
+
+        run().assert_called_once_with(HEALTH_VALUES, "status")
+        run("install").assert_called_once_with(HEALTH_VALUES, "install")
+        with self.assertRaisesRegex(workshop.DeploymentError, "one action"):
+            run("install", "remove")
+
+    def test_azd_up_does_not_install_knowledge(self):
+        self.assertNotIn("knowledge", inspect.getsource(workshop.postprovision))
+        self.assertNotIn("knowledge", (workshop.ROOT / "azure.yaml").read_text(encoding="utf-8"))
+        self.assertIn("knowledge-base.json", workshop.FRESH_ENVIRONMENT_EVIDENCE)
+
+
 class HealthCheckDocumentationTests(unittest.TestCase):
     REPO = HERE.parent
     MODULE = ("docs", "sre", "05-scheduled-health-check", "index.md")

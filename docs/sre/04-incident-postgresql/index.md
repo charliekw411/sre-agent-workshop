@@ -164,6 +164,19 @@ investigator; everything else stays with the main agent.
     ```
 
     The investigator has the workshop dependency-failure runbook as reference.
+
+    ??? info "Optional: use the escalation and communications document"
+        If your facilitator uploaded the knowledge files, ask:
+
+        ```text
+        Using our escalation and communications document, give the severity,
+        who to notify, and a draft stakeholder email for this incident. Do not
+        send or create anything.
+        ```
+
+        The company, contacts and templates are fictitious demo data. Check that
+        the facts in the draft come from this incident's evidence, not from the
+        document's worked example.
 4. Check its answer in the portal:
     * PostgreSQL still shows **Ready**, with public access disabled.
     * `PostgreSqlFaultInjection` shows `Deny`; its other settings are unchanged.
