@@ -40,10 +40,10 @@ deletes the Azure resources after the workshop; you do not delete them.
 3. Open the [PostgreSQL exercise](../04-incident-postgresql/index.md#task-6-confirm-recovery)
    and select **Reset incident** in its launcher if the agent has not already
    restored access.
-4. Select **Check fault status**. Confirm CPU and PostgreSQL are inactive,
-   PostgreSQL access is `Allow`, and application connectivity is `ready`.
-   Each button resets only its own scenario, so check both. PostgreSQL does not
-   reset automatically when you close the browser.
+4. In the Orders GUI, select **Refresh status** and **Refresh orders**. Confirm
+   Liveness, Readiness, and PostgreSQL are all healthy and the CPU graph is back
+   in its healthy range. Each button resets only its own scenario, so check both.
+   PostgreSQL does not reset automatically when you close the browser.
 5. If a reset fails, keep the environment available and tell your facilitator
    which fault remains active. Do not delete resources to hide the failure.
 
@@ -71,8 +71,8 @@ deletes the Azure resources after the workshop; you do not delete them.
 
 ### Task 2: Draft the postmortem
 
-1. Check that your [evidence log](../01-deploy-and-validate/index.md#your-evidence-log)
-   has fault, alert, first finding, reset, and recovery times for both incidents.
+1. Find the alert times in each alert rule's **History** and the first-finding
+   times in the agent threads for both incidents.
 2. In a new agent chat, ask:
 
     ```text
@@ -83,9 +83,9 @@ deletes the Azure resources after the workshop; you do not delete them.
     not verify. Do not make changes.
     ```
 
-3. Check the postmortem against your evidence log. Fix any wrong time, cause, or
-   impact, and delete anything unsupported.
-4. Calculate from your log, for each incident:
+3. Check the postmortem against the alert history and your notes. Fix any wrong
+   time, cause, or impact, and delete anything unsupported.
+4. Calculate for each incident:
     * **Detection delay:** alert fired minus fault started.
     * **Agent time:** agent's first finding minus alert fired.
 5. Write two sentences: what the agent did faster or better than you, and what
@@ -97,7 +97,6 @@ deletes the Azure resources after the workshop; you do not delete them.
    that your saved order is readable and all status cards are healthy.
 2. Keep only useful evidence:
     * A healthy Orders screenshot and CPU/failure charts showing recovery
-    * Your completed evidence log
     * The agent findings you checked, including claims you corrected
     * The PostgreSQL alert's matched plan and dedicated-investigator evidence
     * Your corrected postmortem and the follow-up drafts from Module 03

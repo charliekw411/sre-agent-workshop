@@ -232,7 +232,7 @@ create from a prompt and then reload.
     in parentheses. Do not make changes.
     ```
 
-2. Check its times against your evidence log. Note any mismatch.
+2. Check its times against the alert history and agent threads. Note any mismatch.
 3. If your facilitator uploaded the knowledge files, ask which status the SLO
    document would give each area right now and how the results compare with the
    documented baselines. Treat the baselines as fictitious demo values.
