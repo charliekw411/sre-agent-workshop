@@ -864,8 +864,9 @@ propagation can take several minutes.
 ### The agent proposes but does not execute reset
 
 That is expected for the prepared custom agents. The UAMI has Contributor on
-the participant resource group, but Review mode requires approval and the
-custom agents use read-only tool lists. Monitoring Contributor supports the
+the participant resource group. Review mode requires approval and most custom
+agents use read-only tool lists; only the PostgreSQL investigator runs
+Autonomous with one bounded NSG write. Monitoring Contributor supports the
 alert lifecycle. A human uses a separate authenticated identity:
 
 ```bash

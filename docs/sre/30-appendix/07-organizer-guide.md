@@ -57,7 +57,8 @@ For every environment:
 1. Check the agent UAMI has Contributor on its participant resource group and
    Monitoring Contributor at subscription scope. `azd up` creates both.
 2. Check `workshop-sev1-sev2-review` exists, uses Sev1/Sev2 and Review, and has
-   no overlapping catch-all plan.
+   no overlapping catch-all plan. `orders-incident-workflow` is the one plan that
+   uses Autonomous mode.
 3. Use [incident-workflow setup](09-incident-workflow.md) to install Igor's
    [#35](https://github.com/charliekw411/sre-agent-workshop/pull/35). Confirm
    PostgreSQL titles use `orders-incident-workflow` and CPU/HTTP 5xx titles
@@ -71,7 +72,7 @@ For every environment:
    Administrator role. Rehearse the Module 04 prompt in a test environment so
    you know what to expect.
 6. Keep Contributor limited to the matching participant resource group and
-   keep Review mode enabled. Never grant the UAMI subscription Contributor or
+   keep Review mode enabled on every plan except `orders-incident-workflow`. Never grant the UAMI subscription Contributor or
    Owner.
 
 Prepare one shared [site Azure connection](05-site-azure-connection.md) for
@@ -97,6 +98,9 @@ Use an actual participant account, not just your organizer account, to check:
 * CPU alerts use the original response plan, while PostgreSQL alerts use
   `orders-incident-workflow` and `orders-alert-investigator`.
 * CPU and PostgreSQL controls, recovery, and investigation links work.
+* After a PostgreSQL rehearsal, wait for the alert to resolve (about 15 minutes)
+  and delete the rehearsal incident thread before class. An alert repeating
+  within the three-hour merge window joins the earlier thread and keeps its mode.
 * A participant account can create **Orders Service Health** from the Module 04
   prompt and approve its read-only query tool.
 

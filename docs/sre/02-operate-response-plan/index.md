@@ -37,8 +37,9 @@ exercise:
 | `workshop-sev1-sev2-review` | `alert-orders-h` | Coordinating or main agent |
 | `orders-incident-workflow` | `postgresql` | `orders-alert-investigator` |
 
-Both plans stay On for Sev1 and Sev2 in Review mode. Keep the two scalar title
-filters: they ensure one alert matches only one plan.
+The original plan stays On for Sev1 and Sev2 in Review mode. The PostgreSQL plan
+runs in **Autonomous** mode (see [Module 03](../04-incident-postgresql/index.md)).
+Keep the two scalar title filters: they ensure one alert matches only one plan.
 
 An alert can update an existing investigation instead of starting a new
 thread. Match the alert, resource, and timestamps before deciding that an
@@ -95,13 +96,13 @@ for the full permission table.
 | Component | Name | Purpose |
 | --- | --- | --- |
 | Response plan | `orders-incident-workflow` | Routes the PostgreSQL connectivity alert |
-| Custom agent | `orders-alert-investigator` | Runs the evidence-backed RCA in Review mode |
+| Custom agent | `orders-alert-investigator` | Runs the evidence-backed RCA and autonomously restores the NSG rule |
 | Skill | `orders-azure-monitor-rca` | Defines the investigation and validation procedure |
 | Skills | `orders-github-issue-followup`, `orders-email-incident-followup` | Produce optional, separately approved follow-up drafts |
 
 The classroom setup leaves GitHub and Outlook destinations unbound. The agent
-can investigate with read-only Azure and telemetry tools, while issue and email
-follow-ups remain draft-only.
+can investigate with Azure and telemetry tools and, in Autonomous mode, restore
+the PostgreSQL NSG rule, while issue and email follow-ups remain draft-only.
 
 ## Proactive configuration
 

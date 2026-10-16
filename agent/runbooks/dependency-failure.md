@@ -96,19 +96,23 @@ AppExceptions
 
 ## Mitigation
 
-For the workshop NSG incident, recommend that an authorized operator run:
+For the workshop NSG incident, the autonomous investigator restores only the
+named TCP 5432 rule to `Allow` with one `az network nsg rule update`, reads it
+back, and verifies recovery from fresh telemetry. It records the prior rule
+state as the rollback and changes nothing else. No `orders-api` restart is
+needed: the `Deny` delivery already drained established connections, so new
+connections succeed once the rule is `Allow`. Telemetry recovery can lag the
+rule change; wait and re-query before reporting.
+
+If the investigator cannot confirm recovery, an authorized operator can run:
 
 ```text
 python scripts/workshop.py fault reset-postgresql
 ```
 
-The action must restore only the named TCP 5432 rule to `Allow`, read it back,
-restart only `orders-api`, and verify liveness, readiness, and an order read
-before reporting success. It must not change the independent CPU fault. This
-recycle is required because an NSG update does not terminate existing TCP
-flows. Verify mitigation using the command result plus new successful
-PostgreSQL dependencies and availability. Telemetry recovery can lag the
-data-plane verification.
+That command restores the rule, restarts only `orders-api`, and verifies
+liveness, readiness, and an order read. It must not change the independent CPU
+fault.
 
 If evidence identifies another boundary, restore that boundary's declared
 configuration rather than broadening access. Do not stop, recreate, or expose

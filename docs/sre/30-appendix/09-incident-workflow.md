@@ -26,16 +26,27 @@ the configuration; the facilitator installs it before class.
 | GitHub follow-up skill | `orders-github-issue-followup` |
 | Email follow-up skill | `orders-email-incident-followup` |
 
-Both response plans remain enabled in Review mode with complementary scalar
-title filters:
+The two response plans remain enabled with complementary scalar title filters.
+The dedicated PostgreSQL plan runs in **Autonomous** mode; the original plan
+stays in **Review** mode:
 
-| Plan | Title contains | Handles |
-| --- | --- | --- |
-| `workshop-sev1-sev2-review` | `alert-orders-h` | CPU and HTTP 5xx alerts |
-| `orders-incident-workflow` | `postgresql` | PostgreSQL connectivity alerts |
+| Plan | Title contains | Handles | Mode |
+| --- | --- | --- | --- |
+| `workshop-sev1-sev2-review` | `alert-orders-h` | CPU and HTTP 5xx alerts | Review |
+| `orders-incident-workflow` | `postgresql` | PostgreSQL connectivity alerts | Autonomous |
 
 This partition prevents one alert from matching both plans. Do not remove
 either title filter or add another unrestricted Sev1/Sev2 plan.
+
+### What the autonomous investigator may change
+
+The investigator's UAMI already has Contributor on the workshop resource group,
+so it acts without approval. Its tools and instructions limit it to one Azure
+write: `az network nsg rule update` setting `PostgreSqlFaultInjection` to
+`Allow`. It cannot run a terminal, VM Run Command, or restart anything. It
+verifies by reading the rule back and checking fresh Log Analytics telemetry.
+GitHub and email follow-ups stay draft-only and approval-gated. The agent-level
+default remains Review, so every other plan and task is unchanged.
 
 ## Install one environment
 
@@ -63,9 +74,10 @@ A healthy result reports:
 }
 ```
 
-Check the two plans in the portal and confirm that both are On, use Sev1 and
-Sev2, and use Review mode. Confirm the three skills and the custom agent are
-present.
+Check the two plans in the portal and confirm that both are On and use Sev1 and
+Sev2. `orders-incident-workflow` must use **Autonomous** mode and
+`workshop-sev1-sev2-review` must use **Review** mode. Confirm the three skills
+and the custom agent are present.
 
 ## External follow-ups
 

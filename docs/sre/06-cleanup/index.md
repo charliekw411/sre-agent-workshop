@@ -37,8 +37,9 @@ deletes the Azure resources after the workshop; you do not delete them.
 1. Stop any terminal load generator you chose to run with ++ctrl+c++.
 2. Open the [CPU exercise](../03-incident-high-cpu/index.md#task-6-reset-cpu)
    and select **Reset incident** in its launcher.
-3. Open the [PostgreSQL exercise](../04-incident-postgresql/index.md#task-6-restore-the-connection)
-   and select **Reset incident** in its launcher.
+3. Open the [PostgreSQL exercise](../04-incident-postgresql/index.md#task-6-confirm-recovery)
+   and select **Reset incident** in its launcher if the agent has not already
+   restored access.
 4. In the Orders GUI, select **Refresh status** and **Refresh orders**. Confirm
    Liveness, Readiness, and PostgreSQL are all healthy and the CPU graph is back
    in its healthy range. Each button resets only its own scenario, so check both.

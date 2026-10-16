@@ -2220,6 +2220,8 @@ class IncidentWorkflowTests(unittest.TestCase):
         self.assertNotIn("APP_FAULT_ENABLED", content)
         self.assertEqual(set(definition["tools"]), workshop.INCIDENT_READ_TOOLS)
         self.assertEqual(set(definition["approvalTools"]), workshop.INCIDENT_APPROVAL_TOOLS)
+        self.assertEqual(set(definition["writeTools"]), workshop.INCIDENT_WRITE_TOOLS)
+        self.assertIn("--access Allow", definition["instructions"])
         _, agent = workshop.skill_agent_documents(definition)
         self.assertNotIn("agentType", agent["properties"])
         self.assertIs(agent["properties"]["enableVanillaMode"], False)
@@ -2227,7 +2229,13 @@ class IncidentWorkflowTests(unittest.TestCase):
     def test_unsafe_definitions_fail_before_writes(self):
         cases = [
             lambda d: d["custom_agent"]["tools"]["read_only"].append("RunAzCliWriteCommands"),
+            lambda d: d["custom_agent"]["tools"]["autonomous_write"].append("CreateFile"),
             lambda d: d["custom_agent"]["tools"]["ask_approval"].append("CreateFile"),
+            lambda d: d["custom_agent"]["tools"]["autonomous_write"].clear() or
+            d["custom_agent"]["tools"]["autonomous_write"].append("RunInTerminal"),
+            lambda d: d["custom_agent"]["tools"]["deny"].remove("Terminal"),
+            lambda d: d["trigger"].update(action_mode="Review"),
+            lambda d: d["custom_agent"].update(action_mode="Review"),
             lambda d: d["custom_agent"].update(action_mode="Automatic"),
             lambda d: d["trigger"]["filters"].update(severities=["Sev1"]),
             lambda d: d["trigger"]["filters"].update(alert_rules=["flu"]),
@@ -2290,12 +2298,15 @@ class IncidentWorkflowTests(unittest.TestCase):
             self.assertTrue(fake.resources[INCIDENT_PLAN_PATH]["properties"]["isEnabled"])
             for path in (RESPONSE_PLAN_PATH, INCIDENT_PLAN_PATH):
                 self.assertEqual(fake.resources[path]["properties"]["priorities"], ["Sev1", "Sev2"])
-                self.assertEqual(fake.resources[path]["properties"]["agentMode"], "Review")
+            self.assertEqual(fake.resources[RESPONSE_PLAN_PATH]["properties"]["agentMode"], "Review")
+            self.assertEqual(fake.resources[INCIDENT_PLAN_PATH]["properties"]["agentMode"], "Autonomous")
+            self.assertEqual(result["routing"]["mode"], "Autonomous")
             self.assertEqual(len(result["routing"]["includedTitles"]), 2)
             self.assertEqual(result["routing"]["workflowTitleContains"], "postgresql")
             self.assertEqual(result["routing"]["originalTitleContains"], "alert-orders-h")
             tools = fake.resources[INCIDENT_AGENT_PATH]["properties"]["tools"]
-            self.assertEqual(set(tools), workshop.HEALTH_CHECK_TOOLS | set(workshop.HEALTH_CONNECTOR_TOOLS.values()))
+            self.assertEqual(set(tools), workshop.HEALTH_CHECK_TOOLS | workshop.INCIDENT_WRITE_TOOLS
+                             | set(workshop.HEALTH_CONNECTOR_TOOLS.values()))
             self.assertFalse(result["followups"]["github"]["enabled"])
             self.assertFalse(result["followups"]["email"]["enabled"])
             self.auth.assert_called_with(INCIDENT_VALUES)
@@ -2344,7 +2355,8 @@ class IncidentWorkflowTests(unittest.TestCase):
             self.assertIn(SOURCE_REPOSITORY, text)
             self.assertIn(INCIDENT_REPOSITORY, text)
             self.assertIn("operator@example.invalid", text)
-            self.assertNotIn("RunAzCliWriteCommands", tools)
+            self.assertIn("RunAzCliWriteCommands", tools)
+            self.assertNotIn("RunInTerminal", tools)
             self.assertEqual(fake.resources[INCIDENT_AGENT_PATH]["properties"]["mcpTools"], [])
             self.assertEqual(fake.resources[INCIDENT_AGENT_PATH]["properties"]["connectors"], [])
             self.install()

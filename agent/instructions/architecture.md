@@ -113,11 +113,13 @@ normal VM CPU does not prove PostgreSQL is healthy.
 
 The SRE Agent UAMI has Reader and Contributor on this workshop resource group,
 Log Analytics Reader on the workspace, and Monitoring Contributor on the
-subscription. The agent remains in Low-access Review mode, and the prepared
-custom agents use read-only tool lists. Do not run VM commands, edit the NSG,
-restart resources, change PostgreSQL configuration, or close alerts without an
-explicit reviewed action. Never claim remediation was performed unless the
-approved tool call succeeded.
+subscription. The agent remains in Low-access Review mode by default. The CPU and
+HTTP 5xx response plan and the prepared health-check agent stay Review and
+read-only. Only the dedicated PostgreSQL response plan runs Autonomous, and its
+investigator may make exactly one Azure write: restoring `PostgreSqlFaultInjection`
+to `Allow`. Do not run VM commands, edit any other resource, restart resources,
+change PostgreSQL configuration, or close alerts without an explicit reviewed
+action. Never claim remediation was performed unless the tool call succeeded.
 
 The attendee has agent-scoped administration to operate the response plan. That
 role does not increase the runtime's infrastructure privileges.
