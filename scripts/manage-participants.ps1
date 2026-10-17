@@ -4,8 +4,9 @@
 .SYNOPSIS
 Manage workshop users, TAP handouts, scoped access, or cleanup.
 .DESCRIPTION
-TAPs default to 60 minutes and single use. Entra controls pass length and permitted
-lifetimes; the script does not change tenant policy.
+TAPs default to 60 minutes and single use; pass -MultiUse on issue-taps to allow reuse
+(the tenant TAP policy must not require one-time use). Entra controls pass length and
+permitted lifetimes; the script does not change tenant policy.
 show-taps decrypts saved handoffs locally for paper distribution. Use a private
 terminal/printer without transcription or logging; its output contains plaintext TAPs.
 .EXAMPLE
@@ -35,12 +36,13 @@ param(
     [string]$RosterPath,
     [string]$EnvironmentMap,
     [guid]$SubscriptionId = [guid]::Empty,
-    [ValidateRange(10, 480)]
+    [ValidateRange(10, 43200)]
     [int]$LifetimeMinutes = 60,
     [string[]]$Alias,
     [string]$StateDirectory,
     [string]$RosterOutput,
     [switch]$ReplaceTaps,
+    [switch]$MultiUse,
     [switch]$RetryUnconfirmedGroupCreation,
     [switch]$NoAccessValidated,
     [switch]$ConfirmCleanup
@@ -602,7 +604,7 @@ function Remove-WorkshopHandoff {
 }
 
 function Issue-WorkshopTap {
-    param($State, [string]$Directory, [string]$Key, [int]$Minutes, [switch]$Replace)
+    param($State, [string]$Directory, [string]$Key, [int]$Minutes, [switch]$Replace, [switch]$MultiUse)
     $participant = $State.participants[$Key]
     Assert-Workshop (-not $participant.cleanupStarted) 'This participant is being cleaned up; TAP issuance is blocked.'
     Assert-WorkshopUser (Get-WorkshopUser $participant.userId) $State $participant.username
@@ -617,7 +619,7 @@ function Issue-WorkshopTap {
             Assert-Workshop (Test-Path -LiteralPath $path) `
                 'A TAP already exists but its secure handoff is missing. Use -ReplaceTaps explicitly to revoke it and issue a new one.'
             $handoff = Import-Clixml -LiteralPath $path
-            Assert-Workshop ($old.isUsableOnce -eq $true -and $old.methodUsabilityReason -in @('EnabledByPolicy', 'NotYetValid') -and
+            Assert-Workshop ($old.isUsableOnce -eq (-not $MultiUse) -and $old.methodUsabilityReason -in @('EnabledByPolicy', 'NotYetValid') -and
                 ($old.isUsable -eq $true -or $old.methodUsabilityReason -eq 'NotYetValid') -and
                 $handoff.methodId -eq $old.id -and $handoff.credential -is [pscredential] -and
                 $handoff.credential.UserName -eq $participant.username) `
@@ -631,9 +633,9 @@ function Issue-WorkshopTap {
     $participant.status = 'tap-pending'
     Save-WorkshopState $State $Directory
     $tap = Invoke-WorkshopGraph -Method POST -Path "/users/$($participant.userId)/authentication/temporaryAccessPassMethods" `
-        -Body @{ lifetimeInMinutes = $Minutes; isUsableOnce = $true }
+        -Body @{ lifetimeInMinutes = $Minutes; isUsableOnce = (-not $MultiUse) }
     try {
-        Assert-Workshop ((Test-WorkshopGuid $tap.id) -and $tap.isUsableOnce -eq $true -and
+        Assert-Workshop ((Test-WorkshopGuid $tap.id) -and $tap.isUsableOnce -eq (-not $MultiUse) -and
             $tap.lifetimeInMinutes -eq $Minutes -and $tap.temporaryAccessPass -is [string] -and
             $tap.temporaryAccessPass.Length -in 8..48 -and $tap.temporaryAccessPass -notmatch '[\x00-\x1f\x7f]') `
             'Graph returned an unexpected TAP response; secure handoff was not accepted.'
@@ -914,19 +916,20 @@ function Invoke-WorkshopParticipants {
         [string]$Action = 'prepare', [guid]$TenantId = [guid]::Empty, [string]$Cohort = 'workshop', [string]$Domain,
         [int]$Count = 1, [string]$RosterPath, [string]$EnvironmentMap, [guid]$SubscriptionId = [guid]::Empty,
         [int]$LifetimeMinutes = 60, [string[]]$Alias, [string]$StateDirectory, [string]$RosterOutput,
-        [switch]$ReplaceTaps, [switch]$RetryUnconfirmedGroupCreation, [switch]$NoAccessValidated, [switch]$ConfirmCleanup
+        [switch]$ReplaceTaps, [switch]$MultiUse, [switch]$RetryUnconfirmedGroupCreation, [switch]$NoAccessValidated, [switch]$ConfirmCleanup
     )
     Assert-Workshop ($TenantId -ne [guid]::Empty) '-TenantId must identify the workshop tenant.'
     Assert-Workshop ($Cohort -cmatch '^[a-z0-9][a-z0-9-]{0,23}$') 'Cohort must be a lowercase name of up to 24 letters, digits, or hyphens.'
     Assert-Workshop ($Action -in @('prepare', 'issue-taps', 'show-taps', 'assign-access', 'cleanup')) 'Choose prepare, issue-taps, show-taps, assign-access, or cleanup.'
     Assert-Workshop (-not ($RosterPath -and $PSBoundParameters.ContainsKey('Count'))) 'Use either -Count or -RosterPath, not both.'
     Assert-Workshop (-not $ReplaceTaps -or $Action -eq 'issue-taps') '-ReplaceTaps applies only to issue-taps.'
+    Assert-Workshop (-not $MultiUse -or $Action -eq 'issue-taps') '-MultiUse applies only to issue-taps.'
     Assert-Workshop (-not $RetryUnconfirmedGroupCreation -or $Action -eq 'prepare') '-RetryUnconfirmedGroupCreation applies only to prepare after an organizer verifies the missing group in Entra.'
     Assert-Workshop (-not $Alias -or $Action -ne 'prepare') 'Use a roster or count for prepare; -Alias selects already-prepared participants.'
     if ($Action -in @('issue-taps', 'show-taps')) {
         Assert-Workshop $IsWindows 'TAP issuance and viewing require Windows DPAPI; no plaintext storage fallback is supported.'
     }
-    if ($Action -eq 'issue-taps') { Assert-Workshop ($LifetimeMinutes -in 10..480) 'TAP lifetime must be 10 to 480 minutes.' }
+    if ($Action -eq 'issue-taps') { Assert-Workshop ($LifetimeMinutes -in 10..43200) 'TAP lifetime must be 10 to 43200 minutes.' }
     if ($Action -eq 'assign-access') {
         Assert-Workshop $NoAccessValidated 'First validate TAP sign-in and no workshop access with the pilot account, then pass -NoAccessValidated.'
         Assert-Workshop ($SubscriptionId -ne [guid]::Empty) 'assign-access requires -SubscriptionId.'
@@ -1027,7 +1030,7 @@ function Invoke-WorkshopParticipants {
                         Prepare-WorkshopParticipant $state $directory @($rows | Where-Object Alias -eq $key)[0]
                         $status = 'prepared'
                     }
-                    'issue-taps' { $status = Issue-WorkshopTap $state $directory $key $LifetimeMinutes -Replace:$ReplaceTaps }
+                    'issue-taps' { $status = Issue-WorkshopTap $state $directory $key $LifetimeMinutes -Replace:$ReplaceTaps -MultiUse:$MultiUse }
                     'assign-access' {
                         $participant = $state.participants[$key]
                         $row = @($map | Where-Object Alias -eq $key)[0]

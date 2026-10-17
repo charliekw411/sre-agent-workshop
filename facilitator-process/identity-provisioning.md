@@ -14,7 +14,7 @@ Run these commands from the repository root in PowerShell 7.4+ on Windows, using
 
 2. **Enable TAP for the group in [Entra](https://entra.microsoft.com).** Open **Authentication methods > Policies > Temporary Access Pass**, enable it, and include only **SRE Workshop Participants (test-workshop)** with no exclusions.
 
-   Keep the defaults: minimum **1 hour**, maximum **8 hours**, default **1 hour**, length **8 characters**. Policy-wide one-time use is optional; the script makes each TAP single-use. **Save** the policy.
+   Keep the defaults: minimum **1 hour**, maximum **8 hours**, default **1 hour**, length **8 characters**. Policy-wide one-time use is optional; the script makes each TAP single-use unless you pass `-MultiUse` (see step 4). **Save** the policy.
 
 3. **Run the second phase to issue TAPs, then export and print.** Run shortly before participant sign-in. Confirm `20 succeeded; 0 failed` after `issue-taps`, then export using the same Windows account and machine.
 
@@ -51,5 +51,7 @@ Run these commands from the repository root in PowerShell 7.4+ on Windows, using
    ```
 
    `-ReplaceTaps` immediately invalidates each participant's previous TAP. If an unused TAP only needs to be printed again, run `show-taps` without replacing it.
+
+   **Multi-use TAPs.** Add `-MultiUse` to `issue-taps` to allow a TAP to be used more than once. This needs **Require one-time use: No** in the TAP policy. A multi-use TAP stays valid for its whole lifetime, so share it privately.
 
 **The text files contain plaintext secrets.** Use a private terminal without logging and a trusted printer; delete each file after printing. Printing does not consume TAPs or reset their validity window. Check each expiration: rerunning `issue-taps` without `-ReplaceTaps` retains usable passes rather than resetting their timer.
