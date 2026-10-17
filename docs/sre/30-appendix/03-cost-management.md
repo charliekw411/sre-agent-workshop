@@ -15,9 +15,8 @@ estimated_reading_time: 4
 Resetting an incident restores the app. It does not stop Azure charges.
 Closing the browser does not stop the VM, database, or scheduled task.
 
-In [Module 05](../06-cleanup/index.md), reset both faults, turn off your
-recurring task, and save your evidence. Leave resource deletion to your
-facilitator.
+In [Module 05](../06-cleanup/index.md), turn off your recurring task. Leave
+resource deletion to your facilitator.
 
 ## What costs money
 

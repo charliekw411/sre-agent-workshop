@@ -31,7 +31,7 @@ Start with the participant checks below. Use only your assigned environment.
 
 For an interrupted fault, select **Check fault status** before another action.
 CPU expires automatically; the PostgreSQL deny remains until reset. Use
-[Module 05](../06-cleanup/index.md) to reset both.
+**Reset incident** in the CPU and PostgreSQL launchers to reset both.
 
 ## Organizer and owner diagnostics
 

@@ -33,9 +33,10 @@ Use the recovered environment from Module 03.
 
 ### What you configure
 
-Your facilitator has prepared the `proactive-health-check` skill and the
-`health-report-investigator` custom agent. You add or update the scheduled task
-and generate the **Orders Service Health** Live Report yourself. The
+Your facilitator has prepared the `proactive-health-check` skill, the
+`health-report-investigator` custom agent, and the `orders-daily-health-report`
+scheduled task. You check the task and run it, then generate the
+**Orders Service Health** Live Report yourself. The
 [setup guide](../30-appendix/08-proactive-extensions.md) describes how
 facilitators install the prepared components.
 
@@ -51,51 +52,59 @@ create from a prompt and then reload.
    reset. Keep that tab visible so requests continue while you work.
 2. Open your SRE Agent's **Connectors** page. Its Log Analytics and Application
    Insights connectors should be healthy and refer to your environment.
-3. Read the [health-check skill](https://github.com/charliekw411/sre-agent-workshop/blob/main/agent/skills/proactive-health-check/SKILL.md).
+
+    ![Connectors page listing the app-insights and log-analytics connectors as Connected](../../assets/images/05-scheduled-health-check/connectors-telemetry.png)
+
+3. Read the health-check skill. Either click the
+   [health-check skill](https://github.com/charliekw411/sre-agent-workshop/blob/main/agent/skills/proactive-health-check/SKILL.md)
+   link to view it in the lab repo, or open it in the SRE portal itself: go to
+   **Builder > Agent Canvas**, switch to **Table view**, open the **Skills** tab,
+   select `proactive-health-check`, and select the pencil icon to see its full
+   text. Close it without saving.
    Focus on its **Procedure**, **Status rubric**, and **Safety** sections:
     * It checks the API, PostgreSQL, and VM.
     * It separates the current state from earlier incidents.
     * No samples means **Unknown**, not **Healthy**.
     * It reports findings without changing resources.
+
+    ![Agent Canvas in Table view with the Skills tab and the proactive-health-check skill details, with the edit pencil highlighted](../../assets/images/05-scheduled-health-check/skills-table-view-proactive-health-check.png)
+
+    ![The Edit Skill dialog showing the proactive-health-check SKILL.md](../../assets/images/05-scheduled-health-check/edit-skill-proactive-health-check.png)
+
 4. If the skill, custom agent, or connectors are missing, ask your facilitator
    before continuing.
 
-### Task 2: Deploy the task configuration
+### Task 2: Check the task configuration
 
-1. Open **Scheduled tasks**. If `orders-daily-health-report` exists, edit it.
-   Otherwise select **Create task**.
-2. Use these settings:
+1. In the left menu, open **Builder > Agent Canvas**, switch to **Table view**,
+   and open the **Scheduled tasks** tab.
+2. Open `orders-daily-health-report` and verify its settings against these
+   screenshots. This task was pre-deployed for your environment, so you don't
+   need to create it. Close it without saving.
 
-    | Field | Value |
-    | --- | --- |
-    | Task name | `orders-daily-health-report` |
-    | Frequency | Custom cron |
-    | Cron expression, UTC | `0 21 * * 0-4` |
-    | Response custom agent | `health-report-investigator` |
-    | Agent autonomy level | Review |
-    | Status | On |
+    ![Scheduled tasks tab with the orders-daily-health-report task On](../../assets/images/05-scheduled-health-check/scheduled-tasks-table-view.png)
 
-3. Paste this task prompt:
+    ![The Edit scheduled task dialog for orders-daily-health-report, using the health-report-investigator subagent and cron 0 21 * * 0-4](../../assets/images/05-scheduled-health-check/edit-scheduled-task.png)
 
-    ```text
-    Run the scheduled Orders service health check for the last 24 hours using
-    the proactive-health-check skill. Write every timestamp in UTC with New
-    Zealand time in parentheses. Return the findings in this thread and make no
-    changes.
-    ```
+3. Run it now. In the left menu, open **Automation**, select the checkbox next to
+   `orders-daily-health-report`, and select **Run now**.
 
-4. Select **Create task** or **Save**, then reopen it and verify the settings.
-   Do not leave the portal's default autonomy mode selected.
-5. Note the schedule: it runs on weekdays at 09:00 New Zealand Standard Time,
-   or 10:00 during daylight time. You will run it now rather than wait for that
-   schedule. Each run uses Azure Agent Units; turn the task off when you finish.
+    ![Automation page with Automation, the orders-daily-health-report checkbox, and Run now highlighted](../../assets/images/05-scheduled-health-check/automation-run-now.png)
 
-    <!-- SCREENSHOT: orders-daily-health-report configured for the assigned agent, with Review mode and its next run -->
+    Then open **Search Threads** and select the most recent thread labeled
+    **scheduled task**.
 
-### Task 3: Run it and watch the agent
+    ![Left menu with Search Threads highlighted](../../assets/images/05-scheduled-health-check/automation-search-threads.png)
 
-1. Select **Run task now** and open the resulting thread. Watch the agent gather
-   records, chart them, and write its findings.
+4. Note the schedule: it runs on weekdays at 09:00 New Zealand Standard Time,
+   or 10:00 during daylight time. You are running it now rather than waiting for
+   that schedule. Each run uses Azure Agent Units; turn the task off when you
+   finish.
+
+### Task 3: Watch the agent
+
+1. In the scheduled task thread, watch the agent gather records, chart them, and
+   write its findings.
 2. Check that the thread includes:
     * The queried environment and time window
     * Current API, PostgreSQL, and VM status
@@ -113,8 +122,23 @@ create from a prompt and then reload.
 
 ### Task 4: Check the findings yourself
 
-1. Open your Log Analytics workspace's **Logs**. Check recent requests.
-   P95 is the duration within which 95 percent of requests finished:
+1. Navigate back to the Azure portal and search for **Log Analytics** in your
+   resource group. Open the workspace.
+
+    ![Resource group Resources list filtered by log analytics, showing the Log Analytics workspace](../../assets/images/05-scheduled-health-check/log-analytics-search-in-resource-group.png)
+
+    In the left menu, select **Logs**. As in Module 01, close the **Queries hub**
+    pop-up, turn **Agent** off, and set the mode dropdown to **KQL mode**.
+
+    ![Queries hub pop-up with the close button highlighted](../../assets/images/01-deploy-and-validate/appinsights-logs-queries-hub-close.png)
+
+    ![Logs page with the Agent toggle highlighted](../../assets/images/01-deploy-and-validate/appinsights-logs-agent-toggle.png)
+
+    ![Logs query editor in KQL mode with the mode dropdown highlighted](../../assets/images/01-deploy-and-validate/appinsights-logs-kql-mode.png)
+
+    Paste this query and select **Run**. For the last 15 minutes, it shows how
+    many requests the Orders API handled, how many failed, and the P95 response
+    time (95 percent of requests were faster than this):
 
     ```kusto
     AppRequests
@@ -126,37 +150,41 @@ create from a prompt and then reload.
       by Name
     ```
 
-2. Check recent database calls. This is a second independent view:
+    ![Logs results for the requests query, showing requests, failures, and P95 by operation](../../assets/images/05-scheduled-health-check/log-analytics-requests-query.png)
 
-    ??? info "Database calls query"
-        ```kusto
-        AppDependencies
-        | where TimeGenerated > ago(15m) and AppRoleName == "orders-api"
-        | where DependencyType == "PostgreSQL"
-        | extend Samples = tolong(coalesce(ItemCount, 1))
-        | summarize Calls = sum(Samples), Failed = sumif(Samples, Success == false)
-        ```
+2. Now check the database calls. Replace the query with this one. It shows how
+   many calls the Orders API made to PostgreSQL in the last 15 minutes, and how
+   many failed:
 
-3. Compare the current status with these results, the newest CPU samples, and
-   the Orders GUI. Compare earlier incident claims with your saved alerts and
-   timestamps. The task's full-window totals cover 24 hours; do not compare
-   those totals with a 15-minute query.
-4. Check the time window. Failures still inside the last 15 minutes can affect
-   the reported status even after a reset. A recovered incident outside that
-   window should not be described as active.
-5. Save three claims as **Supported**, **Partly supported**, or
-   **Unsupported**. If a claim lacks evidence, ask the agent for its query and
-   time window.
+    ```kusto
+    AppDependencies
+    | where TimeGenerated > ago(15m) and AppRoleName == "orders-api"
+    | where DependencyType == "PostgreSQL"
+    | extend Samples = tolong(coalesce(ItemCount, 1))
+    | summarize Calls = sum(Samples), Failed = sumif(Samples, Success == false)
+    ```
+
+    ![Logs results for the database calls query, showing the number of calls and failures](../../assets/images/05-scheduled-health-check/log-analytics-database-calls-query.png)
+
+3. Compare these results with the agent's report. Do the request and database
+   numbers look right? The agent's report covers the last 24 hours, so its
+   totals will be higher than these 15-minute results.
 
 ### Task 5: Generate and check the Live Report
 
 1. Keep recent Orders traffic running by refreshing orders and status in the
    Orders GUI.
-2. Open **Live Reports** and check whether **Orders Service Health** already
-   exists. If it does, open it and select **Open authoring thread** instead of
-   creating a copy. Otherwise select **+ New report**.
-3. This request tells the agent what the report must show and which status
-   rules to use. Paste it into the authoring thread:
+2. In the left menu, open **Live reports**, then select **+ New report**. There
+   is no existing report, so you create it.
+
+    ![Live reports page with Live reports in the left menu and New report highlighted](../../assets/images/05-scheduled-health-check/live-reports-new-report.png)
+
+3. The agent opens an authoring thread and asks for a **Report focus** with 3
+   options. Don't pick one. Paste this custom prompt into the response box
+   instead and send it. It tells the agent what the report must show and which
+   status rules to use:
+
+    ![Report focus question with the custom response box highlighted](../../assets/images/05-scheduled-health-check/live-report-focus-custom-prompt.png)
 
     ```text
     Build a Live Report called "Orders Service Health" from the agent's
@@ -198,24 +226,11 @@ create from a prompt and then reload.
    approve only the read-only workspace query tool (`system-mcp-monitor` in
    testing). Decline any request to change Azure resources, send messages, or
    create issues.
-5. Wait for the saved version, open the report, and select **Reload**.
-6. Check its API, PostgreSQL, database availability, and VM panels:
-    * Status agrees with the latest records, not just the whole-day totals.
-    * **No data** is not shown as **Healthy**.
-    * Recovered incidents are history, not a current outage.
-    * The time zone is labeled. New Zealand times should not carry a `+00:00`
-      suffix.
-7. Compare each status with its table and the queries from
-   [Task 4](#task-4-check-the-findings-yourself). A generated report can show
-   the wrong status even when its table has data.
-8. If a panel disagrees with the logs, record the difference. Describe the
-   specific defect in the authoring thread, ask the agent to test the change,
-   and check the new version. Do not create another report to fix the existing
-   one.
-9. If Live Reports is unavailable, record the limitation and keep the log
-   queries as your view. Do not report the exercise as completed.
+5. Wait for the agent to finish. Once it's done, the report shows up on the
+   **Live reports** page. Open it and compare what it shows with the data in the
+   Orders GUI.
 
-    <!-- SCREENSHOT: Generated Orders Service Health report after Reload, with status and data for the assigned environment -->
+    ![Live reports page showing the Orders Service Health report](../../assets/images/05-scheduled-health-check/live-reports-orders-service-health.png)
 
 !!! note "Report creation uses agent units"
     Creating and updating a report uses agent units. Update the existing
@@ -223,7 +238,9 @@ create from a prompt and then reload.
 
 ### Task 6: Compare the exercises
 
-1. In a new chat, ask the agent to compare your incidents:
+1. Select **New chat** in the left menu. Ask the agent to compare your incidents:
+
+    ![Azure SRE Agent home page with New chat and the question box highlighted](../../assets/images/05-scheduled-health-check/sre-agent-new-chat.png)
 
     ```text
     Compare today's high-CPU incident and the PostgreSQL connectivity incident on
@@ -233,9 +250,16 @@ create from a prompt and then reload.
     ```
 
 2. Check its times against the alert history and agent threads. Note any mismatch.
-3. If your facilitator uploaded the knowledge files, ask which status the SLO
-   document would give each area right now and how the results compare with the
-   documented baselines. Treat the baselines as fictitious demo values.
+3. Now ask a follow-up about the SLO document:
+
+    ```text
+    Using our SLO and baselines document, what status would you give the Orders
+    API, PostgreSQL, and VM right now? How do the current results compare with
+    the documented baselines? Name the document you used.
+    ```
+
+    The baselines are fictitious demo values.
+
 4. Use your notes to answer:
     1. Which found each fault sooner: the alert or the next scheduled run?
     2. What could the health check report that a single alert misses?

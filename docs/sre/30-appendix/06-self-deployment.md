@@ -121,8 +121,9 @@ permissions read-only. Then follow the five browser modules.
 
 ## Delete your own environment
 
-Save your evidence and complete the reset steps in
-[Module 05](../06-cleanup/index.md) first. Select your own local azd environment
+Save any evidence you want and reset both faults with **Reset incident** in the
+CPU and PostgreSQL launchers first, then follow
+[Module 05](../06-cleanup/index.md). Select your own local azd environment
 and regenerate its exports as described in
 [terminal setup](01-variables.md#terminal-setup-for-an-assigned-environment).
 

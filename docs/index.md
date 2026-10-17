@@ -37,7 +37,7 @@ Agent. You check the agent's findings and reset the faults yourself.
 | [02 - Configure SRE and Respond to High CPU](sre/03-incident-high-cpu/index.md) | Save response-plan settings, trigger CPU pressure, race the agent, and recover | 40 min |
 | [03 - Respond to PostgreSQL Connectivity Loss](sre/04-incident-postgresql/index.md) | Block one database connection, evaluate the dedicated investigator, draft the follow-up, and restore it | 45 min |
 | [04 - Deploy and Evaluate Proactive SRE Checks](sre/05-scheduled-health-check/index.md) | Run a scheduled task, check its findings, generate a Live Report, and compare incidents | 45 min |
-| [05 - Reset and Preserve Evidence](sre/06-cleanup/index.md) | Reset faults, draft a postmortem, save evidence, and hand back the environment | 20 min |
+| [05 - Reset and Preserve Evidence](sre/06-cleanup/index.md) | Draft a postmortem, turn off the scheduled task, and hand back the environment | 10 min |
 
 Allow about three hours. Monitoring and alert waits vary.
 
