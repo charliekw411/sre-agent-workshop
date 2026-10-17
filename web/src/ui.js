@@ -532,19 +532,11 @@ export class IncidentLauncher {
     const badge = element("span", "sre-launcher__badge", "Authenticated Azure control");
     heading.append(title, badge);
 
-    const description = element(
-      "p",
-      "sre-launcher__description",
-      this.scenario.id === "cpu"
-        ? "Starts the existing bounded 10-minute, two-worker CPU fault through VM Run Command."
-        : "Changes the scoped outbound TCP 5432 NSG rule and recycles only orders-api.",
-    );
     const actions = element("div", "sre-launcher__actions");
     this.run = actionButton(this.scenario.runLabel, "md-button md-button--primary");
     this.reset = actionButton("Reset incident", "md-button");
-    this.statusButton = actionButton("Check fault status", "md-button");
     this.refresh = actionButton("Refresh graph", "md-button");
-    actions.append(this.run, this.reset, this.statusButton, this.refresh);
+    actions.append(this.run, this.reset, this.refresh);
 
     this.status = element("p", "sre-launcher__status");
     this.status.setAttribute("aria-live", "polite");
@@ -571,29 +563,19 @@ export class IncidentLauncher {
     this.links.append(this.agentLink);
     setHidden(this.links, true);
 
-    const safety = element(
-      "p",
-      "sre-launcher__safety",
-      this.scenario.id === "cpu"
-        ? "Fixed limits: 600 seconds, 2 workers, 256 MiB memory cap, reduced scheduling priority. Reset changes only CPU."
-        : "Fixed scope: Orders subnet to PostgreSQL subnet on TCP 5432 only. Reset changes only PostgreSQL connectivity.",
-    );
     this.root.append(
       heading,
-      description,
       actions,
       this.status,
       graphHeader,
       this.graph,
       this.links,
-      safety,
     );
 
     this.run.addEventListener("click", () => this.execute(this.scenario.action));
     this.reset.addEventListener("click", () =>
       this.execute(`reset-${this.scenario.id}`),
     );
-    this.statusButton.addEventListener("click", () => this.execute("status"));
     this.refresh.addEventListener("click", () => this.refreshGraph(true));
   }
 
@@ -630,7 +612,7 @@ export class IncidentLauncher {
   update(state) {
     const connected = state.phase === "connected" && state.environment;
     const busy = Boolean(state.operation);
-    for (const button of [this.reset, this.statusButton, this.refresh]) {
+    for (const button of [this.reset, this.refresh]) {
       button.disabled = !connected || busy;
     }
     this.run.disabled = !connected || busy || state.requiresStatusCheck;

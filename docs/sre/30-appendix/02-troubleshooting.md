@@ -25,11 +25,12 @@ Start with the participant checks below. Use only your assigned environment.
 | The site has no Azure connection configuration | Tell your facilitator; participants do not register the site application. |
 | No environment appears, or another participant's group is visible | Stop and report the account and visible group names privately. Do not choose a replacement environment. |
 | Response plan cannot be saved | Ask your facilitator to check your agent-scoped configuration access. Azure Contributor alone is not enough. |
-| Orders are unavailable before an exercise | Check fault status. Reset a leftover fault using its launcher; if the app stays unhealthy, ask your facilitator. |
+| Orders are unavailable before an exercise | Check the Orders GUI status cards. Reset a leftover fault using its launcher; if the app stays unhealthy, ask your facilitator. |
 | Prepared skill or custom agent is missing | Ask your facilitator to finish preparation. Do not skip the check and call the exercise successful. |
 | Terminal helper cannot find azd state | Use the browser or obtain a prepared local environment. Sourcing exports alone does not fix it. |
 
-For an interrupted fault, select **Check fault status** before another action.
+For an interrupted fault, check the Orders GUI status cards, then select
+**Reset incident** before another action.
 CPU expires automatically; the PostgreSQL deny remains until reset. Use
 **Reset incident** in the CPU and PostgreSQL launchers to reset both.
 
@@ -690,7 +691,7 @@ accept a broader scope.
 ### Browser rule update is interrupted
 
 The browser performs GET, conditional PUT with `If-Match`, then GET read-back.
-An interrupted response can be ambiguous. Select **Check fault status** before
+An interrupted response can be ambiguous. Select **Reset incident** before
 retrying. Another writer can produce an ETag conflict, which protects against
 silently overwriting a concurrent change.
 

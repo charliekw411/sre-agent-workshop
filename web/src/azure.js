@@ -388,7 +388,7 @@ export class AzureWorkshopClient {
     const location = operation.response.headers.get("Location");
     if (!location) {
       throw new AmbiguousOperationError(
-        "Azure accepted Run Command without a status URL. Check fault status before retrying.",
+        "Azure accepted Run Command without a status URL. Reset the incident before retrying.",
       );
     }
     this.assertEndpoint(location, ARM_SCOPE);
@@ -404,7 +404,7 @@ export class AzureWorkshopClient {
       } catch (error) {
         throw new AmbiguousOperationError(
           "Azure accepted Run Command, but its final status could not be read. " +
-            "Check fault status before retrying.",
+            "Reset the incident before retrying.",
           { cause: error },
         );
       }
@@ -425,7 +425,7 @@ export class AzureWorkshopClient {
       } catch (error) {
         throw new AmbiguousOperationError(
           "Azure finished Run Command without its correlated result. " +
-            "Check fault status before retrying.",
+            "Reset the incident before retrying.",
           { cause: error },
         );
       }
@@ -464,7 +464,7 @@ export class AzureWorkshopClient {
         if (error instanceof AzureRequestError && error.status === null) {
           throw new AmbiguousOperationError(
             "The PostgreSQL network rule update was interrupted and may have " +
-              "completed. Check fault status before retrying.",
+              "completed. Reset the incident before retrying.",
             { cause: error },
           );
         }
@@ -475,7 +475,7 @@ export class AzureWorkshopClient {
     const after = parsePostgresqlFaultRule(afterResponse.payload);
     if (after.postgresqlAccess !== access) {
       throw new AmbiguousOperationError(
-        `Azure did not verify PostgreSQL access as ${access}. Check fault status.`,
+        `Azure did not verify PostgreSQL access as ${access}. Reset the incident.`,
       );
     }
     return after;

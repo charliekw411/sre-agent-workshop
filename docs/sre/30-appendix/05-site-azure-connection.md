@@ -245,7 +245,7 @@ generation and reload using a participant account. A successful organizer run
 does not prove that participant permissions are ready.
 
 If a PostgreSQL PUT or subsequent API recycle/verification is interrupted,
-select **Check fault status** before another operation. A verified NSG state
+select **Reset incident** before another operation. A verified NSG state
 without the expected application state is partial, not success. If access
 remains `Deny`, reset before collecting final evidence or running cleanup.
 
