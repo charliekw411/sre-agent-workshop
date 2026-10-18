@@ -65,6 +65,20 @@ references before HTML plugins run with the final page, and fails the build if
 any disappear. Verify screenshot recovery against the published GitHub Pages
 URL, not only a local preview.
 
+### Workshop appearance
+
+The header's theme picker sits beside Search and offers Vanilla, Prism,
+Fieldnotes, and Nightshift. New visitors start in Vanilla. The choice is saved
+under `sre-workshop-theme` in browser local storage and restored by the small
+`theme-init.js` bundle in `overrides/main.html` before the page is painted.
+If storage is unavailable, the picker explains that the choice is temporary.
+
+Keep alternative styles scoped to `data-sre-theme` in
+`docs/assets/stylesheets/themes.css`; Vanilla must retain the existing layout
+and light/dark toggle. The other themes supply their own light or dark palette.
+The picker changes presentation only: do not duplicate module content, change
+image files, or recreate authentication or incident controls for a theme.
+
 ### Deployment helpers and infrastructure
 
 ```bash

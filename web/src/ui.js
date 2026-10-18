@@ -1,17 +1,7 @@
 import { SCENARIOS, formatPercent } from "./core.js";
+import { element } from "./dom.js";
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
-
-function element(tag, className = "", text = "") {
-  const node = document.createElement(tag);
-  if (className) {
-    node.className = className;
-  }
-  if (text) {
-    node.textContent = text;
-  }
-  return node;
-}
 
 function actionButton(label, className = "") {
   const button = element("button", className, label);

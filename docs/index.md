@@ -11,12 +11,25 @@ keywords:
 estimated_reading_time: 3
 ---
 
+<div class="sre-home-intro" markdown="1">
+
 Use your assigned Azure environment to configure SRE response, trigger two
 controlled faults, and watch the general and dedicated incident investigators.
 Then run a scheduled health check and review a Live Report.
 
 The infrastructure and your account are prepared before you arrive. The
 browser exercises do not require a local terminal or an Azure deployment.
+
+<div class="sre-home-visual" aria-hidden="true">
+<span class="sre-home-visual__eyebrow">THE CONNECTED PICTURE</span>
+<div class="sre-home-visual__route"><span>Orders GUI<small>Customer view</small></span><span>Orders API<small>Ubuntu VM</small></span><span>PostgreSQL<small>Private database</small></span></div>
+<div class="sre-home-visual__agent"><span>Azure SRE Agent</span><small>Investigate with monitoring evidence</small></div>
+<span class="sre-home-visual__caption">Illustrative architecture, not live health</span>
+</div>
+
+</div>
+
+<div class="sre-home-facts" aria-label="Workshop at a glance"><span><strong>5 modules</strong>One connected learning path</span><span><strong>About 3 hours</strong>Including monitoring waits</span><span><strong>Browser-based</strong>No local terminal required</span></div>
 
 ## Before you start
 
@@ -31,6 +44,8 @@ Agent. You check the agent's findings and reset the faults yourself.
 
 ## Learning path
 
+<div class="sre-learning-path" markdown="1">
+
 | Module | What you do | Time |
 | --- | --- | --- |
 | [01 - Access and Understand the Workshop](sre/01-deploy-and-validate/index.md) | Sign in, review the architecture, check the healthy app, and meet the agent | 25 min |
@@ -38,6 +53,8 @@ Agent. You check the agent's findings and reset the faults yourself.
 | [03 - Respond to PostgreSQL Connectivity Loss](sre/04-incident-postgresql/index.md) | Block one database connection, evaluate the dedicated investigator, draft the follow-up, and restore it | 45 min |
 | [04 - Deploy and Evaluate Proactive SRE Checks](sre/05-scheduled-health-check/index.md) | Run a scheduled task, check its findings, generate a Live Report, and compare incidents | 45 min |
 | [05 - Reset and Preserve Evidence](sre/06-cleanup/index.md) | Draft a postmortem, turn off the scheduled task, and hand back the environment | 10 min |
+
+</div>
 
 Allow about three hours. Monitoring and alert waits vary.
 

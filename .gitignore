@@ -2,6 +2,7 @@
 dist/
 site/
 docs/assets/javascripts/workshop.js
+docs/assets/javascripts/theme-init.js
 node_modules/
 
 # Python
