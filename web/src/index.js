@@ -5,6 +5,7 @@ import {
   AzureWorkshopClient,
 } from "./azure.js";
 import { WorkshopError, validateConfig } from "./core.js";
+import { ThemePicker } from "./theme.js";
 import { EnvironmentPicker, HeaderConnection, IncidentLauncher } from "./ui.js";
 
 const rawConfig = __WORKSHOP_CONFIG__;
@@ -16,6 +17,7 @@ class WorkshopApplication {
     this.azure = null;
     this.launchers = new Map();
     this.picker = null;
+    this.themePicker = new ThemePicker();
     this.header = new HeaderConnection({
       connect: () => void this.connect(),
       retry: () => void this.retry(),
@@ -49,6 +51,7 @@ class WorkshopApplication {
 
   mount() {
     this.header.mount();
+    this.themePicker.mount();
     for (const root of document.querySelectorAll("[data-sre-incident]")) {
       if (this.launchers.has(root)) {
         continue;

@@ -48,8 +48,11 @@ const workshopConfig = Object.freeze({
 });
 
 await build({
-  entryPoints: ["web/src/index.js"],
-  outfile: "docs/assets/javascripts/workshop.js",
+  entryPoints: {
+    workshop: "web/src/index.js",
+    "theme-init": "web/src/theme-init.js",
+  },
+  outdir: "docs/assets/javascripts",
   bundle: true,
   minify: true,
   sourcemap: false,

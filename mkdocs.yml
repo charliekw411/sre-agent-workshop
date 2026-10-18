@@ -29,6 +29,7 @@ nav:
 
 theme:
   name: material
+  custom_dir: overrides
   font:
     text: Ubuntu
   palette:
@@ -130,6 +131,7 @@ extra:
 
 extra_css:
   - assets/stylesheets/extra.css
+  - assets/stylesheets/themes.css
 
 extra_javascript:
   - assets/javascripts/workshop.js
