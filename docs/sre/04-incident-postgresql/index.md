@@ -1,7 +1,7 @@
 ---
 title: Module 03 - Respond to PostgreSQL Connectivity Loss
 description: Block the app's private database connection, watch the dedicated investigator diagnose and fix it autonomously, and draft the follow-up.
-ms.date: 2026-10-16
+ms.date: 2026-10-18
 ms.topic: how-to
 keywords:
   - postgresql
@@ -18,6 +18,10 @@ estimated_reading_time: 10
 </ul>
 
 ## Learning objective
+
+**This fault will be automatically diagnosed and fixed.** The dedicated
+PostgreSQL investigator runs in **Autonomous** mode: it identifies the blocked
+connection and restores the scoped network rule without asking you for approval.
 
 By the end, you can follow a PostgreSQL connectivity failure from the customer
 app to the alert and the dedicated incident investigator, trace how the agent
@@ -61,17 +65,26 @@ Two response plans share the work. PostgreSQL alerts go to a dedicated
 investigator; everything else stays with the main agent.
 
 1. In your SRE Agent, same as before, go to **Builder > Agent Canvas**, switch to
-   **Table view**, and check the two response plans.
+   **Table view**, then select **Incident Response Plans** to see the two plans.
+
+    ![Agent Canvas in Table view with Incident Response Plans selected and both workshop response plans enabled for Sev1 and Sev2](../../assets/images/04-incident-postgresql/task-1-response-plans.png)
+
+    *Task 1: Use the Incident Response Plans tab to locate both plans. This
+    navigation screenshot shows Review for both rows; check the required
+    PostgreSQL autonomy setting in step 3 rather than copying that sample value.*
+
 2. Check that both plans are On and handle Sev1 and Sev2. Do not remove either
    title filter.
 3. Open `orders-incident-workflow` and select **Edit**. Check that **Agent
    autonomy level** is **Autonomous (Default)**, then close without saving. The
    original plan, `workshop-sev1-sev2-review`, stays on **Review**.
+   If the dedicated plan still shows **Review**, ask your facilitator to restore
+   its **Autonomous** setting before you inject the fault.
 4. Open your resource group, search for `alert-orders-postgresql-connectivity`,
    and open it. Alternatively, search for **Monitor** in the top bar and open
    **Alerts > Alert rules**, filtered to your resource group. Check that the rule
-   is enabled, is Sev1, and fires when a PostgreSQL dependency fails within five
-   minutes.
+   is enabled and is Sev1. It evaluates the last five minutes every minute and
+   fires when it finds at least one failed PostgreSQL dependency.
 
     ![Resource group Resources list filtered by alert-orders-postgresql, showing the alert-orders-postgresql-connectivity rule](../../assets/images/04-incident-postgresql/alert-rule-postgresql-search.png)
 
@@ -100,36 +113,77 @@ investigator; everything else stays with the main agent.
 
 1. In your Orders GUI, select **Refresh status** and **Refresh orders**. All
    three status cards should show healthy results: Liveness HTTP 200, Readiness
-   HTTP 200, and PostgreSQL Ready.
-2. Create a synthetic order with customer ID `postgresql-incident`. Save its
-   order ID, product, and quantity. You will read the same order after recovery.
-3. Select **Refresh orders** again. The order list should include your order
-   before injection.
+   HTTP 200, and PostgreSQL Healthy.
+2. Under **Create an order**, enter customer ID `postgresql-incident`, choose a
+   product (for example, **Contoso Mechanical Keyboard**), and set **Quantity**
+   to `1`. Select **Create order**.
+
+    ![Healthy Orders GUI with customer ID postgresql-incident, Contoso Mechanical Keyboard selected, quantity 1, and Create order highlighted](../../assets/images/04-incident-postgresql/task-2-create-order.png)
+
+    *Task 2: Fill in the synthetic order while all three service-status cards
+    are healthy, then select Create order.*
+
+3. Save the returned order ID, product, and quantity. Select **Refresh orders**
+   again and confirm that your order appears before injection. You will read
+   this same order after recovery.
 
 ### Task 3: Block the database connection
 
-1. Select **Block PostgreSQL access**.
+!!! info "A few minutes of waiting is expected"
+    Starting the fault, seeing failed samples, and receiving the alert are
+    separate stages. A wait of around three minutes is not, by itself, a failed
+    request. Watch the launcher's current step and elapsed time rather than
+    clicking **Block PostgreSQL access** again.
+
+| Stage | What you will see | What to do |
+| --- | --- | --- |
+| Apply and verify the fault | The launcher shows steps 1 to 3: check the VM, set the rule to `Deny`, then recycle only `orders-api` and verify the expected HTTP results. Azure operations can take several minutes. | Keep this page open. Wait for **Fault confirmed** or an explicit error; do not start another fault. |
+| Wait for monitoring | The graph refreshes automatically, but new PostgreSQL samples can arrive several minutes late. The **Fault requested** marker records your click, not the alert firing. | Read the newest **Sample time**. A value above zero means failed database calls, not confirmation of an alert or agent activity. |
+| Follow diagnosis and repair | Azure Monitor evaluates failures from the last five minutes every minute. After the alert fires and reaches the agent, the investigator diagnoses and restores access automatically. | Select **Open alert rule** and check **History**, then **Open SRE Agent incidents**. Continue to Task 4 without waiting for the whole graph to turn healthy. |
+
+1. Select **Block PostgreSQL access** once. The controls stay disabled while
+   the Azure operation is running. The current step, an activity indicator,
+   and elapsed time show that the launcher is still working.
 
     <div data-sre-incident="postgresql">
     <p><strong>JavaScript is required for the launcher.</strong> If it is unavailable, ask your facilitator.</p>
     </div>
 
-2. Navigate back to the same NSG as above (`nsg-orders-…`) and open **Outbound
-   security rules**. Check that the `PostgreSqlFaultInjection` rule has been
-   flipped to **Deny**.
+    !!! tip "The agent may already have restored access"
+        The agent can finish its repair before you check the rule or switch to
+        the Orders GUI. If the rule is already `Allow` or the app has recovered,
+        do not inject the fault again just to reproduce the screenshots.
+        Continue to Task 4 and use the incident thread and Activity log to
+        verify what happened.
+
+2. When the launcher reports **Fault confirmed**, navigate back to the same NSG
+   as above (`nsg-orders-…`) and open **Outbound security rules**. Check that
+   `PostgreSqlFaultInjection` has changed to **Deny**.
 
     ![Outbound security rules with the PostgreSqlFaultInjection rule's Action flipped to Deny](../../assets/images/04-incident-postgresql/nsg-outbound-rules-deny.png)
 
-3. Select **Refresh status** and **Refresh orders** in the Orders GUI. The
-   database is now down! Liveness is still healthy, but the health probes for the
-   database (Readiness and PostgreSQL) are now failing, and we can't see recent
-   orders.
+3. Select **Open Orders GUI**, then **Refresh status** and **Refresh orders**.
+   While the rule is `Deny`, liveness stays healthy (HTTP 200), but Readiness,
+   PostgreSQL, and order operations fail (HTTP 503). The database server is still
+   running; the app cannot reach it.
 
     ![Orders GUI with Liveness healthy, Readiness and PostgreSQL unavailable, and recent orders failing to load](../../assets/images/04-incident-postgresql/orders-gui-database-down.png)
 
-    Let's check in on the SRE Agent to see its remediation process. This is a
-    relatively easy fix for the agent, and it fixes it really quickly, so move
-    straight on to the next task.
+4. Return to the launcher and check the newest graph samples. Select
+   **Open alert rule**, then **History**, to confirm when
+   `alert-orders-postgresql-connectivity` fired. A graph crossing the alert
+   line is not a substitute for this check. Select **Open SRE Agent incidents**
+   and continue to Task 4.
+
+    !!! warning "Still waiting, or the launcher reported an error?"
+        If the alert or incident has not appeared ten minutes after **Fault
+        confirmed**, check the alert history and the Task 1 settings, then ask
+        your facilitator or use
+        [fault troubleshooting](../30-appendix/02-troubleshooting.md#fault-controls).
+        This is a troubleshooting checkpoint, not a guaranteed completion time.
+        An interrupted operation may still have changed the rule. Check the rule
+        and app before retrying; use **Reset incident** if you need to abandon
+        the exercise safely.
 
 ### Task 4: Follow the agent's reasoning and fix
 

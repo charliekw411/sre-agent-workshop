@@ -307,6 +307,7 @@ export function renderLineChart(
   scenario,
   now = new Date(),
   incidentStartedAt = null,
+  incidentLabel = "Incident started",
 ) {
   root.replaceChildren();
 
@@ -345,7 +346,7 @@ export function renderLineChart(
   const summary = element("p", "sre-chart__summary");
   const summaryParts = [];
   if (showIncident) {
-    summaryParts.push(`Incident started ${timeLabel(incidentStartedAt)}`);
+    summaryParts.push(`${incidentLabel} ${timeLabel(incidentStartedAt)}`);
   }
   if (visible.length) {
     const values = visible.map((point) => point.value);
@@ -357,6 +358,7 @@ export function renderLineChart(
             Math.max(...values),
           )} failed`,
     );
+    summaryParts.push(`Sample time ${timeLabel(latest.timestamp)}`);
   } else {
     summaryParts.push("Waiting for Azure Monitor samples");
   }
@@ -432,7 +434,7 @@ export function renderLineChart(
           y: margin.top + 13,
           "text-anchor": labelOnLeft ? "end" : "start",
         },
-        "Incident started",
+        incidentLabel,
       ),
     );
   }
@@ -506,8 +508,10 @@ function describeResult(action, result) {
     } workers.`;
   }
   return (
-    "PostgreSQL access is blocked by the scoped outbound NSG rule. The Orders API " +
-    "was recycled and its liveness 200 plus controlled readiness/order 503s were verified."
+    "Fault confirmed: PostgreSQL access was blocked by the scoped outbound NSG rule. " +
+    "The Orders API was recycled and liveness 200 plus readiness/orders 503 were verified. " +
+    "Continue to Task 4: open the alert rule's History and SRE Agent incidents " +
+    "to follow automatic diagnosis and repair. Telemetry and alert delivery can lag."
   );
 }
 
@@ -521,6 +525,8 @@ export class IncidentLauncher {
     this.points = [];
     this.refreshing = false;
     this.timer = null;
+    this.executingAction = null;
+    this.progressTimer = null;
     this.build();
   }
 
@@ -532,6 +538,15 @@ export class IncidentLauncher {
     const badge = element("span", "sre-launcher__badge", "Authenticated Azure control");
     heading.append(title, badge);
 
+    const description = element(
+      "p",
+      "sre-launcher__description",
+      "Select once. The launcher checks the VM, blocks the scoped network rule, " +
+        "then recycles and verifies only the Orders API. This can take several minutes; " +
+        "monitoring and the agent update separately.",
+    );
+    setHidden(description, this.scenario.id !== "postgresql");
+
     const actions = element("div", "sre-launcher__actions");
     this.run = actionButton(this.scenario.runLabel, "md-button md-button--primary");
     this.reset = actionButton("Reset incident", "md-button");
@@ -539,8 +554,17 @@ export class IncidentLauncher {
     actions.append(this.run, this.reset, this.refresh);
 
     this.status = element("p", "sre-launcher__status");
+    this.status.setAttribute("role", "status");
     this.status.setAttribute("aria-live", "polite");
     this.status.textContent = "Connect to Azure from the site header to enable controls.";
+
+    this.progress = element("div", "sre-launcher__progress");
+    const progressBar = element("progress");
+    progressBar.setAttribute("aria-label", "Azure fault operation in progress");
+    this.elapsed = element("span", "sre-launcher__elapsed");
+    this.elapsed.setAttribute("aria-live", "off");
+    this.progress.append(progressBar, this.elapsed);
+    setHidden(this.progress, true);
 
     const graphHeader = element("div", "sre-chart__header");
     const graphTitle = element("h4", "", `${this.scenario.chartTitle} | Last 30 minutes`);
@@ -555,20 +579,37 @@ export class IncidentLauncher {
       element("p", "sre-chart__empty", "Connect to Azure to load telemetry."),
     );
 
+    const graphHint = element(
+      "p",
+      "sre-launcher__safety",
+      "Read the newest sample time, not just the line. PostgreSQL samples can arrive " +
+        "several minutes late. A point above the alert line shows failed database calls, " +
+        "not that an alert has fired or the agent has started. Check the alert rule's " +
+        "History, then SRE Agent incidents. Older failures remain after recovery.",
+    );
+    setHidden(graphHint, this.scenario.id !== "postgresql");
+
     this.links = element("nav", "sre-launcher__links");
     this.links.setAttribute("aria-label", "Incident investigation links");
+    this.ordersLink = element("a", "", "Open Orders GUI");
+    this.alertLink = element("a", "", "Open alert rule");
     this.agentLink = element("a", "", "Open SRE Agent incidents");
-    this.agentLink.target = "_blank";
-    this.agentLink.rel = "noopener noreferrer";
-    this.links.append(this.agentLink);
+    for (const link of [this.ordersLink, this.alertLink, this.agentLink]) {
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+    }
+    this.links.append(this.ordersLink, this.alertLink, this.agentLink);
     setHidden(this.links, true);
 
     this.root.append(
       heading,
+      description,
       actions,
       this.status,
+      this.progress,
       graphHeader,
       this.graph,
+      graphHint,
       this.links,
     );
 
@@ -582,6 +623,12 @@ export class IncidentLauncher {
   async execute(action) {
     const incidentRequestedAt =
       action === this.scenario.action ? new Date() : null;
+    this.executingAction = action;
+    this.startProgressTimer(incidentRequestedAt || new Date());
+    if (incidentRequestedAt && this.scenario.id === "postgresql") {
+      this.incidentStartedAt = incidentRequestedAt;
+      this.renderGraph();
+    }
     this.status.dataset.kind = "progress";
     this.status.textContent =
       action === "reset-cpu"
@@ -594,19 +641,26 @@ export class IncidentLauncher {
           ? "Checking the VM and PostgreSQL network fault status..."
           : "Starting the bounded workshop fault through Azure...";
     try {
-      const result = await this.app.executeFault(action);
+      const result = await this.app.executeFault(action, (message) => {
+        this.status.dataset.kind = "progress";
+        this.status.textContent = message;
+      });
       if (incidentRequestedAt) {
         this.incidentStartedAt = incidentRequestedAt;
         this.renderGraph();
       }
       this.status.dataset.kind = "success";
       this.status.textContent = describeResult(action, result);
-      await this.refreshGraph(false);
     } catch (error) {
       this.status.dataset.kind = "error";
       this.status.textContent = this.app.errorMessage(error);
       this.app.reportError(error);
+      return;
+    } finally {
+      this.executingAction = null;
+      this.stopProgressTimer();
     }
+    await this.refreshGraph(false);
   }
 
   update(state) {
@@ -633,7 +687,7 @@ export class IncidentLauncher {
       return;
     }
 
-    if (busy) {
+    if (busy && !this.executingAction) {
       this.status.dataset.kind = "progress";
       this.status.textContent = "An authenticated Azure fault operation is in progress.";
     }
@@ -649,6 +703,10 @@ export class IncidentLauncher {
         `${state.environment.virtualMachine.name} / ` +
         `${state.environment.postgresqlServer.name}.`;
       const links = this.app.incidentLinks(this.scenario.id);
+      this.ordersLink.href = state.environment.ordersGuiUrl || "#";
+      setHidden(this.ordersLink, !state.environment.ordersGuiUrl);
+      this.alertLink.href = links.alert || "#";
+      setHidden(this.alertLink, !links.alert);
       this.agentLink.href = links.investigation || "#";
       setHidden(this.agentLink, !links.investigation);
       setHidden(this.links, false);
@@ -673,6 +731,30 @@ export class IncidentLauncher {
       window.clearInterval(this.timer);
       this.timer = null;
     }
+    this.stopProgressTimer();
+  }
+
+  startProgressTimer(startedAt) {
+    this.stopProgressTimer();
+    const updateElapsed = () => {
+      const seconds = Math.max(0, Math.floor((Date.now() - startedAt.getTime()) / 1000));
+      const minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
+      const remainder = String(seconds % 60).padStart(2, "0");
+      this.elapsed.textContent =
+        `Elapsed ${minutes}:${remainder}. Azure operations can take several minutes. ` +
+        "Do not repeat the action while it is running.";
+    };
+    updateElapsed();
+    setHidden(this.progress, false);
+    this.progressTimer = window.setInterval(updateElapsed, 1000);
+  }
+
+  stopProgressTimer() {
+    if (this.progressTimer !== null) {
+      window.clearInterval(this.progressTimer);
+      this.progressTimer = null;
+    }
+    setHidden(this.progress, true);
   }
 
   renderGraph() {
@@ -682,6 +764,7 @@ export class IncidentLauncher {
       this.scenario,
       new Date(),
       this.incidentStartedAt,
+      this.scenario.id === "postgresql" ? "Fault requested" : "Incident started",
     );
   }
 

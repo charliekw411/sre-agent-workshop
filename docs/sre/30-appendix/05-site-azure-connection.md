@@ -223,14 +223,21 @@ Use a resource group tagged
    verify CPU is inactive.
 8. In Module 03, confirm the launcher element uses
    `data-sre-incident="postgresql"`.
-9. Select **Block PostgreSQL access**. Confirm success reports PostgreSQL active,
-   access `Deny`, `apiRecycled` true, connectivity unavailable, liveness 200,
-   and readiness plus orders 503.
+9. Select **Block PostgreSQL access** once. Confirm the launcher immediately
+   shows a **Fault requested** marker, an activity indicator, elapsed time, and
+   the current step: VM check, scoped rule update, then API recycle and probe
+   verification. Confirm **Fault confirmed** appears only after PostgreSQL
+   active, access `Deny`, `apiRecycled` true, connectivity unavailable, liveness
+   200, and readiness plus orders 503 are verified. An error must stop the
+   activity indicator without claiming success.
 10. Verify the Orders GUI keeps liveness healthy while readiness, `/database`,
     and order operations are unavailable. The API-only recycle drains stateful
     Npgsql sessions after rule read-back; it is not the root cause.
 11. Confirm the dependency graph shows failed `PostgreSQL` samples and the
-    alert link targets `alert-orders-postgresql-connectivity`.
+    newest sample time. Confirm **Open Orders GUI** targets the selected
+    environment and **Open alert rule** targets
+    `alert-orders-postgresql-connectivity`. Use the rule's **History** to verify
+    that the alert fired; the graph is not an alert or agent status indicator.
 12. Select reset in Module 03. Confirm access returns to `Allow`, only the API
     is recycled, connectivity is `ready`, the CPU fault is unchanged, and a
     pre-incident order remains readable.

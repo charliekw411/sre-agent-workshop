@@ -201,15 +201,60 @@ test("PostgreSQL injection drains the API pool only after the NSG read-back", as
     return { postgresql: "active", postgresqlAccess: "Deny" };
   };
 
-  const result = await workshop.runFault(ENVIRONMENT, "postgresql");
+  const result = await workshop.runFault(ENVIRONMENT, "postgresql", (message) => {
+    const step = /^Step (\d) of 3:/.exec(message);
+    assert.ok(step, `Expected a numbered progress step: ${message}`);
+    events.push(`progress:${step[1]}`);
+  });
 
   assert.equal(result.postgresqlConnectivity, "unavailable");
   assert.equal(result.apiRecycled, true);
   assert.deepEqual(events, [
+    "progress:1",
     "vm:status",
+    "progress:2",
     "postgresql:deny",
+    "progress:3",
     "vm:postgresql-denied",
   ]);
+});
+
+test("a failed VM check stops PostgreSQL progress before any network change", async () => {
+  const workshop = client();
+  const progress = [];
+  workshop.runVmFault = async (_environment, action) => {
+    assert.equal(action, "status");
+    throw new AzureRequestError("VM check denied", { status: 403 });
+  };
+  workshop.setPostgresqlFault = async () => {
+    assert.fail("The rule must not change after a failed VM check.");
+  };
+
+  await assert.rejects(
+    workshop.runFault(ENVIRONMENT, "postgresql", (message) => progress.push(message)),
+    /VM check denied/,
+  );
+  assert.equal(progress.length, 1);
+  assert.match(progress[0], /^Step 1 of 3: Checking the VM/);
+});
+
+test("a failed rule update never reports the API verification step", async () => {
+  const workshop = client();
+  const progress = [];
+  workshop.runVmFault = async (_environment, action) => {
+    assert.equal(action, "status");
+    return { cpu: "inactive" };
+  };
+  workshop.setPostgresqlFault = async () => {
+    throw new AzureRequestError("Rule update denied", { status: 403 });
+  };
+
+  await assert.rejects(
+    workshop.runFault(ENVIRONMENT, "postgresql", (message) => progress.push(message)),
+    /Rule update denied/,
+  );
+  assert.equal(progress.length, 2);
+  assert.match(progress[1], /^Step 2 of 3: Setting PostgreSqlFaultInjection to Deny/);
 });
 
 test("a failed post-Deny recycle is partial and requires a status check", async () => {
