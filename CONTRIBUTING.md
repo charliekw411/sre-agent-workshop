@@ -36,6 +36,7 @@ The site requires Python 3.10 or later and Node.js 20 or later.
     source .venv/bin/activate
     python -m pip install -r requirements.txt
     npm ci
+    python -m unittest discover -s web/test -p "test_*.py" -v
     npm test
     npm run build:web
     python -m mkdocs build --strict --site-dir dist
@@ -48,6 +49,7 @@ The site requires Python 3.10 or later and Node.js 20 or later.
     . ./.venv/Scripts/Activate.ps1
     python -m pip install -r requirements.txt
     npm ci
+    python -m unittest discover -s web/test -p "test_*.py" -v
     npm test
     npm run build:web
     python -m mkdocs build --strict --site-dir dist
@@ -56,6 +58,12 @@ The site requires Python 3.10 or later and Node.js 20 or later.
 `make serve` and `make build-docs-website` run equivalent commands on systems
 with GNU Make. MSAL Browser and the site code are bundled locally rather than
 loaded from a runtime CDN.
+
+Keep the tested `selectolax` version in `requirements.txt`: GLightbox 0.5.2
+removes image nodes with selectolax 1.0.1. The site hook compares image
+references before HTML plugins run with the final page, and fails the build if
+any disappear. Verify screenshot recovery against the published GitHub Pages
+URL, not only a local preview.
 
 ### Deployment helpers and infrastructure
 

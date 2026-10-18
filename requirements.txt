@@ -1,4 +1,6 @@
 mkdocs-material>=9.5,<10
 mkdocs-glightbox>=0.4,<1
+# GLightbox 0.5.2 drops image nodes with selectolax 1.0.1.
+selectolax==1.0.0
 pymdown-extensions>=10.7,<11
 PyYAML==6.0.2

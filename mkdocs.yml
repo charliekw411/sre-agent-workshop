@@ -116,6 +116,9 @@ plugins:
   - search
   - glightbox
 
+hooks:
+  - web/site_hooks.py
+
 extra:
   social:
     - icon: fontawesome/brands/github
