@@ -67,6 +67,115 @@
   color: var(--sre-warn);
 }
 
+/* Inherited properties keep Mermaid's shadow-root SVG and the text in sync. */
+@property --sre-architecture-offset {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+.sre-architecture {
+  --sre-architecture-orders: transparent;
+  --sre-architecture-evidence: transparent;
+  --sre-architecture-investigation: transparent;
+  --sre-architecture-controls: transparent;
+  padding: 1rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.55rem;
+  animation:
+    sre-architecture-flow 1.2s linear infinite,
+    sre-architecture-stage 24s steps(1, end) infinite;
+}
+
+.sre-architecture__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sre-architecture__pause {
+  width: 0.85rem;
+  height: 0.85rem;
+  accent-color: var(--sre-accent);
+}
+
+.sre-architecture__pause:focus-visible {
+  outline: 0.1rem solid var(--sre-accent);
+  outline-offset: 0.15rem;
+}
+
+.md-typeset .sre-architecture__steps {
+  margin-bottom: 0;
+  padding-left: 1.4rem;
+  font-size: 0.76rem;
+}
+
+.md-typeset .sre-architecture__steps li {
+  padding: 0.45rem 0.65rem;
+  border-left: 0.2rem solid var(--sre-architecture-stage-color);
+  border-radius: 0.2rem;
+  background-color: color-mix(in srgb, var(--sre-architecture-stage-color) 12%, transparent);
+}
+
+.sre-architecture__steps .sre-flow-orders {
+  --sre-architecture-stage-color: var(--sre-architecture-orders);
+}
+
+.sre-architecture__steps .sre-flow-evidence {
+  --sre-architecture-stage-color: var(--sre-architecture-evidence);
+}
+
+.sre-architecture__steps .sre-flow-investigation {
+  --sre-architecture-stage-color: var(--sre-architecture-investigation);
+}
+
+.sre-architecture__steps .sre-flow-controls {
+  --sre-architecture-stage-color: var(--sre-architecture-controls);
+}
+
+.sre-architecture:has(.sre-architecture__pause:checked) {
+  animation-play-state: paused;
+}
+
+@keyframes sre-architecture-flow {
+  to {
+    --sre-architecture-offset: -24;
+  }
+}
+
+@keyframes sre-architecture-stage {
+  0%, 100% {
+    --sre-architecture-orders: var(--sre-accent);
+    --sre-architecture-evidence: transparent;
+    --sre-architecture-investigation: transparent;
+    --sre-architecture-controls: transparent;
+  }
+
+  25% {
+    --sre-architecture-orders: transparent;
+    --sre-architecture-evidence: var(--sre-accent);
+    --sre-architecture-investigation: transparent;
+    --sre-architecture-controls: transparent;
+  }
+
+  50% {
+    --sre-architecture-orders: transparent;
+    --sre-architecture-evidence: transparent;
+    --sre-architecture-investigation: var(--sre-accent);
+    --sre-architecture-controls: transparent;
+  }
+
+  75% {
+    --sre-architecture-orders: transparent;
+    --sre-architecture-evidence: transparent;
+    --sre-architecture-investigation: transparent;
+    --sre-architecture-controls: var(--sre-accent);
+  }
+}
+
 /* Module footer navigation. */
 .sre-nav {
   display: flex;
@@ -570,6 +679,14 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .sre-architecture {
+    animation: none;
+  }
+
+  .sre-architecture__toggle {
+    display: none;
+  }
+
   .sre-connection[data-state="connecting"] .sre-connection__dot {
     animation-duration: 2s;
   }
