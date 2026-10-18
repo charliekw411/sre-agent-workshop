@@ -98,6 +98,188 @@ test("chart marks a fault request without claiming Azure confirmed its start", (
   );
 });
 
+test("PostgreSQL request marker is distinct from confirmed injection or alert status", () => {
+  globalThis.document = {
+    createElement: (tag) => new FakeNode(tag),
+    createElementNS: (_namespace, tag) => new FakeNode(tag),
+  };
+  const root = new FakeNode("div");
+  const requested = new Date("2026-10-06T23:01:00Z");
+
+  renderLineChart(
+    root,
+    [{ timestamp: new Date("2026-10-06T23:02:00Z"), value: 100 }],
+    SCENARIOS.postgresql,
+    new Date("2026-10-06T23:03:00Z"),
+    requested,
+  );
+
+  const summary = findByClass(root, "sre-chart__summary").textContent;
+  assert.match(summary, /Fault requested/);
+  assert.match(summary, /Sample time \d{2}:\d{2}/);
+  assert.equal(findByClass(root, "sre-chart__event-label").textContent, "Fault requested");
+  assert.doesNotMatch(summary, /Fault confirmed|alert fired/i);
+});
+
+test("PostgreSQL launcher shows live progress and three minutes elapsed before confirmation", async (t) => {
+  const { launcher, app, root, timers } = await launcherFixture(t, {
+    scenario: "postgresql",
+  });
+  let complete;
+  const operation = new Promise((resolve) => {
+    complete = resolve;
+  });
+  app.executeFault = async (action, onProgress) => {
+    assert.equal(action, "postgresql");
+    app.faultCalls.push(action);
+    app.state.operation = { action };
+    launcher.update(app.state);
+    onProgress("Step 2 of 3: Setting PostgreSqlFaultInjection to Deny and verifying the rule.");
+    launcher.update(app.state);
+    const result = await operation;
+    app.state.operation = null;
+    launcher.update(app.state);
+    return result;
+  };
+
+  const execution = launcher.execute("postgresql");
+  assert.equal(launcher.status.dataset.kind, "progress");
+  assert.match(launcher.status.textContent, /^Step 2 of 3:/);
+  assert.doesNotMatch(launcher.status.textContent, /Fault confirmed/);
+  assert.equal(launcher.progress.hidden, false);
+  assert.equal(launcher.run.disabled, true);
+  assert.equal(launcher.reset.disabled, true);
+  assert.equal(launcher.refresh.disabled, false);
+  assert.equal(findByClass(root, "sre-chart__event-label").textContent, "Fault requested");
+  assert.match(findByClass(root, "sre-chart__summary").textContent, /Waiting for Azure Monitor/);
+
+  timers.get(launcher.timer).callback();
+  await settle();
+  await launcher.refresh.click();
+  assert.equal(launcher.progress.hidden, false);
+  assert.match(launcher.status.textContent, /^Step 2 of 3:/);
+  launcher.run.click();
+  assert.deepEqual(app.faultCalls, ["postgresql"]);
+
+  t.mock.method(Date, "now", () => launcher.incidentRequestedAt.getTime() + 180000);
+  timers.get(launcher.progressTimer).callback();
+  assert.match(launcher.elapsed.textContent, /Elapsed 03:00/);
+  assert.match(launcher.elapsed.textContent, /Do not repeat/);
+  assert.equal(launcher.elapsed.attributes["aria-live"], "off");
+
+  complete({ ok: true, postgresqlAccess: "Deny", postgresqlConnectivity: "unavailable" });
+  await execution;
+  assert.equal(launcher.status.dataset.kind, "success");
+  assert.match(launcher.status.textContent, /^Fault confirmed:/);
+  assert.match(launcher.status.textContent, /Continue to Task 4/);
+  assert.match(launcher.status.textContent, /automatic diagnosis and repair/);
+  assert.equal(launcher.progress.hidden, true);
+  assert.equal(launcher.progressTimer, null);
+  assert.equal(launcher.run.disabled, false);
+  assert.equal(timers.size, 1);
+});
+
+test("PostgreSQL launcher exposes environment links and explains graph versus alert status", async (t) => {
+  const { launcher, app, root } = await launcherFixture(t, {
+    scenario: "postgresql",
+  });
+  assert.equal(launcher.ordersLink.href, app.state.environment.ordersGuiUrl);
+  assert.equal(
+    launcher.alertLink.href,
+    "https://portal.azure.com/#alert-orders-postgresql-connectivity",
+  );
+  assert.equal(launcher.agentLink.href, "https://sre.azure.com/incidents");
+  for (const link of [launcher.ordersLink, launcher.alertLink, launcher.agentLink]) {
+    assert.equal(link.hidden, false);
+    assert.equal(link.target, "_blank");
+    assert.equal(link.rel, "noopener noreferrer");
+  }
+  assert.match(findByClass(root, "sre-launcher__safety").textContent, /not that an alert has fired/);
+  assert.match(findByClass(root, "sre-launcher__safety").textContent, /Older failures remain/);
+  assert.equal(launcher.status.attributes.role, "status");
+});
+
+test("a failed PostgreSQL operation stops progress without claiming fault confirmation", async (t) => {
+  const { launcher, root, timers, app } = await launcherFixture(t, {
+    scenario: "postgresql",
+  });
+  const error = new Error("The rule update was interrupted; reset before retrying.");
+  app.executeFault = async (_action, onProgress) => {
+    onProgress("Step 2 of 3: Setting PostgreSqlFaultInjection to Deny and verifying the rule.");
+    throw error;
+  };
+
+  await launcher.execute("postgresql");
+
+  assert.equal(launcher.status.dataset.kind, "error");
+  assert.equal(launcher.status.textContent, error.message);
+  assert.equal(launcher.progress.hidden, true);
+  assert.equal(launcher.progressTimer, null);
+  assert.equal(launcher.executingAction, null);
+  assert.equal(timers.size, 1);
+  assert.deepEqual(app.errors, [error]);
+  assert.equal(findByClass(root, "sre-chart__event-label").textContent, "Fault requested");
+});
+
+test("leaving an incident launcher clears graph and progress timers", async (t) => {
+  const { launcher, timers } = await launcherFixture(t, {
+    scenario: "postgresql",
+  });
+  launcher.startProgressTimer(new Date());
+  assert.equal(timers.size, 2);
+
+  launcher.stopTimer();
+
+  assert.equal(timers.size, 0);
+  assert.equal(launcher.timer, null);
+  assert.equal(launcher.progressTimer, null);
+  assert.equal(launcher.progress.hidden, true);
+});
+
+test("disconnecting hides investigation links and stops launcher progress", async (t) => {
+  const { launcher, app, timers } = await launcherFixture(t, {
+    scenario: "postgresql",
+  });
+  launcher.startProgressTimer(new Date());
+  app.state = { ...app.state, phase: "not-connected", environment: null };
+  launcher.update(app.state);
+
+  assert.equal(launcher.links.hidden, true);
+  assert.equal(launcher.run.disabled, true);
+  assert.equal(launcher.reset.disabled, true);
+  assert.equal(launcher.refresh.disabled, true);
+  assert.equal(launcher.progress.hidden, true);
+  assert.equal(timers.size, 0);
+  assert.equal(launcher.live.textContent, "Offline");
+});
+
+test("PostgreSQL reset keeps its recovery message without marking a new fault request", async (t) => {
+  const { launcher, root } = await launcherFixture(t, {
+    scenario: "postgresql",
+  });
+  await launcher.execute("reset-postgresql");
+
+  assert.match(launcher.status.textContent, /PostgreSQL incident reset completed/);
+  assert.match(launcher.status.textContent, /CPU fault was not changed/);
+  assert.equal(findByClass(root, "sre-chart__event-label"), null);
+  assert.equal(launcher.progress.hidden, true);
+});
+
+test("CPU start and reset retain their scenario-specific behavior", async (t) => {
+  const { launcher, root } = await launcherFixture(t);
+  assert.equal(findByClass(root, "sre-launcher__description").hidden, true);
+  assert.equal(findByClass(root, "sre-launcher__safety").hidden, true);
+
+  await launcher.execute("cpu");
+  assert.match(launcher.status.textContent, /CPU incident started for 600 seconds with 2 workers/);
+  assert.equal(findByClass(root, "sre-chart__event-label").textContent, "Fault requested");
+
+  await launcher.execute("reset-cpu");
+  assert.match(launcher.status.textContent, /CPU incident reset completed without changing/);
+  assert.equal(launcher.progress.hidden, false);
+  assert.equal(launcher.progressTitle.textContent, "CPU reset confirmed; verify recovery");
+});
+
 test("connected panel exposes only the selected environment Orders GUI", () => {
   const header = new FakeNode("header");
   globalThis.document = {
@@ -162,6 +344,8 @@ async function launcherFixture(
   t,
   { scenario = "cpu", series = async () => [], fault = async () => ({}) } = {},
 ) {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
   const timers = new Map();
   let timerId = 0;
   globalThis.document = {
@@ -177,10 +361,11 @@ async function launcherFixture(
     clearInterval: (id) => timers.delete(id),
   };
   const environment = {
-    subscription: { id: "workshop-subscription" },
-    resourceGroup: { id: "workshop-resource-group", name: "rg-demo" },
+    subscription: { id: "33333333-3333-4333-8333-333333333333" },
+    resourceGroup: { id: "/resourceGroups/rg-01", name: "rg-01" },
     virtualMachine: { name: "vm-orders-demo" },
     postgresqlServer: { name: "psql-orders-demo" },
+    ordersGuiUrl: "http://orders-demo.australiaeast.cloudapp.azure.com:8080/",
   };
   const app = {
     config: { refreshSeconds: 60 },
@@ -202,25 +387,61 @@ async function launcherFixture(
     },
     errorMessage: (error) => error.message,
     reportError: (error) => app.errors.push(error),
-    incidentLinks: () => ({ investigation: "https://example.test/incidents" }),
-    executeFault: async (action) => {
+    incidentLinks: () => ({
+      alert: "https://portal.azure.com/#alert-orders-postgresql-connectivity",
+      investigation: "https://sre.azure.com/incidents",
+    }),
+    executeFault: async (action, onProgress) => {
       app.faultCalls.push(action);
       app.state.operation = { action };
       launcher.update(app.state);
       try {
-        return await fault(action);
+        return await fault(action, onProgress);
       } finally {
         app.state.operation = null;
         launcher.update(app.state);
       }
     },
   };
-  const launcher = new IncidentLauncher(new FakeNode("div"), app, scenario);
+  const root = new FakeNode("div");
+  const launcher = new IncidentLauncher(root, app, scenario);
+  t.after(() => {
+    launcher.stopTimer();
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  });
   launcher.update(app.state);
   await settle();
-  t.after(() => launcher.stopTimer());
-  return { launcher, app, timers };
+  return { launcher, app, root, timers };
 }
+
+test("changing environments stops PostgreSQL progress and ignores stale stage updates", async (t) => {
+  const pending = deferred();
+  let onProgress;
+  const { launcher, app } = await launcherFixture(t, {
+    scenario: "postgresql",
+    fault: (_action, progress) => {
+      onProgress = progress;
+      return pending.promise;
+    },
+  });
+  const operation = launcher.execute("postgresql");
+  app.state.environment = {
+    ...app.state.environment,
+    resourceGroup: { id: "another-resource-group", name: "rg-other" },
+  };
+  launcher.update(app.state);
+  await settle();
+  onProgress("Step 3 of 3: Verifying the old environment.");
+  pending.resolve({ postgresqlAccess: "Deny" });
+  await operation;
+
+  assert.equal(launcher.progress.hidden, true);
+  assert.equal(launcher.progressTimer, null);
+  assert.equal(launcher.incidentRequestedAt, null);
+  assert.doesNotMatch(launcher.status.textContent, /Step 3|Fault confirmed/);
+  assert.equal(app.errors.length, 0);
+});
 
 test("pending CPU launch immediately shows progress, a request marker, and elapsed time", async (t) => {
   const pending = deferred();

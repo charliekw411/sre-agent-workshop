@@ -289,11 +289,19 @@ export class AzureWorkshopClient {
     });
   }
 
-  async runFault(environment, action) {
+  async runFault(environment, action, onProgress = () => {}) {
     if (action === "postgresql") {
+      onProgress("Step 1 of 3: Checking the VM before changing PostgreSQL access.");
       await this.runVmFault(environment, "status");
+      onProgress(
+        "Step 2 of 3: Setting PostgreSqlFaultInjection to Deny and verifying the rule.",
+      );
       const postgresql = await this.setPostgresqlFault(environment, true);
       try {
+        onProgress(
+          "Step 3 of 3: Recycling only orders-api and verifying liveness 200 " +
+            "and readiness/orders 503. Azure Run Command can take several minutes.",
+        );
         const application = await this.runVmFault(environment, "postgresql-denied");
         return { ...postgresql, ...application, ok: true };
       } catch (error) {

@@ -281,7 +281,7 @@ class WorkshopApplication {
     }
   }
 
-  async executeFault(action) {
+  async executeFault(action, onProgress) {
     if (!this.connected || !this.azure) {
       throw new WorkshopError("Connect to an Azure workshop environment first.");
     }
@@ -292,7 +292,11 @@ class WorkshopApplication {
       operation: { action },
     });
     try {
-      const result = await this.azure.runFault(this.state.environment, action);
+      const result = await this.azure.runFault(
+        this.state.environment,
+        action,
+        onProgress,
+      );
       if (action === "status" || action.startsWith("reset")) {
         const inactive = new Set(["inactive", "failed"]);
         const connectivity = String(result.postgresqlConnectivity || "").toLowerCase();

@@ -358,6 +358,7 @@ export function renderLineChart(
             Math.max(...values),
           )} failed`,
     );
+    summaryParts.push(`Sample time ${timeLabel(latest.timestamp)}`);
   } else {
     summaryParts.push("Waiting for Azure Monitor samples");
   }
@@ -507,8 +508,10 @@ function describeResult(action, result) {
     } workers.`;
   }
   return (
-    "PostgreSQL access is blocked by the scoped outbound NSG rule. The Orders API " +
-    "was recycled and its liveness 200 plus controlled readiness/order 503s were verified."
+    "Fault confirmed: PostgreSQL access was blocked by the scoped outbound NSG rule. " +
+    "The Orders API was recycled and liveness 200 plus readiness/orders 503 were verified. " +
+    "Continue to Task 4: open the alert rule's History and SRE Agent incidents " +
+    "to follow automatic diagnosis and repair. Telemetry and alert delivery can lag."
   );
 }
 
@@ -548,6 +551,8 @@ export class IncidentLauncher {
     this.telemetryError = false;
     this.nextRefreshAt = null;
     this.timer = null;
+    this.executingAction = null;
+    this.progressTimer = null;
     this.build();
   }
 
@@ -558,6 +563,15 @@ export class IncidentLauncher {
     const title = element("h3", "", this.scenario.chartTitle);
     const badge = element("span", "sre-launcher__badge", "Authenticated Azure control");
     heading.append(title, badge);
+
+    const description = element(
+      "p",
+      "sre-launcher__description",
+      "Select once. The launcher checks the VM, blocks the scoped network rule, " +
+        "then recycles and verifies only the Orders API. This can take several minutes; " +
+        "monitoring and the agent update separately.",
+    );
+    setHidden(description, this.scenario.id !== "postgresql");
 
     const actions = element("div", "sre-launcher__actions");
     this.run = actionButton(this.scenario.runLabel, "md-button md-button--primary");
@@ -570,16 +584,25 @@ export class IncidentLauncher {
     this.status.textContent = "Connect to Azure from the site header to enable controls.";
 
     this.progress = element("section", "sre-launcher__progress");
-    this.progress.setAttribute("aria-label", "CPU incident progress");
+    this.progress.setAttribute(
+      "aria-label",
+      this.scenario.id === "cpu" ? "CPU incident progress" : "PostgreSQL fault progress",
+    );
     setHidden(this.progress, true);
     const progressHeading = element("div", "sre-launcher__progress-heading");
     this.progressTitle = element("strong");
     this.progressTitle.setAttribute("role", "status");
+    setHidden(this.progressTitle, this.scenario.id !== "cpu");
+    const progressBar = element("progress");
+    progressBar.setAttribute("aria-label", "Azure fault operation in progress");
+    setHidden(progressBar, this.scenario.id !== "postgresql");
     this.elapsed = element("span", "sre-launcher__elapsed");
     this.elapsed.setAttribute("role", "timer");
     this.elapsed.setAttribute("aria-live", "off");
-    this.elapsed.title = "Time since you requested the CPU fault";
-    progressHeading.append(this.progressTitle, this.elapsed);
+    this.elapsed.title = this.scenario.id === "cpu"
+      ? "Time since you requested the CPU fault"
+      : "Time since you requested this PostgreSQL operation";
+    progressHeading.append(this.progressTitle, progressBar, this.elapsed);
     this.progressSteps = element("ol", "sre-launcher__steps");
     this.steps = ["Start CPU fault", "Observe CPU telemetry", "Check Azure alert"].map(
       (label) => {
@@ -588,7 +611,9 @@ export class IncidentLauncher {
         return step;
       },
     );
+    setHidden(this.progressSteps, this.scenario.id !== "cpu");
     this.progressDetail = element("p", "sre-launcher__progress-detail");
+    setHidden(this.progressDetail, this.scenario.id !== "cpu");
     this.progress.append(progressHeading, this.progressSteps, this.progressDetail);
 
     const graphHeader = element("div", "sre-chart__header");
@@ -614,22 +639,38 @@ export class IncidentLauncher {
       element("p", "sre-chart__empty", "Connect to Azure to load telemetry."),
     );
 
+    const graphHint = element(
+      "p",
+      "sre-launcher__safety",
+      "Read the newest sample time, not just the line. PostgreSQL samples can arrive " +
+        "several minutes late. A point above the alert line shows failed database calls, " +
+        "not that an alert has fired or the agent has started. Check the alert rule's " +
+        "History, then SRE Agent incidents. Older failures remain after recovery.",
+    );
+    setHidden(graphHint, this.scenario.id !== "postgresql");
+
     this.links = element("nav", "sre-launcher__links");
     this.links.setAttribute("aria-label", "Incident investigation links");
+    this.ordersLink = element("a", "", "Open Orders GUI");
+    this.alertLink = element("a", "", "Open alert rule");
     this.agentLink = element("a", "", "Open SRE Agent incidents");
-    this.agentLink.target = "_blank";
-    this.agentLink.rel = "noopener noreferrer";
-    this.links.append(this.agentLink);
+    for (const link of [this.ordersLink, this.alertLink, this.agentLink]) {
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+    }
+    this.links.append(this.ordersLink, this.alertLink, this.agentLink);
     setHidden(this.links, true);
 
     this.root.append(
       heading,
+      description,
       actions,
       this.status,
       this.progress,
       graphHeader,
       this.graphStatus,
       this.graph,
+      graphHint,
       this.links,
     );
 
@@ -642,6 +683,8 @@ export class IncidentLauncher {
 
   async execute(action) {
     const environment = this.app.state.environment;
+    this.executingAction = action;
+    this.startProgressTimer(new Date());
     if (action === this.scenario.action) {
       this.incidentRequestedAt = new Date();
       this.incidentPhase = "starting";
@@ -653,7 +696,13 @@ export class IncidentLauncher {
     this.status.textContent = describeOperation(action);
     this.renderCpuProgress();
     try {
-      const result = await this.app.executeFault(action);
+      const result = await this.app.executeFault(action, (message) => {
+        if (!this.app.connected || environment !== this.app.state.environment) {
+          return;
+        }
+        this.status.dataset.kind = "progress";
+        this.status.textContent = message;
+      });
       if (!this.app.connected || environment !== this.app.state.environment) {
         return;
       }
@@ -661,7 +710,6 @@ export class IncidentLauncher {
       this.status.dataset.kind = "success";
       this.status.textContent = describeResult(action, result);
       this.renderCpuProgress();
-      await this.refreshGraph();
     } catch (error) {
       if (!this.app.connected || environment !== this.app.state.environment) {
         return;
@@ -671,7 +719,12 @@ export class IncidentLauncher {
       this.status.textContent = this.app.errorMessage(error);
       this.renderCpuProgress();
       this.app.reportError(error);
+      return;
+    } finally {
+      this.executingAction = null;
+      this.stopProgressTimer();
     }
+    await this.refreshGraph();
   }
 
   update(state) {
@@ -721,6 +774,7 @@ export class IncidentLauncher {
 
     const key = `${state.environment.subscription.id}:${state.environment.resourceGroup.id}`;
     if (key !== this.environmentKey) {
+      this.stopProgressTimer();
       this.environmentKey = key;
       this.refreshVersion += 1;
       this.refreshing = false;
@@ -736,12 +790,16 @@ export class IncidentLauncher {
         `${state.environment.virtualMachine.name} / ` +
         `${state.environment.postgresqlServer.name}.`;
       const links = this.app.incidentLinks(this.scenario.id);
+      this.ordersLink.href = state.environment.ordersGuiUrl || "#";
+      setHidden(this.ordersLink, !state.environment.ordersGuiUrl);
+      this.alertLink.href = links.alert || "#";
+      setHidden(this.alertLink, !links.alert);
       this.agentLink.href = links.investigation || "#";
       setHidden(this.agentLink, !links.investigation);
       setHidden(this.links, false);
       void this.refreshGraph();
     }
-    if (busy) {
+    if (busy && !this.executingAction) {
       this.status.dataset.kind = "progress";
       this.status.textContent = describeOperation(state.operation.action);
     }
@@ -771,11 +829,43 @@ export class IncidentLauncher {
       window.clearInterval(this.timer);
       this.timer = null;
     }
+    this.stopProgressTimer();
+  }
+
+  startProgressTimer(startedAt) {
+    if (this.scenario.id !== "postgresql") {
+      return;
+    }
+    this.stopProgressTimer();
+    const updateElapsed = () => {
+      const seconds = Math.max(0, Math.floor((Date.now() - startedAt.getTime()) / 1000));
+      const minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
+      const remainder = String(seconds % 60).padStart(2, "0");
+      this.elapsed.textContent =
+        `Elapsed ${minutes}:${remainder}. Azure operations can take several minutes. ` +
+        "Do not repeat the action while it is running.";
+    };
+    updateElapsed();
+    setHidden(this.progress, false);
+    this.progressTimer = window.setInterval(updateElapsed, 1000);
+  }
+
+  stopProgressTimer() {
+    if (this.scenario.id !== "postgresql") {
+      return;
+    }
+    if (this.progressTimer !== null) {
+      window.clearInterval(this.progressTimer);
+      this.progressTimer = null;
+    }
+    setHidden(this.progress, true);
   }
 
   renderCpuProgress(now = new Date()) {
+    if (this.scenario.id !== "cpu") {
+      return;
+    }
     const visible =
-      this.scenario.id === "cpu" &&
       this.app.connected &&
       Boolean(this.incidentRequestedAt);
     setHidden(this.progress, !visible);

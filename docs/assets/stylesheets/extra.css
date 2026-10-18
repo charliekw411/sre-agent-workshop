@@ -479,6 +479,11 @@
   font-size: 0.7rem;
 }
 
+.sre-launcher__progress progress {
+  width: 6rem;
+  accent-color: var(--sre-accent);
+}
+
 .sre-launcher__progress-heading,
 .sre-chart__controls {
   display: flex;
