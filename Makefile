@@ -19,6 +19,10 @@ install: ## Install the documentation toolchain
 test-web: ## Test the authenticated site controls
 	$(NPM) test
 
+.PHONY: test-docs
+test-docs: ## Test documentation image-preservation safeguards
+	$(PYTHON) -m unittest discover -s web/test -p "test_*.py" -v
+
 .PHONY: build-web
 build-web: ## Bundle MSAL and the interactive incident launcher
 	$(NPM) run build:web
@@ -28,7 +32,7 @@ serve: install build-web ## Serve the workshop site locally with live reload
 	$(PYTHON) -m mkdocs serve --dev-addr localhost:$(PORT)
 
 .PHONY: build-docs-website
-build-docs-website: install test-web build-web ## Build the workshop site into $(DIST)
+build-docs-website: install test-docs test-web build-web ## Build the workshop site into $(DIST)
 	$(PYTHON) -m mkdocs build --strict --site-dir $(DIST)
 
 .PHONY: clean
