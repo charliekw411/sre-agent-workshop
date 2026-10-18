@@ -50,8 +50,9 @@ create from a prompt and then reload.
 
 1. Refresh orders and status in the Orders GUI. Both faults should already be
    reset. Keep that tab visible so requests continue while you work.
-2. Open your SRE Agent's **Connectors** page. Its Log Analytics and Application
-   Insights connectors should be healthy and refer to your environment.
+2. Open your SRE Agent, then go to **Builder > Connectors** in the left menu.
+   The Log Analytics and Application Insights connectors should be healthy and
+   refer to your environment.
 
     ![Connectors page listing the app-insights and log-analytics connectors as Connected](../../assets/images/05-scheduled-health-check/connectors-telemetry.png)
 
@@ -68,6 +69,9 @@ create from a prompt and then reload.
     * It reports findings without changing resources.
 
     ![Agent Canvas in Table view with the Skills tab and the proactive-health-check skill details, with the edit pencil highlighted](../../assets/images/05-scheduled-health-check/skills-table-view-proactive-health-check.png)
+
+    Click the edit button (the pencil icon) of the skill to see the skill
+    content.
 
     ![The Edit Skill dialog showing the proactive-health-check SKILL.md](../../assets/images/05-scheduled-health-check/edit-skill-proactive-health-check.png)
 
