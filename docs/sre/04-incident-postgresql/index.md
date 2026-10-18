@@ -141,9 +141,11 @@ investigator; everything else stays with the main agent.
 | Wait for monitoring | The graph refreshes automatically, but new PostgreSQL samples can arrive several minutes late. The **Fault requested** marker records your click, not the alert firing. | Read the newest **Sample time**. A value above zero means failed database calls, not confirmation of an alert or agent activity. |
 | Follow diagnosis and repair | Azure Monitor evaluates failures from the last five minutes every minute. After the alert fires and reaches the agent, the investigator diagnoses and restores access automatically. | Select **Open alert rule** and check **History**, then **Open SRE Agent incidents**. Continue to Task 4 without waiting for the whole graph to turn healthy. |
 
-1. Select **Block PostgreSQL access** once. The controls stay disabled while
-   the Azure operation is running. The current step, an activity indicator,
-   and elapsed time show that the launcher is still working.
+1. Select **Block PostgreSQL access** once. The fault and reset buttons stay
+   disabled while the Azure operation is running. The current step, an activity
+   indicator, and elapsed time show that the launcher is still working. You can
+   select **Refresh now** beside the graph to read newer telemetry without
+   submitting the fault again.
 
     <div data-sre-incident="postgresql">
     <p><strong>JavaScript is required for the launcher.</strong> If it is unavailable, ask your facilitator.</p>
