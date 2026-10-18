@@ -1,7 +1,7 @@
 ---
 title: Module 02 - Configure SRE and Respond to High CPU
 description: Check the workshop response-plan settings, start a CPU fault, race the agent's investigation, and check recovery.
-ms.date: 2026-10-16
+ms.date: 2026-10-18
 ms.topic: how-to
 keywords:
   - cpu
@@ -46,9 +46,15 @@ do on its own.
 1. Open your SRE Agent. Go to **Builder > Agent Canvas**, select **Table view**,
    open the **Incident Response Plans** tab, and open `workshop-sev1-sev2-review`.
 
-    ![Agent Canvas in Table view with the Incident Response Plans tab and the workshop-sev1-sev2-review details panel](../../assets/images/03-incident-high-cpu/response-plan-table-view.png)
+    In the response-plan details panel, select the **pencil (Edit) icon** at the
+    top right to open the settings.
 
-    Check these settings. Correct anything that differs and select **Save**:
+    ![The workshop-sev1-sev2-review details panel with the pencil Edit icon highlighted at the top right](../../assets/images/03-incident-high-cpu/response-plan-edit-icon.png)
+
+    *Select the highlighted pencil (Edit) icon before checking the settings table.*
+
+    Check these settings in the editor. Correct anything that differs and select
+    **Save**:
 
     | Section | Setting | Value |
     | --- | --- | --- |
@@ -69,11 +75,11 @@ do on its own.
 2. Check the **Incidents preview**. You may see a past incident from the
    facilitators' testing; ignore it.
 3. Back in the Azure portal, open your resource group and search for
-   `alert-orders-high-cpu`. It's the first resource, as its name starts with an
-   "a". Alternatively, search **Monitor** and open **Alerts > Alert rules**,
-   filtered to your resource group. Check the rule is enabled, Sev2, and fires
-   when average CPU is above 80 percent for five minutes. This is what the SRE
-   Agent listens for when we trigger the first controlled incident.
+   `alert-orders-high-cpu`. Alternatively, search **Monitor** and open
+   **Alerts > Alert rules**, filtered to your resource group. Check that the
+   rule is enabled, is Sev2, and evaluates a five-minute average every minute,
+   firing when average CPU is above 80 percent. This is the alert the SRE Agent
+   listens for when you trigger the first controlled incident.
 
     ![The alert-orders-high-cpu rule showing Severity 2 - Warning and the condition Percentage CPU greater than 80](../../assets/images/03-incident-high-cpu/alert-rule-high-cpu.png)
 
@@ -82,21 +88,46 @@ do on its own.
 1. In your Orders GUI, select **Refresh status** and **Refresh orders**. Liveness
    and Readiness should show HTTP 200 and PostgreSQL should show Ready. Keep that
    tab visible. Note the normal response time.
-2. Look at the CPU graph below and note the healthy CPU range.
+2. Look at the CPU graph in Task 3 below and note the healthy CPU range. If
+   samples have not arrived yet, select **Refresh now** and allow a few minutes
+   for Azure Monitor to return data before starting the fault.
 
 ### Task 3: Start the CPU fault
 
-1. Select **Run CPU incident**. It may take a couple of minutes to show in the
-   graph below. This starts two background processes on your VM that each keep
-   one CPU core fully busy for ten minutes, pushing CPU usage above the alert
-   threshold.
+1. Select **Run CPU incident** once. The launcher immediately shows **Starting
+   CPU fault**, an elapsed timer, and the current progress stage. Azure VM Run
+   Command can take a few minutes to confirm the request; the workers may
+   already be running during that wait. Do not select Run again.
+
+    **Elapsed** measures time since you selected Run, not the workers' remaining
+    runtime.
+
+    The fault starts two background processes on your VM that each keep one CPU
+    core fully busy for ten minutes, pushing CPU usage above the alert threshold.
 
     <div data-sre-incident="cpu">
     <p><strong>JavaScript is required for the launcher.</strong> If it is unavailable, ask your facilitator.</p>
     </div>
 
-2. Watch the graph, which shows average CPU in one-minute intervals and
-   refreshes automatically. You should see CPU rise above the alert threshold.
+2. Follow the launcher's progress: **Start CPU fault**, **Observe CPU telemetry**,
+   then **Check Azure alert**. **CPU fault confirmed** means Azure verified the
+   workers started, not that the alert has fired.
+
+    The graph shows one-minute average CPU samples and checks for new data
+    **every 15 seconds**. Its **Live** badge and **Next in ...s** countdown show
+    when it will refresh automatically. Select **Refresh now** beside the graph
+    whenever you want to check for newer data, including while the start request
+    is pending. **Updated** is the time of the
+    last successful refresh; **Latest sample** is the time of the newest metric
+    Azure returned. New samples can take a few minutes to arrive, so refreshing
+    does not always change the graph.
+
+    !!! info "High CPU on the graph is not a fired alert"
+        A one-minute sample above the 80% line is an early signal. The alert
+        evaluates a **five-minute average every minute**, so it can take about
+        **5 to 10 minutes after the fault starts** to fire. The launcher guides
+        you to check alert history; it does not read the alert's status. Continue
+        to Task 4 and investigate while Azure collects evidence.
 
     !!! warning "Check before retrying"
         A timed-out request may still have started the fault. Check the CPU
@@ -130,10 +161,24 @@ Use the wait to investigate on your own.
     ![The alert-orders-high-cpu rule showing Severity 2 - Warning and the condition Percentage CPU greater than 80](../../assets/images/03-incident-high-cpu/alert-rule-high-cpu.png)
 
     Select **History** on the `alert-orders-high-cpu` resource to see when it
-    fired. This history is the source of truth for the fault: the agent only sees
-    the incident once the alert fires here.
+    fired. This history confirms whether the **alert** fired; a high CPU sample
+    alone does not. The SRE Agent receives the incident after Azure Monitor
+    fires the alert.
 
     ![The alert-orders-high-cpu History page listing the fired alert with its fired time and Fired condition](../../assets/images/03-incident-high-cpu/alert-rule-history.png)
+
+    !!! note "No fired alerts in History yet?"
+        An empty history is expected while the five-minute average builds up.
+        Allow about **5 to 10 minutes from starting the CPU fault**, then select
+        **Refresh** in the Azure portal. Check that the time range includes this
+        exercise and that you opened `alert-orders-high-cpu` for your assigned
+        VM. Do not start another CPU fault to populate the list. If it is still
+        empty after that wait, confirm the rule is enabled and compare the VM's
+        **Percentage CPU** metric using **Avg** and a **five-minute** time
+        granularity. An alert already in **Fired** state does not fire again
+        until it resolves. Ask your facilitator if the rule or metrics do not
+        match the expected state.
+
 4. Go to the SRE Agent portal and open **Incidents**, or select **Open SRE Agent
    incidents** below the launcher. Look for an incident titled for the
    `alert-orders-high-cpu` alert. This can take 5 to 10 minutes after the alert
@@ -142,17 +187,34 @@ Use the wait to investigate on your own.
 
     ![SRE Agent Incidents page with Incidents in the left menu and the alert-orders-high-cpu incident highlighted](../../assets/images/03-incident-high-cpu/sre-agent-incidents-cpu-alert.png)
 
+    !!! tip "Alert history and agent incidents are separate checkpoints"
+        If **Incidents** is empty, first confirm the alert has fired in Azure
+        Monitor **History**. Then allow time for the agent to receive it and
+        refresh **Incidents**. A high CPU graph alone does not mean an incident
+        is available yet.
+
 ### Task 5: Check the agent's explanation
+
+Return to your **SRE Agent portal**, not the Azure Monitor alert page or the
+Orders GUI. Select **Open SRE Agent incidents** below the CPU graph, or open
+your agent and select **Incidents** in the left menu.
 
 The response plan runs in **Review** mode. This fault is controlled and stops
 itself after ten minutes, so there is nothing for the agent to fix. You are
 checking that the agent recognises it as a controlled fault, not that it
 remediates anything.
 
-1. Open the incident thread and read the agent's findings. Compare them with
-   what you saw in Task 4: the CPU metrics, the Activity log, and the alert.
-   Note what the agent found that you missed, and whether it identified the fault
-   as controlled.
+1. In **Incidents**, select the `alert-orders-high-cpu` incident for this
+   exercise. Open its incident thread and read the agent's findings below the
+   alert details. Compare them with what you saw in Task 4: the CPU metrics, the
+   Activity log, and the alert. Note what the agent found that you missed, and
+   whether it identified the fault as controlled.
+
+    ![The SRE Agent CPU incident thread with the alert title, Fired status, workshop response plan, and investigation tool calls](../../assets/images/03-incident-high-cpu/sre-agent-cpu-incident-thread.png)
+
+    *Open the CPU incident from Incidents, then read the investigation below its
+    alert details. Account and resource identifiers are redacted; your incident
+    time will differ.*
 
     !!! note "The agent may ask for approval"
         The agent may suggest running a command to check that the CPU fault is
@@ -161,12 +223,18 @@ remediates anything.
 
 2. Compare the CPU you observed with the documented baseline. Your facilitator
    uploaded knowledge files that give the agent baselines for the Orders app. In
-   the incident thread, ask:
+   the **same incident thread**, scroll to the message box at the bottom, enter
+   this question, and select the **Send arrow**:
 
     ```text
     How does the CPU you observed compare with the documented baseline and
     alert threshold? Name the document you used.
     ```
+
+    ![The same CPU incident thread with the message box highlighted at the bottom for asking the baseline comparison question](../../assets/images/03-incident-high-cpu/sre-agent-cpu-incident-question.png)
+
+    *Use the highlighted message box in the existing CPU incident, not New chat,
+    so the question keeps the incident's context.*
 
     The baselines are fictitious Contoso Retail demo values. Check which numbers
     come from the document and which come from your telemetry.
