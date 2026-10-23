@@ -12,9 +12,34 @@ keywords:
   - live reports
 ---
 
-# Azure SRE Agent Workshop
+<p align="center">
+  <img src="docs/assets/images/sre-agent.svg" alt="Azure SRE Agent" width="96">
+</p>
 
-[![Deploy Workshop Site](https://github.com/charliekw411/sre-agent-workshop/actions/workflows/deploy-docs.yml/badge.svg)](https://github.com/charliekw411/sre-agent-workshop/actions/workflows/deploy-docs.yml)
+<h1 align="center">Azure SRE Agent Workshop</h1>
+
+<p align="center">
+  <strong>Break a real Azure workload on purpose, then let Azure SRE Agent investigate.</strong>
+</p>
+
+<p align="center">
+  <a href="https://charliekw411.github.io/sre-agent-workshop/"><strong>Start the workshop</strong></a>
+  ·
+  <a href="#quick-start">Quick start</a>
+  ·
+  <a href="#learning-path">Learning path</a>
+  ·
+  <a href="facilitator-process/README.md">Facilitator runbook</a>
+  ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/charliekw411/sre-agent-workshop/actions/workflows/deploy-docs.yml"><img src="https://github.com/charliekw411/sre-agent-workshop/actions/workflows/deploy-docs.yml/badge.svg" alt="Deploy Workshop Site"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+</p>
+
+![Orders app during the PostgreSQL incident, with readiness and database checks unavailable](docs/assets/images/04-incident-postgresql/orders-gui-database-down.png)
 
 Deploy a small but realistic Azure workload, establish an evidence baseline,
 trigger two controlled incidents, and use Azure SRE Agent to investigate the
@@ -22,7 +47,103 @@ resulting alerts. Then schedule a proactive agent health check and build a Live
 Report. The six-module path takes about three and a half hours and does not
 require an instructor.
 
-**[Start the workshop](https://charliekw411.github.io/sre-agent-workshop/)**
+## See it in action
+
+| Deploy and validate | Investigate an incident |
+| --- | --- |
+| ![Orders app with healthy liveness, readiness, and PostgreSQL status cards](docs/assets/images/01-deploy-and-validate/orders-gui-healthy.png) | ![Azure SRE Agent investigating the high CPU alert](docs/assets/images/03-incident-high-cpu/sre-agent-cpu-incident-thread.png) |
+| A healthy baseline: the app, its private database, and its telemetry. | The agent correlates VM metrics, request telemetry, and alert context. |
+
+| Review the fix | Know what was deployed |
+| --- | --- |
+| ![SRE Agent summary showing the NSG rule cause and mitigation](docs/assets/images/04-incident-postgresql/sre-agent-fix-summary.png) | ![Azure resource visualizer showing the workshop resources](docs/assets/images/01-deploy-and-validate/resource-group-visualizer.png) |
+| Cause, customer impact, and mitigation, with evidence kept apart from inference. | One disposable resource group: VM, private PostgreSQL, monitoring, alerts, and the agent. |
+
+## What it costs
+
+Most of the cost is the SRE Agent itself, which is billed in Azure Agent Units
+(AAUs). In this tenant, one AAU billed at about US$0.11.
+
+* **Always-on flow:** 4 AAUs per agent-hour (about US$0.44), from the moment
+  the agent is created until it is deleted, whether or not anyone uses it.
+* **Active flow:** AAUs for the LLM tokens the agent uses on chats, incident
+  investigations, and scheduled tasks. A typical alert investigation is roughly
+  12 to 35 AAUs, depending on the model.
+* **Everything else** is normal Azure pricing for the VM, PostgreSQL, Defender
+  for Cloud, monitoring, and networking.
+
+Final bill for a real 20-participant run: deployed Monday 19 October 2026
+(about 14:50 to 15:50 NZDT) across three subscriptions, workshop on Tuesday 20
+October, and deleted Wednesday 21 October (about 13:10 NZDT), roughly 46 hours.
+
+| Cost | Billed (USD) | Share |
+| --- | --- | --- |
+| SRE Agent (6,500 AAUs) | $715.00 | 85% |
+| Virtual machines | $60.90 | 7% |
+| Defender for Cloud | $21.50 | 3% |
+| PostgreSQL | $20.19 | 2% |
+| Azure Monitor and Log Analytics | $11.97 | 1% |
+| Network, storage, DNS, bandwidth | $8.93 | 1% |
+| **Total (rg-01 to rg-20)** | **$838.48** | **about $41.92 per participant** |
+
+By billing day (UTC): Monday $524.19, Tuesday $313.98, Wednesday $0.31. About
+$400 of the SRE Agent charge was the always-on rate (20 agents for about 45
+hours) and about $315 was active flow. The VMs and databases were stopped
+overnight, so they billed about 28 of the 46 hours; the agent bills
+continuously, so delete environments promptly. See
+[Cost Management](docs/sre/30-appendix/03-cost-management.md) and
+[Azure SRE Agent pricing](https://learn.microsoft.com/azure/sre-agent/pricing-billing).
+
+Figures are actual cost from Azure Cost Management for `rg-01` to `rg-20` only.
+They exclude other resource groups in the same subscriptions, such as extra
+participants and failed or test deployments. Treat them as one run's result,
+not a quote.
+
+Want to run this workshop for your team, customers, or community? If you're a
+Microsoft customer or partner, get in touch at
+[ckakewhite@microsoft.com](mailto:ckakewhite@microsoft.com).
+
+## Quick start
+
+Prerequisites are listed [below](#prerequisites). From a cloned repository:
+
+```bash
+az login
+az account set --subscription "<your-subscription-id>"
+azd auth login
+azd env new "<your-alias>-sre-vm-aue"
+azd env set AZURE_LOCATION australiaeast
+azd up
+```
+
+Then validate the deployment:
+
+```bash
+source .workshop/workshop.env
+python scripts/workshop.py smoke
+```
+
+Open the workshop site and continue with
+[Module 01](https://charliekw411.github.io/sre-agent-workshop/sre/01-deploy-and-validate/).
+When you finish, remove everything with `azd down --purge --force`; see
+[Cost and cleanup](#cost-and-cleanup).
+
+## Pick the workflow you need
+
+| Goal | Command | Full guide |
+| --- | --- | --- |
+| Deploy the workshop for yourself | `azd up` | [Self-deployment](docs/sre/30-appendix/06-self-deployment.md) |
+| Deploy isolated environments for a cohort | `python scripts/cohort.py deploy --participants 5 ...` | [Facilitator runbook](facilitator-process/README.md) |
+| Validate the workload and telemetry | `python scripts/workshop.py smoke` / `inspect` / `telemetry` | [Use and validate the workload](#use-and-validate-the-workload) |
+| Trigger the high CPU incident | `python scripts/workshop.py fault cpu 600 2` | [Module 03](docs/sre/03-incident-high-cpu/index.md) |
+| Trigger the PostgreSQL connectivity incident | `python scripts/workshop.py fault postgresql` | [Module 04](docs/sre/04-incident-postgresql/index.md) |
+| Install the dedicated incident workflow | `python scripts/workshop.py incident-workflow install` | [Incident workflow](docs/sre/30-appendix/09-incident-workflow.md) |
+| Upload the knowledge base | `python scripts/workshop.py knowledge install` | [Knowledge base](docs/sre/30-appendix/10-knowledge-base.md) |
+| Schedule the proactive health check | `python scripts/workshop.py health-check install` | [Module 05](docs/sre/05-scheduled-health-check/index.md) |
+| Reset incidents | `python scripts/workshop.py fault reset` | [Controlled incidents](#controlled-incidents) |
+| Tear everything down | `azd down --purge --force` | [Module 06](docs/sre/06-cleanup/index.md) |
+| Run the docs site or app locally | `python -m mkdocs serve` | [Local and Codespaces](docs/sre/30-appendix/04-local-and-codespaces.md) |
+| Troubleshoot | | [Troubleshooting](docs/sre/30-appendix/02-troubleshooting.md) |
 
 ## What you learn
 
@@ -129,7 +250,7 @@ Testcontainers through a running Docker daemon. See
 
 ## Deploy the workshop
 
-From a cloned repository:
+The [quick start](#quick-start) commands, from a cloned repository:
 
 ```bash
 az login
@@ -282,6 +403,8 @@ The normal outbound NSG child rule is:
 | Destination port | `5432` |
 | Normal access | `Allow` |
 
+![NSG outbound rules after PostgreSqlFaultInjection is changed to Deny](docs/assets/images/04-incident-postgresql/nsg-outbound-rules-deny.png)
+
 Module 04 changes only this rule from `Allow` to `Deny`. It does not modify
 orders, stop the database server, expose PostgreSQL publicly, or interrupt
 unrelated outbound traffic. Because NSGs preserve established flows, the
@@ -377,7 +500,7 @@ records `.workshop/<environment>/scheduled-health-check.json`. The definitions
 live under `agent/`. The installer attaches only read-only tools to the custom
 agent, pins its optional tool categories empty, and runs the task in Review mode,
 and the agent's Azure role is Reader. In testing, scheduled runs did not apply
-the custom agent's tool list, so Module 04 has you verify every tool call in the
+the custom agent's tool list, so Module 05 has you verify every tool call in the
 run's thread. `remove` deletes only those three items.
 
 The SRE Agent evaluates the schedule in UTC. The task runs Monday to Friday at
@@ -386,7 +509,9 @@ The SRE Agent evaluates the schedule in UTC. The task runs Monday to Friday at
 local time; use `0 20 * * 0-4` for 09:00 NZDT. Reports show New Zealand time
 beside UTC. You can also run the task on demand from the portal.
 
-You create the Live Report in the SRE Agent portal from a prompt in Module 04.
+![Live reports page in the SRE Agent portal showing the Orders Service Health report](docs/assets/images/05-scheduled-health-check/live-reports-orders-service-health.png)
+
+You create the Live Report in the SRE Agent portal from a prompt in Module 05.
 Live Reports is a preview feature and has no template or documented API.
 Creating a report, and running its queries when you open or reload it, needs the
 SRE Agent Standard User, SRE Agent Author, or SRE Agent Administrator role.
@@ -402,7 +527,7 @@ incident restores connectivity but does not stop billing.
 
 Scenario-specific resets do not change the other fault. Before collecting final
 healthy evidence or deleting the environment, run the explicitly global
-`python scripts/workshop.py fault reset`. If you installed the Module 04 health
+`python scripts/workshop.py fault reset`. If you installed the Module 05 health
 check, also run `python scripts/workshop.py health-check remove`; the recurring
 task uses agent units on every scheduled run. When finished:
 
