@@ -1,17 +1,3 @@
----
-title: Azure SRE Agent Workshop
-description: A hands-on workshop for investigating VM saturation and private PostgreSQL connectivity incidents, and scheduling a proactive health check, with Azure SRE Agent.
-ms.date: 2026-10-12
-ms.topic: overview
-keywords:
-  - azure sre agent
-  - site reliability engineering
-  - postgresql
-  - incident response
-  - scheduled tasks
-  - live reports
----
-
 <p align="center">
   <img src="docs/assets/images/sre-agent.svg" alt="Azure SRE Agent" width="96">
 </p>
